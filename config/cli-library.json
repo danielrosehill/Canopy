@@ -30,6 +30,7 @@
     { "name": "pandoc", "group": "documents", "about": "Document conversion", "via": "apk", "package": "pandoc-cli", "check": "pandoc --version" },
     { "name": "pdftotext", "group": "documents", "about": "PDF tools (poppler)", "via": "apk", "package": "poppler-utils", "check": "pdftotext -v" },
     { "name": "markitdown", "group": "documents", "about": "Files to markdown", "via": "uv", "package": "markitdown[all]", "check": "markitdown --version" },
+    { "name": "adb", "group": "devices", "about": "Android devices over the network; USB needs the device passed through", "via": "apk", "package": "android-tools", "check": "adb version" },
     { "name": "sqlite", "group": "data", "about": "SQLite shell", "via": "apk", "package": "sqlite", "check": "sqlite3 --version" },
     { "name": "yq", "group": "data", "about": "YAML like jq", "via": "apk", "package": "yq-go", "check": "yq --version" },
     { "name": "ripgrep", "group": "data", "about": "Fast text search", "via": "apk", "package": "ripgrep", "check": "rg --version" },
