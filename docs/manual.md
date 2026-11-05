@@ -20,7 +20,7 @@ in development mode). Start a session and ask for a skill to check it works.
 
 | Plugin | Where | Holds |
 | --- | --- | --- |
-| `canopy-connector` | User level, every device | The connection, the `find` skill, `/skill` and the prompt hook |
+| `canopy-connector` | User level, every device | The connection, the `find` and `test` skills, `/skill` and the prompt hook |
 | `canopy-manager` | On the server | Setup, diagnosis, upstreams, marketplaces, sync, backup, staging, CLIs |
 
 On a client, add `canopy-manager` only while setting up, then remove it. Its skills stay findable by

@@ -1,7 +1,7 @@
 # Canopy connector
 
 The one Canopy plugin to install at user level. It stays small because it loads in every session:
-the MCP connection, one skill (`find`), the `/skill` command and a prompt hook.
+the MCP connection, two small skills (`find`, and `test` to check the connection), the `/skill` command and a prompt hook.
 
 ```
 /plugin marketplace add danielrosehill/Canopy
