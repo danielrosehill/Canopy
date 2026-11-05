@@ -1,0 +1,80 @@
+import httpx
+import pytest
+from starlette.testclient import TestClient
+
+from canopy import api
+from canopy.control import Control, ControlError, Gateway
+
+
+class Stub(Control):
+    def __init__(self):
+        self.mode = "development"
+
+    def status(self):
+        return {"ok": True, "components": {}}
+
+    def add_server(self, raw, replace=False):
+        if raw["name"] == "bad":
+            raise ControlError(409, "nope")
+        return {"registered": raw["name"], "replace": replace}
+
+    def gateway(self):
+        raise httpx.ConnectError("down")
+
+
+@pytest.fixture
+def client():
+    return TestClient(api.create_app(Stub(), "right"), raise_server_exceptions=False)
+
+
+AUTH = {"Authorization": "Bearer right"}
+
+
+def test_health_is_open(client):
+    assert client.get("/health").status_code == 200
+
+
+@pytest.mark.parametrize("headers", [{}, {"Authorization": "Bearer wrong"}, {"Authorization": "right2"}])
+def test_every_other_route_needs_the_token(client, headers):
+    assert client.get("/v1/status", headers=headers).status_code == 401
+    assert client.post("/v1/config/apply", headers=headers).status_code == 401
+
+
+def test_status_with_the_token(client):
+    assert client.get("/v1/status", headers=AUTH).json()["ok"] is True
+
+
+def test_add_server_passes_replace(client):
+    r = client.post("/v1/gateway/servers?replace=true", json={"name": "x"}, headers=AUTH)
+    assert r.status_code == 201 and r.json() == {"registered": "x", "replace": True}
+
+
+def test_control_errors_keep_their_status(client):
+    r = client.post("/v1/gateway/servers", json={"name": "bad"}, headers=AUTH)
+    assert r.status_code == 409 and r.json() == {"error": "nope"}
+
+
+def test_a_body_that_is_not_json_is_a_400(client):
+    r = client.post("/v1/gateway/servers", content="x", headers=AUTH)
+    assert r.status_code == 400
+
+
+def test_gateway_failures_are_a_502(client):
+    assert client.get("/v1/gateway/servers", headers=AUTH).status_code == 502
+
+
+def test_token_is_made_once_and_kept(tmp_path, monkeypatch):
+    monkeypatch.delenv("CANOPY_API_TOKEN", raising=False)
+    first = api.load_token(tmp_path)
+    assert first == api.load_token(tmp_path)
+    assert (tmp_path / "token").stat().st_mode & 0o077 == 0
+
+
+def test_env_token_wins(tmp_path, monkeypatch):
+    monkeypatch.setenv("CANOPY_API_TOKEN", "fixed")
+    assert api.load_token(tmp_path) == "fixed"
+    assert not (tmp_path / "token").exists()
+
+
+def test_gateway_class_is_the_default():
+    assert Control.__init__.__defaults__[0] is Gateway
