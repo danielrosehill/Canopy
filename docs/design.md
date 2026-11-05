@@ -258,7 +258,7 @@ Holds: `canopy`, `gh`, `aws`, `rclone`, `restic`, `jq`, `curl`, `pg_dump`, `git`
 `uvx` and `npx` for anything else. Tested on Alpine 3.22 on 2026-11-05: those all started, as did `vercel`,
 `wrangler`, `hf` and `modal`, about 475 MB in all. That proves they start, not that each works: `wrangler`
 needs a real command tried, because its runtime has had trouble on Alpine, and `uvx markitdown` resolved to
-a very old version. `infisical` is not in Alpine's packages, so it needs its own install.
+a very old version.
 
 It has no Docker socket. Commands that manage the stack itself run on the host.
 
