@@ -38,3 +38,10 @@ Use the override file to add private upstreams as services on the `canopy` netwo
 - `EMBED_ON_SYNC=true` keeps embedding automatic.
 
 Changing `EMBED_MODEL` invalidates stored vectors, because they are keyed by model name.
+
+## Moving a gateway that has no auth
+
+Change one thing at a time. Move with `SERVER_MODE=development` first, so that a failure can only come
+from the move, and compare search results with the old stack. Then turn on enterprise mode as its own
+step: hand a token to each client, and check every remote route. See the open question in
+[deployment patterns](deployment-patterns.md#4-cloudflare-mcp-server-portal-for-hosted-clients).

@@ -112,8 +112,14 @@ The default `canopy-agent` identity can reach every upstream through the toolbox
 a gateway allow-list or `TOOLS_GROUP`. A marketplace you add is content your agents will read and
 follow, so add only sources you trust.
 
-More in [docs/architecture.md](docs/architecture.md). To keep your own settings separate from a
-Canopy checkout, see [docs/private-overlay.md](docs/private-overlay.md).
+## Design notes
+
+- [Architecture](docs/architecture.md): how the stack fits together
+- [Deployment patterns](docs/deployment-patterns.md): remote access with Tailscale and Cloudflare,
+  including hosted clients such as ChatGPT and claude.ai
+- [Private overlay](docs/private-overlay.md): keeping your own settings out of a Canopy checkout
+- [MCP Deployment Architecture](https://github.com/danielrosehill/MCP-Deployment-Architecture): the
+  conceptual notes behind this design
 
 ## Licence
 
