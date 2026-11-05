@@ -94,3 +94,13 @@ def test_unreadable_marketplace_config_is_an_error_not_empty(tmp_path, monkeypat
     monkeypatch.setattr(ix, "CONFIG", tmp_path)
     plugins, errors, healthy = ix.read_manifests(fetch=False)
     assert plugins == {} and errors and healthy == set()
+
+
+def test_a_missing_clone_is_stale_even_at_the_same_head(tmp_path, monkeypatch):
+    monkeypatch.setattr(ix, "clones", lambda: tmp_path)
+    row = {"head": "abc", "status": "ok"}
+    assert ix.stale(row, "p", {}, "abc") is True    # what a restored database looks like
+    (tmp_path / "p").mkdir()
+    assert ix.stale(row, "p", {}, "abc") is False
+    assert ix.stale(row, "p", {}, "def") is True
+    assert ix.stale({**row, "status": "error"}, "p", {}, "abc") is True

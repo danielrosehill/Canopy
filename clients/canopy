@@ -18,6 +18,7 @@
     canopy api METHOD PATH [JSON]   call any route
     canopy run CMD [ARGS...]        run a command in the cli container
     canopy compose [ARGS...]        docker compose, with Canopy's files
+    canopy restore [--replace]      bring back the latest backup, stopping the stack to do it
 
     CANOPY_AGENT_DATA   default ~/canopy/agent-data
     CANOPY_DATA         default ~/canopy/data
@@ -125,6 +126,13 @@ def seed_exit_code() -> int:
     return 1
 
 
+def restore(args: list[str]) -> int:
+    """Files first, so the database starts with the restored passwords. Then the databases."""
+    tool = ["run", "--rm", "--no-deps", "-T", "api", "python", "-m", "canopy.backup"]
+    return (compose("stop") or compose(*tool, "restore-files") or compose("up", "-d", "--wait", "db")
+            or compose(*tool, "restore-db", *args) or up([]))
+
+
 def run(args: list[str]) -> int:
     if not args:
         sys.exit("usage: canopy run CMD [ARGS...]")
@@ -220,6 +228,8 @@ def main() -> int:
             return show("POST", f"/v1/jobs/{args[1]}/run")
         if args[0] == "runs" and len(args) == 2:
             return show("GET", f"/v1/jobs/{args[1]}/runs")
+    if cmd == "restore":
+        return restore(args)
     if cmd == "apply":
         return show("POST", "/v1/config/apply")
     if cmd == "token":

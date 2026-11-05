@@ -22,6 +22,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from . import scheduler as sched
+from .backup import Backups
 from . import store
 from .control import Control, ControlError, write_secret
 from .embedder import Embedder, EmbedError
@@ -180,7 +181,8 @@ def main() -> None:
     store.migrate()
     db, control = store.Db(), Control()
     jobs = sched.CatalogueJobs(db, control._tool_text)
-    scheduler = sched.Scheduler(db, {"sync": jobs.sync, "embed": jobs.embed, "health": control.health_job})
+    scheduler = sched.Scheduler(db, {"sync": jobs.sync, "embed": jobs.embed, "health": control.health_job,
+                                     **Backups(db).actions()})
     threading.Thread(target=scheduler.loop, daemon=True).start()
     app = create_app(control, load_token(), Embedder(provider_model=model_lookup(db)), scheduler)
     uvicorn.run(app, host=os.environ.get("CANOPY_API_HOST", "0.0.0.0"), port=PORT, log_level="warning")

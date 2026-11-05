@@ -568,6 +568,11 @@ def rebuild_mcp_records(db: store.Db) -> int:
     return len(recs)
 
 
+def stale(row: dict, name: str, meta: dict, head: str) -> bool:
+    """A restored database remembers heads whose clones were never backed up, so the disk counts too."""
+    return row.get("head") != head or row.get("status") != "ok" or not plugin_root(name, meta).exists()
+
+
 def sync(db: store.Db, only: str | None = None, force: bool = False) -> dict:
     """One pass. `ok` in the summary is False if anything at all failed."""
     started = time.time()
@@ -595,8 +600,7 @@ def sync(db: store.Db, only: str | None = None, force: bool = False) -> dict:
     with ThreadPoolExecutor(16) as ex:
         list(ex.map(head, targets))
 
-    todo = [n for n, h in heads.items()
-            if force or known.get(n, {}).get("head") != h or known.get(n, {}).get("status") != "ok"]
+    todo = [n for n, h in heads.items() if force or stale(known.get(n, {}), n, targets[n], h)]
     written: list[int] = []
 
     def work(name: str) -> None:

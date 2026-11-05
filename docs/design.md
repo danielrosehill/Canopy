@@ -338,14 +338,16 @@ result and output, which is what the dashboard shows.
 | `health` | 5 min | Refresh `/v1/status`, flag upstreams that stopped answering |
 | `tool-refresh` | Daily | Re-read upstream tool lists, which the gateway freezes at registration |
 | `backup-data` | Daily | Incremental encrypted backup |
-| `backup-config` | Weekly, and on change | Push config only |
+| `backup-config` | Hourly, pushing only on change | Push config only |
+| `restore-test` | After `backup-data` | Restore the latest backup beside the stack and check it |
 | `storage-expiry` | Daily | Confirm expiry ran on transient buckets |
 | `update-check` | Daily | Report newer versions. Never applies them |
 | `cli-update` | Weekly | Update added CLIs, after a smoke test |
 
 A job takes a lock, so two runs never overlap. A missed run starts on the next boot.
 
-Built so far: `sync`, `embed`, `health`. The rest of the table arrives with what each one does, and a job
+Built so far: `sync`, `embed`, `health`, `backup-data`, `backup-config`, and `restore-test`, which runs after
+`backup-data`. The backup jobs start once `backup.json` exists. The rest of the table arrives with what each one does, and a job
 named in `jobs.json` with nothing behind it is listed as not `runnable` and left alone. `every` takes a
 number and m, h or d, and `after` chains a job to another's success. `embed` follows `EMBED_ON_SYNC`, off by
 default, so a schedule never spends money by surprise. A sync no longer embeds, and the catalogue no longer
@@ -369,12 +371,21 @@ to localhost and is exposed only through Cloudflare Access or the tailnet.
 
 | Tier | Contains | Default | Enough for |
 | --- | --- | --- | --- |
-| Config | `agent-data/config`, private skills and notes, names of secrets but not their values | Weekly and on change | Rebuilding the install |
+| Config | `agent-data/config`, private skills and notes, `compose.override.yaml`, names of secrets but not their values | Hourly check, pushed on change | Rebuilding the install |
 | Data | Postgres dump (including vectors), tokens, `secrets.env` | Daily, incremental | Restoring it exactly |
 
 Both use [restic](https://restic.net) to any S3-compatible target, encrypted by default. `backup.json`
 names the target. The catalogue and Ollama models are left out, because they rebuild themselves. A
 backup is not trusted until a restore test has passed, and that test is itself a job.
+
+Built, and `restic` (0.19.1) and `pg_dump` (client 17) are in the Canopy image, so the `backup` service and
+`scripts/backup.sh` are gone. Details in [architecture](architecture.md#backup). `backup-config` checks hourly
+rather than weekly because restic's `--skip-if-unchanged` makes "on change" one setting, and an unchanged
+config has nothing to push. Proved on 2026-11-05 by `tests/contract/backup.sh`: a clean install, with its own
+database passwords, backed up to a throwaway Garage v2.5.0, every folder destroyed, restored, and checked for
+data, tokens, passwords and a further backup. That run found a bug: a restored database remembers git heads
+whose clones are not in the backup, so sync skipped them and status stayed red for good. A missing clone now
+counts as stale. Not yet run against a real target, or at the size of a real index.
 
 ## Updates
 
@@ -462,7 +473,7 @@ token, so it works where the agent runs on the server, or where a token has been
 Each step ends with a clean install on an empty machine, and the contract suite once it exists.
 
 1. **Done.** Folder layout, the `api` service, `/v1/status`, `canopy` CLI, `cli` image, gateway writes moved
-   behind the API. `/admin` is still mounted read-only in the `backup` profile, until step 4.
+   behind the API.
 2. **Done.** Contract suite in CI, with `compat.json`, and the `MCPJungle watch` workflow. Early, because
    every later step changes what it protects.
 3. **Done.** Postgres with pgvector, reranking step, roles, schemas and migrations, records and vectors moved
@@ -470,8 +481,8 @@ Each step ends with a clean install on an empty machine, and the contract suite 
    `python -m canopy.import_vectors <file>` brings vectors over from an older SQLite index after a first full
    sync, so a move needs no full re-embed: on a real index it filled 3,848 of 3,884 records in 4 seconds, and
    the other 36 cost about 13,000 tokens. See "Checked on the shipped code".
-4. **Scheduler built,** with `sync`, `embed` and `health` jobs, run on a clean install. Next: backup and restore
-   as jobs, which also retires the `/admin` mount in the `backup` profile.
+4. **Done.** Scheduler, with `sync`, `embed` and `health` jobs, and backup and restore as jobs, proved on a clean
+   install. The `backup` profile and its `/admin` mount are gone.
 5. Storage profile, stage route and skill.
 6. The `canopy` plugin with its hook, MCP Skills extension, manual and API reference.
 7. Dashboard.

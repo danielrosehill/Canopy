@@ -5,31 +5,30 @@ description: Back up and restore a Canopy server. Use on "back up Canopy", "rest
 
 # Back up and restore
 
-Only the gateway database and the stack's tokens need a backup. The catalogue is a cache of git and
-the gateway, and a sync rebuilds it, apart from read counts.
+Backups are scheduler jobs using restic, encrypted, to any S3-compatible target. The catalogue's clones
+and Ollama models are left out, because they rebuild themselves.
 
-Start scheduled backups, into `$CANOPY_DATA/backups`:
+To start them, ask the user for a target, then write `agent-data/config/backup.json`:
 
-```bash
-canopy compose --profile backup up -d backup
+```json
+{"repository": "s3:https://s3.example.com/bucket/canopy", "region": "us-east-1"}
 ```
 
-Backups hold tokens, so keep them private. Each dump is checked as readable before it is kept.
-
-To restore, confirm with the user first, because this replaces the gateway's data. `<stamp>` is a
-backup directory:
+Put `RESTIC_PASSWORD`, `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` in `secrets.env`, run `canopy up`,
+and tell the user to keep a copy of `RESTIC_PASSWORD` somewhere else. Without it the backup is unreadable.
 
 ```bash
-B=~/canopy/data/backups/<stamp>
-canopy down
-canopy compose up -d db
-canopy compose run --rm --no-deps -T -v "$B:/restore:ro" -e PGPASSWORD=canopy \
-  --entrypoint pg_restore backup -h db -U canopy -d canopy --clean --if-exists /restore/gateway.dump
-canopy compose run --rm --no-deps -T -v "$B:/restore:ro" -v ~/canopy/data:/target \
-  --entrypoint tar api -xzf /restore/tokens.tar.gz -C /target
-canopy up
+canopy jobs run backup-data       # restore-test follows it
+canopy jobs runs restore-test     # a backup is not trusted until this passed
 ```
 
-The backup directories are owned by root, so read them through Docker or with `sudo`.
+To restore, confirm with the user first, because this stops the stack. On a clean install, run `canopy init`,
+then put `backup.json` and the three secrets in place.
 
-Use your `POSTGRES_PASSWORD` if you set one. Then check `catalogue__health`.
+```bash
+canopy restore             # refuses a database that already holds data
+canopy restore --replace   # overwrites it
+```
+
+`canopy status` stays red until the following sync has cloned the marketplaces again. Then check
+`catalogue__health`.

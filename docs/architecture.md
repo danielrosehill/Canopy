@@ -45,7 +45,36 @@ second call returns 400. If `data/admin` is lost while the database survives, th
 recovered, and the API says so.
 
 The API has its own token, `data/api/token`, needed on every route except `/health` and in every mode.
-The `backup` profile also mounts `data/admin`, read-only, until backup becomes a job of the API.
+
+## Backup
+
+Three jobs in `api`, from `canopy.backup`. They start once `agent-data/config/backup.json` exists:
+
+```json
+{"repository": "s3:https://s3.example.com/bucket/canopy", "region": "us-east-1",
+ "options": {"s3.bucket-lookup": "path"}, "keep": {"daily": 14, "weekly": 8}}
+```
+
+`region`, `options` and `keep` are optional. The file holds no secrets. `RESTIC_PASSWORD`, `AWS_ACCESS_KEY_ID`
+and `AWS_SECRET_ACCESS_KEY` come from the environment. **Keep a copy of `RESTIC_PASSWORD` outside the stack:**
+`secrets.env` is inside the backup it unlocks, and restic cannot recover a lost password.
+
+| Job | Default | Does |
+| --- | --- | --- |
+| `backup-data` | Daily | Dumps both databases, then stores them with `data/api`, `data/admin`, `data/tokens` and `secrets.env`, and applies retention |
+| `backup-config` | Hourly | Writes `config/export.json`, then stores `config`, `skills`, `notes` and `compose.override.yaml`. A snapshot is made only if something changed |
+| `restore-test` | After `backup-data` | `restic check`, then restores the latest backup beside the live stack: file hashes, and each dump into a scratch database with exact row counts |
+
+Row counts are exact on a busy stack because each dump and its counts read one exported Postgres snapshot.
+`api` holds `POSTGRES_PASSWORD` for this: `pgvector` is not a trusted extension, so a restore needs the
+superuser. `agent-data/cli` (CLI logins) and the catalogue's clones and Ollama models are not backed up.
+
+`canopy restore [--replace]` brings back the latest backup. Files go first, so `db` starts with the restored
+passwords, then the databases. Before it runs, a clean install needs `backup.json`, the three secrets, and
+any override that reaches the target. A database holding data is refused without `--replace`. After a restore,
+`/v1/status` stays red until a sync has cloned the marketplaces again.
+
+`tests/contract/backup.sh` proves all of this against a throwaway Garage, and runs in CI.
 
 ## Start order
 

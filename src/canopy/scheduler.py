@@ -26,8 +26,16 @@ START_DELAY = int(os.environ.get("SCHEDULER_START_DELAY_SEC", "60"))   # the see
 OUTPUT_CAP = 10_000
 # Embedding can cost money, so unattended runs stay off unless asked for.
 EMBED_ON_SYNC = os.environ.get("EMBED_ON_SYNC", "false").lower() == "true"
-DEFAULTS = [{"name": "sync", "every": "1h"}, {"name": "embed", "after": "sync", "enabled": EMBED_ON_SYNC},
-            {"name": "health", "every": "5m"}]
+
+def defaults(config: Path) -> list[dict]:
+    """Backups start once `backup.json` names a target. `backup-config` pushes only what changed."""
+    target = (config / "backup.json").is_file()
+    return [{"name": "sync", "every": "1h"}, {"name": "embed", "after": "sync", "enabled": EMBED_ON_SYNC},
+            {"name": "health", "every": "5m"}, {"name": "backup-data", "every": "1d", "enabled": target},
+            {"name": "backup-config", "every": "1h", "enabled": target},
+            {"name": "restore-test", "after": "backup-data", "enabled": target}]
+
+
 _UNITS = {"m": 60, "h": 3600, "d": 86400}
 
 
@@ -48,7 +56,7 @@ class Job:
 
 def load(config: Path = CONFIG) -> list[Job]:
     path = config / "jobs.json"
-    raw = json.loads(path.read_text())["jobs"] if path.is_file() else DEFAULTS
+    raw = json.loads(path.read_text())["jobs"] if path.is_file() else defaults(config)
     jobs = []
     for j in raw:
         if bool(j.get("every")) == bool(j.get("after")):

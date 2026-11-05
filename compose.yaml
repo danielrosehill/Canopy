@@ -102,6 +102,7 @@ services:
       EMBED_FALLBACK: ${EMBED_FALLBACK:-}
       EMBED_ON_SYNC: ${EMBED_ON_SYNC:-false}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-canopy}   # dumps and restores both databases
     env_file:
       - path: ${CANOPY_AGENT_DATA:-${HOME}/canopy/agent-data}/secrets.env
         required: false
@@ -112,6 +113,8 @@ services:
       - ${CANOPY_DATA:-${HOME}/canopy/data}/admin:/admin
       - ${CANOPY_DATA:-${HOME}/canopy/data}/tokens:/tokens
       - ${CANOPY_AGENT_DATA:-${HOME}/canopy/agent-data}/config:/config
+      - ${CANOPY_AGENT_DATA:-${HOME}/canopy/agent-data}:/agent-data
+      - ${CANOPY_DATA:-${HOME}/canopy/data}/backups:/backups
     depends_on:
       gateway:
         condition: service_started
@@ -201,25 +204,6 @@ services:
     volumes:
       - ${CANOPY_DATA:-${HOME}/canopy/data}/tailnet:/var/lib/tailscale
       - ./config/tailnet-serve.json:/serve/tailnet-serve.json:ro
-    restart: unless-stopped
-    networks: [canopy]
-
-  backup:
-    image: pgvector/pgvector:0.8.1-pg17
-    profiles: [backup]
-    environment:
-      PGPASSWORD: ${POSTGRES_PASSWORD:-canopy}
-      BACKUP_INTERVAL_SEC: ${BACKUP_INTERVAL_SEC:-86400}
-      BACKUP_KEEP: ${BACKUP_KEEP:-14}
-    entrypoint: ["sh", "/backup.sh"]
-    volumes:
-      - ./scripts/backup.sh:/backup.sh:ro
-      - ${CANOPY_BACKUP_DIR:-${CANOPY_DATA:-${HOME}/canopy/data}/backups}:/backups
-      - ${CANOPY_DATA:-${HOME}/canopy/data}/admin:/admin:ro
-      - ${CANOPY_DATA:-${HOME}/canopy/data}/tokens:/tokens:ro
-    depends_on:
-      db:
-        condition: service_healthy
     restart: unless-stopped
     networks: [canopy]
 

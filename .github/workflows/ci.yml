@@ -32,6 +32,12 @@ jobs:
         env:
           SERVER_MODE: ${{ matrix.mode }}
 
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: tests/contract/backup.sh
+
   secrets:
     runs-on: ubuntu-latest
     steps:
@@ -43,7 +49,7 @@ jobs:
             git /repo --redact --no-banner
 
   image:
-    needs: [test, contract, secrets]
+    needs: [test, contract, backup, secrets]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
