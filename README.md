@@ -2,8 +2,8 @@
 
 Self-hosted progressive discovery for AI agents, across skills and plugins as well as tools.
 
-**Status: early. The core stack, both pickers and the operations skills work. The management MCP
-and stable ids are not built yet.**
+**Status: early. The core stack, control API, CLI, both pickers and the operations skills work. The
+rest of the [target design](docs/design.md) is not built yet.**
 
 ## Why
 
@@ -22,7 +22,11 @@ MCP gateway. On top of that, `docker compose up -d` brings up:
 - a **catalogue** that indexes the Claude Code plugin marketplaces you point it at, with keyword
   search out of the box and hybrid search if you add an embeddings endpoint
 - a **toolbox** for calling long-tail tools without listing them all
-- a **seed** service that sets up the gateway from your config, and is safe to re-run
+- a **control API** and a `canopy` command for managing all of it, the only place that holds the
+  gateway's admin token
+- a **seed** service that applies your config through the API, and is safe to re-run
+- a **cli** container with `gh`, `aws`, `rclone`, `restic` and others, so skills can use them without
+  installing anything on the host
 
 An agent connects to one small group of 12 tools. Skills and other tools stay out of its context
 until it searches for them.
@@ -37,23 +41,23 @@ marketplace or triggering embeddings.
 Apart from those operations skills, Canopy ships with no content of its own. You bring your own
 marketplaces and MCP servers.
 
-Where this is heading, including a control API, one scheduler and backups, is in the
-[target design](docs/design.md).
-
 ## Quick start
 
 Needs Docker with Compose v2.
 
 ```bash
 git clone https://github.com/danielrosehill/Canopy.git && cd Canopy
-docker compose up -d
-docker compose logs -f seed     # wait for "seed finished with 0 problem(s)"
+clients/canopy init             # makes ~/canopy/agent-data and ~/canopy/data
+clients/canopy up               # ends with "seed finished with 0 problem(s)"
+clients/canopy status
 ```
+
+Link `clients/canopy` into your `PATH` to drop the prefix.
 
 Connect Claude Code:
 
 ```bash
-TOKEN=$(docker compose run --rm --no-deps -T seed python -m canopy.seed token)
+TOKEN=$(clients/canopy token)
 claude mcp add --transport http canopy http://127.0.0.1:8080/v0/groups/core/mcp \
   --header "Authorization: Bearer $TOKEN"
 ```
@@ -62,13 +66,33 @@ Then ask your agent to search for a skill. A fresh server indexes only the Canop
 
 ## Your own content
 
-Copy `config/` somewhere outside the repo, and set `CANOPY_CONFIG_DIR` in `.env`:
+Two folders, kept outside the checkout. `CANOPY_AGENT_DATA` is yours, and `CANOPY_DATA` is Canopy's:
+
+```
+~/canopy/agent-data/   config/  skills/  notes/  cli/  secrets.env
+~/canopy/data/         postgres/  catalogue/  api/  admin/  tokens/  backups/
+```
+
+In `agent-data/config`:
 
 - `marketplaces.json` lists the marketplaces to index. The catalogue reads it on every sync.
-- `servers.json` lists MCP upstreams and groups, with `${VAR}` placeholders filled from `.env`. See
-  `config/servers.example.json`. Run `docker compose up seed` after changing it.
+- `servers.json` lists MCP upstreams and groups, with `${VAR}` placeholders filled from `secrets.env`.
+  See `config/servers.example.json`. Run `canopy apply` after changing it.
 
 All settings are described in `.env.example`.
+
+## Manage it
+
+The API listens on `127.0.0.1:8090`, and `canopy` is a client of it:
+
+```bash
+canopy status                       # every component in one reply
+canopy servers                      # also groups, tools
+canopy add-server upstream.json     # registers it, confirms by reading back, saves it to config
+canopy remove-server NAME
+canopy run gh repo list             # any command, in the cli container
+canopy api GET /v1/gateway/groups   # any route
+```
 
 ## Find skills yourself
 
@@ -98,7 +122,7 @@ Then hand the id to your agent with `/skill <id>` from the Canopy plugin:
 
 | Profile | Adds | Tested |
 | --- | --- | --- |
-| (none) | gateway, Postgres, catalogue, toolbox, seed | Yes |
+| (none) | gateway, Postgres, catalogue, toolbox, API, seed, cli | Yes |
 | `ui` | Web UI | Yes |
 | `backup` | Scheduled backup, with a checked restore path | Yes |
 | `embeddings-local` | Ollama with bge-m3 | Not yet |
@@ -108,7 +132,8 @@ Then hand the id to your agent with `/skill <id>` from the Canopy plugin:
 ## Security
 
 The gateway runs in MCPJungle's enterprise mode, so every request needs a bearer token, and all ports
-bind to 127.0.0.1. The web UI has no login of its own, so put it behind something that does before
+bind to 127.0.0.1. The API has its own token, needed in every mode. Anything run with `canopy run` can
+read that token, so treat the `cli` container as an operator's shell. The web UI has no login of its own, so put it behind something that does before
 exposing it.
 
 The default `canopy-agent` identity can reach every upstream through the toolbox. To narrow that, use
@@ -120,6 +145,7 @@ follow, so add only sources you trust.
 - [Architecture](docs/architecture.md): how the stack fits together
 - [Deployment patterns](docs/deployment-patterns.md): remote access with Tailscale and Cloudflare,
   including hosted clients such as ChatGPT and claude.ai
+- [Target design](docs/design.md): where this is heading, and the order of work
 - [Private overlay](docs/private-overlay.md): keeping your own settings out of a Canopy checkout
 - [MCP Deployment Architecture](https://github.com/danielrosehill/MCP-Deployment-Architecture): the
   conceptual notes behind this design

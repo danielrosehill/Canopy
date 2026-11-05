@@ -4,7 +4,7 @@
 Needs only Python 3.10+ with curses (Linux, macOS, WSL). Configure with:
 
     CANOPY_URL     default http://127.0.0.1:8080
-    CANOPY_TOKEN   agent token: docker compose run --rm seed python -m canopy.seed token
+    CANOPY_TOKEN   agent token: canopy token
     CANOPY_GROUP   default core
 
 Keys: type to filter, Up/Down to move, PgUp/PgDn to scroll the preview, Enter to pick,

@@ -11,27 +11,28 @@ Needs Docker with Compose v2.
 
    ```bash
    git clone https://github.com/danielrosehill/Canopy.git && cd Canopy
-   docker compose up -d
+   clients/canopy init
+   clients/canopy up
    ```
 
-2. Wait for the seed to finish. It should end with `seed finished with 0 problem(s)`:
+2. `up` should end with `seed finished with 0 problem(s)`. Then check every part:
 
    ```bash
-   docker compose logs -f seed
+   clients/canopy status
    ```
 
 3. Get the agent token, and connect Claude Code:
 
    ```bash
-   TOKEN=$(docker compose run --rm --no-deps -T seed python -m canopy.seed token)
+   TOKEN=$(clients/canopy token)
    claude mcp add --transport http canopy http://127.0.0.1:8080/v0/groups/core/mcp \
      --header "Authorization: Bearer $TOKEN"
    ```
 
 4. In a new session, call `catalogue__health`. Expect `ok: true` and a `skill` count above zero.
 
-For the user's own content, tell them to copy `config/` outside the repo, set `CANOPY_CONFIG_DIR` in
-`.env`, then use the `manage-marketplaces` and `manage-upstreams` skills.
+The user's own content goes in `~/canopy/agent-data`, through the `manage-marketplaces` and
+`manage-upstreams` skills. Settings and secrets go in `secrets.env` there.
 
 Everything binds to 127.0.0.1. Before changing `CANOPY_BIND`, tell the user that the web UI has no
 login of its own.

@@ -1,6 +1,7 @@
 # Target design
 
-Status: **proposed, 2026-11-05. Nothing here is built unless it says so.** For what runs today, see
+Status: **proposed, 2026-11-05. Step 1 of the order of work is built. Nothing else here is, unless it
+says so.** For what runs today, see
 [architecture](architecture.md). This page is the shape Canopy is moving to, and the order of work.
 
 ## The idea in one paragraph
@@ -29,7 +30,7 @@ Learned from earlier skill indexes that failed:
 | `catalogue` | Indexes marketplaces into Postgres, runs search | core | `data/catalogue` (git clones) |
 | `toolbox` | Long-tail tool calls | core | None |
 | `api` | Control API, scheduler, dashboard | core | Postgres |
-| `seed` | One-shot: applies config through the same code as the API | core | None |
+| `seed` | One-shot: asks the API to apply the config | core | None |
 | `ollama` | Local embeddings, model pulled on first start | `search` | `data/ollama` |
 | `storage` | Garage: S3-compatible staging | `storage` | `data/storage` |
 | `memory` | General memory, MCP and API | `memory` | Postgres |
@@ -349,8 +350,8 @@ token, so it works where the agent runs on the server, or where a token has been
 
 Each step ends with a clean install on an empty machine, and the contract suite once it exists.
 
-1. Folder layout, the `api` service, `/v1/status`, `canopy` CLI, `cli` image, gateway writes moved behind
-   the API.
+1. **Done.** Folder layout, the `api` service, `/v1/status`, `canopy` CLI, `cli` image, gateway writes moved
+   behind the API. `/admin` is still mounted read-only in the `backup` profile, until step 4.
 2. Contract suite in CI, with `compat.json`. Early, because every later step changes what it protects.
 3. Postgres with pgvector, roles, schemas and migrations, records and vectors moved there, embedder
    route, Ollama in `search`, weighted search, and a labelled query set as a regression check.

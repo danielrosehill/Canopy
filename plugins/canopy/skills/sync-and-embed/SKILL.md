@@ -11,7 +11,7 @@ description: Trigger a Canopy sync or an incremental embedding run, and check th
 - Poll `catalogue__health` until `sync_running` is false.
 
 **Embedding** is a separate step, so that a sync never spends money by surprise. It needs `EMBED_URL`
-in `.env`. Without it, search is keyword only, and works.
+in `agent-data/secrets.env`. Without it, search is keyword only, and works.
 
 1. Call `catalogue__embed` with no arguments. This is a dry run: it reports pending records and
    estimated tokens.

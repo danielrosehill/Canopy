@@ -1,35 +1,28 @@
 # Keeping a private deployment separate
 
 Run your own deployment from Canopy without putting your content in a checkout. Canopy is the
-skeleton, and everything specific to you stays in an overlay directory that you keep elsewhere.
+skeleton, and everything specific to you is in `CANOPY_AGENT_DATA`, which you keep elsewhere.
 
-| Lives in Canopy | Lives in your overlay |
+| Lives in Canopy | Lives in your agent-data folder |
 | --- | --- |
-| `compose.yaml`, images, skills | `.env` with secrets and settings |
-| Defaults in `config/` | `marketplaces.json`, `servers.json` |
-| | Extra services, such as your own MCP servers |
+| `compose.yaml`, images, skills | `secrets.env` with secrets and settings |
+| Defaults in `config/` | `config/marketplaces.json`, `config/servers.json` |
+| | `compose.override.yaml`, for extra services such as your own MCP servers |
 
 ```
-my-canopy/
-  .env
+~/canopy/agent-data/
+  secrets.env
   config/marketplaces.json
   config/servers.json
   compose.override.yaml
 ```
 
-Set `CANOPY_CONFIG_DIR` in that `.env` to the absolute path of `my-canopy/config`, and
-`CANOPY_ENV_FILE` to the absolute path of the `.env` itself, then pass both files to Compose:
+`canopy up` picks all of these up, including the override file if it exists. To run Compose yourself,
+use `canopy compose ...`, which passes the same files.
 
-```bash
-docker compose --project-directory /path/to/Canopy \
-  --env-file my-canopy/.env \
-  -f /path/to/Canopy/compose.yaml -f my-canopy/compose.override.yaml up -d
-```
-
-`--env-file` only fills in `compose.yaml`. The seed reads its own copy of the file to expand `${VAR}`
-in `servers.json`, and without `CANOPY_ENV_FILE` it looks in the Canopy checkout and finds nothing.
-If your secrets come from the process environment instead, list their names under the seed's
-`environment` in the override file.
+`${VAR}` in `servers.json` is expanded by the API, which reads `secrets.env`. If your secrets come from
+the process environment instead, list their names under the `api` service's `environment` in the
+override file.
 
 Use the override file to add private upstreams as services on the `canopy` network, then list them in
 `servers.json` by service name. They get no public image and never touch this repo.
@@ -39,7 +32,8 @@ Use the override file to add private upstreams as services on the `canopy` netwo
 - `CANOPY_CLIENT_NAME` must match the name your client gives the server. If your skills say
   `mcp__my-gateway__<tool>`, set it to `my-gateway`.
 - `CORE_GROUP` and `TOOLS_GROUP` can name your existing groups.
-- `SERVER_MODE=development` keeps a gateway that has no auth. The seed then creates no identities.
+- `SERVER_MODE=development` keeps a gateway that has no auth. No identities are created, but the
+  control API still needs its token.
 - `EMBED_ON_SYNC=true` keeps embedding automatic.
 
 Changing `EMBED_MODEL` invalidates stored vectors, because they are keyed by model name.

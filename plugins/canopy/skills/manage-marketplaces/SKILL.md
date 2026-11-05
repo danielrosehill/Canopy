@@ -5,7 +5,7 @@ description: Add or remove a Claude Code plugin marketplace on a Canopy server. 
 
 # Manage marketplaces
 
-Marketplaces are listed in `marketplaces.json`, in `CANOPY_CONFIG_DIR` (default `./config`):
+Marketplaces are listed in `agent-data/config/marketplaces.json`:
 
 ```json
 { "marketplaces": [ { "name": "my-plugins", "repo": "owner/repo" } ] }
@@ -13,7 +13,7 @@ Marketplaces are listed in `marketplaces.json`, in `CANOPY_CONFIG_DIR` (default 
 
 `repo` is a GitHub `owner/repo` or an `https://` git URL. `name` is optional and defaults to the repo
 name. The repo must have `.claude-plugin/marketplace.json`. Add `"ref"` to pin a branch or tag. A
-private repo needs `GITHUB_TOKEN` in `.env`, then `docker compose up -d catalogue`.
+private repo needs `GITHUB_TOKEN` in `agent-data/secrets.env`, then `canopy compose up -d catalogue`.
 
 To add or remove one:
 

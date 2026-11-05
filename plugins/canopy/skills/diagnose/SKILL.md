@@ -8,14 +8,16 @@ description: Work out why a Canopy skill or tool cannot be found, or why the ser
 Start with `catalogue__health`. Each entry in `problems` names its cause. If it cannot be called:
 
 ```bash
-docker compose ps
-docker compose logs --tail 50 gateway catalogue seed
+canopy status
+canopy compose ps
+canopy compose logs --tail 50 api gateway catalogue seed
 ```
 
 | Symptom | Check |
 | --- | --- |
 | 403 from every endpoint | The gateway is not initialised: the seed has not finished. Read its logs. |
-| 401 | Wrong token. Print it again, as in the `setup` skill. |
+| 401 | Wrong token. Print it again with `canopy token`. |
+| `cannot read the API token` | The stack has not started, or `canopy init` was skipped and Docker made the folder as root. |
 | Empty `results` and an `error` about an empty index | A sync has not finished, or failed. Read `last_sync` in health. |
 | A skill is missing | `catalogue__list` with `plugin=<name>`. If the plugin is absent, its marketplace is not configured or its entry was skipped: read `last_sync.summary.errors`. |
 | A tool is missing | `toolbox__list_tools` with `server=<name>`. If the server is absent, read the seed logs. Then run `catalogue__sync`. |
