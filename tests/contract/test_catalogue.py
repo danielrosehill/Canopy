@@ -141,6 +141,15 @@ def test_hybrid_search_uses_the_stored_vectors(embedder):
     text = ix.embed_text(dict(wanted))
     out = search(text)   # the same text, so the same stand-in vector: distance 0
     assert out["results"][0]["id"] == "skill:media/video-trim" and "degraded" not in out
+    assert out["confidence"] > 0.99 and "weak" not in out
+
+
+def test_a_poor_match_says_it_is_weak(embedder, monkeypatch):
+    load_fixture()
+    ix.embed_pending(cat.db)
+    monkeypatch.setattr(cat, "CONFIDENCE_MIN", 1.01)
+    out = search(ix.embed_text(dict(stored("skill:media/video-trim"))))
+    assert out["weak"] is True and out["results"]   # results stay: weak is a signal, not a filter
 
 
 def test_a_broken_embedder_degrades_to_keywords(monkeypatch):

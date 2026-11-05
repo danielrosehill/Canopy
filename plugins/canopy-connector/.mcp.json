@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "canopy": {
+      "type": "http",
+      "url": "${CANOPY_MCP_URL}",
+      "headers": { "Authorization": "Bearer ${CANOPY_TOKEN:-}" }
+    }
+  }
+}

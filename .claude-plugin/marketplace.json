@@ -1,12 +1,21 @@
 {
   "name": "canopy",
-  "owner": { "name": "Daniel Rosehill" },
-  "metadata": { "description": "Skills for setting up and running a Canopy server." },
+  "owner": {
+    "name": "Daniel Rosehill"
+  },
+  "metadata": {
+    "description": "Connect to a Canopy server, and manage one."
+  },
   "plugins": [
     {
-      "name": "canopy",
-      "source": "./plugins/canopy",
-      "description": "Set up, run and diagnose a Canopy server, and find skills on it."
+      "name": "canopy-connector",
+      "source": "./plugins/canopy-connector",
+      "description": "Connect to your Canopy server and find skills on it. The only Canopy plugin to install at user level."
+    },
+    {
+      "name": "canopy-manager",
+      "source": "./plugins/canopy-manager",
+      "description": "Set up, run and diagnose a Canopy server. Deploy it on the server; add it at user level only while setting up."
     }
   ]
 }

@@ -62,7 +62,7 @@ claude mcp add --transport http canopy http://127.0.0.1:8080/v0/groups/core/mcp 
   --header "Authorization: Bearer $TOKEN"
 ```
 
-Then ask your agent to search for a skill. A fresh server indexes only the Canopy plugin.
+Then ask your agent to search for a skill. A fresh server indexes only the Canopy plugins.
 
 ## Your own content
 
@@ -111,11 +111,11 @@ In the browser, at <http://127.0.0.1:8081>:
 docker compose --profile ui up -d
 ```
 
-Then hand the id to your agent with `/skill <id>` from the Canopy plugin:
+Then hand the id to your agent with `/skill <id>` from the Canopy connector:
 
 ```
 /plugin marketplace add danielrosehill/Canopy
-/plugin install canopy@canopy
+/plugin install canopy-connector@canopy
 ```
 
 ## Profiles
@@ -142,6 +142,8 @@ follow, so add only sources you trust.
 
 ## Design notes
 
+- [User manual](docs/manual.md): connecting a client, and how finding skills works
+- [API reference](docs/api.md): every route
 - [Architecture](docs/architecture.md): how the stack fits together
 - [Hosted and web clients](docs/connect/saas-and-web-clients.md): ChatGPT, claude.ai, Open WebUI and others.
 - [Deployment patterns](docs/deployment-patterns.md): remote access with Tailscale and Cloudflare,

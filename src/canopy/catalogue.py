@@ -21,11 +21,15 @@ import time
 import numpy as np
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
+from starlette.concurrency import run_in_threadpool
+from starlette.requests import Request
+from starlette.responses import JSONResponse, Response
 
 from . import gateway as gw
 from . import index as ix
 from . import ranking
 from . import scheduler
+from .skills_ext import Skills
 
 # Reachable only on the stack's internal network; the gateway is the front door.
 _security = TransportSecuritySettings(
@@ -34,6 +38,9 @@ mcp = FastMCP("catalogue", transport_security=_security)
 
 SYNC_INTERVAL = scheduler.interval("sync", 3600)   # only to judge overdue: `api` runs the jobs
 QUERY_EMBED_TIMEOUT = float(os.environ.get("QUERY_EMBED_TIMEOUT_SEC", "8"))
+# Cosine of the best result, below which a reply says the match is weak. Fused rank scores cannot
+# do this: every query has a first place. 0.60 is for bge-m3; see docs/design.md, "What the agent sees".
+CONFIDENCE_MIN = float(os.environ.get("SEARCH_CONFIDENCE_MIN", "0.6"))
 KINDS = ("plugin", "skill", "command", "agent", "mcp", "tool")
 TOOL_HITS = int(os.environ.get("SEARCH_TOOL_HITS", "3"))
 SEARCH_DESC_CHARS = 300   # search is a shortlist; `read` has the full text
@@ -123,6 +130,8 @@ def search(query: str, kind: str | None = None, plugin: str | None = None,
     kind: plugin | skill | command | agent | mcp | tool.  marketplace: a configured marketplace name.
     `read` an id for full text; for a tool it returns the input schema.
     Hybrid keyword (BM25) and semantic ranking; `degraded` says if semantic is off.
+    `confidence` is how close the best result is, and `weak: true` means nothing strong matched:
+    stop looking rather than rewording.
     Results are compact (id + description cut to 300 chars, best first); full=true adds
     kind/plugin/name/score and the whole description.
     """
@@ -137,15 +146,19 @@ def search(query: str, kind: str | None = None, plugin: str | None = None,
         keyword_ids = [i for i in _keywords["index"].search(query, 1000) if i in allowed][:200]
 
     vector_ids: list[str] = []
+    cosine: dict[str, float] = {}
     try:
         if not ix.EMBED_URL:
             raise RuntimeError("no embedding provider configured")
         # Short timeout: keyword-only with `degraded` beats a hung call.
         qv = np.asarray(ix.embed([query], timeout=QUERY_EMBED_TIMEOUT)[0], dtype=np.float32)
         qv /= np.linalg.norm(qv) or 1.0
-        vector_ids = [r["id"] for r in db.execute(
-            f"SELECT r.id FROM records r WHERE {where} AND r.embedding IS NOT NULL AND r.embed_model = %s "
-            "ORDER BY r.embedding <=> %s LIMIT 200", [*args, ix.EMBED_MODEL, qv])]
+        hits = list(db.execute(
+            f"SELECT r.id, 1 - (r.embedding <=> %s) AS cosine FROM records r WHERE {where} "
+            "AND r.embedding IS NOT NULL AND r.embed_model = %s "
+            "ORDER BY r.embedding <=> %s LIMIT 200", [qv, *args, ix.EMBED_MODEL, qv]))
+        vector_ids = [r["id"] for r in hits]
+        cosine = {r["id"]: float(r["cosine"]) for r in hits}
         if not vector_ids and allowed:
             raise RuntimeError("no embeddings stored")
     except Exception as e:  # noqa: BLE001
@@ -184,6 +197,11 @@ def search(query: str, kind: str | None = None, plugin: str | None = None,
     out = {"results": [item(rid) for rid in top]}
     if tool_ids:
         out["tools"] = [item(rid) for rid in tool_ids]
+    scored = [cosine[rid] for rid in top if rid in cosine]
+    if scored:   # absent when search is keyword only: there is nothing to measure
+        out["confidence"] = round(max(scored), 3)
+        if out["confidence"] < CONFIDENCE_MIN:
+            out["weak"] = True
     if degraded:
         out["degraded"] = degraded
     if not top and not db.execute("SELECT 1 FROM records LIMIT 1").fetchone():
@@ -587,6 +605,26 @@ def embed(dry_run: bool = True) -> str:
 # Text content only: a structured copy of the same result costs extra tokens in clients.
 for _t in mcp._tool_manager.list_tools():
     _t.fn_metadata.output_schema = None
+
+
+def _skill_rows(offset: int, limit: int) -> list[dict]:
+    return list(db.execute("SELECT id, plugin, name, path FROM records WHERE kind = 'skill' "
+                           "ORDER BY id OFFSET %s LIMIT %s", [offset, limit]))
+
+
+def _skill_row(plugin: str, name: str) -> dict | None:
+    return db.execute("SELECT id, plugin, name, path FROM records WHERE kind = 'skill' "
+                      "AND plugin = %s AND name = %s", [plugin, name]).fetchone()
+
+
+skills = Skills(_skill_rows, _skill_row, _plugin_root)
+
+
+@mcp.custom_route("/skills", methods=["POST"])
+async def skills_rpc(request: Request) -> Response:
+    """The MCP Skills extension, which the gateway cannot proxy. See skills_ext.py."""
+    reply = await run_in_threadpool(skills.handle, await request.json())
+    return JSONResponse(reply) if reply else Response(status_code=202)
 
 
 def main() -> None:

@@ -234,14 +234,19 @@ and 3,848 vectors imported from an older index. 50 labelled queries, ranked amon
 
 The goal is the fewest tokens between a task and the right skill. In order of expected effect:
 
-1. **Search has to happen at all.** An agent told to search first still often does not. So the plugin
-   adds a `UserPromptSubmit` hook: it searches on the user's prompt and, only above a score threshold,
+1. **Search has to happen at all.** An agent told to search first still often does not. So the connector
+   adds a `UserPromptSubmit` hook: it searches on the user's prompt and, only on a confident match,
    injects up to 3 ids and one line each. Roughly 60 tokens when it fires and none when it does not.
-   Untested, and the threshold needs tuning against the labelled queries.
+   The signal is the best result's cosine similarity, not the fused score. On a real index of about
+   4,800 records on 2026-11-05, the fused score was 3 to 4 for every prompt, "thanks that looks good"
+   included: every query has a first place. Cosine with `bge-m3` at 0.60: 37 of 49 labelled queries
+   fired, 27 with the right id shown, and 1 of 20 ordinary prompts. That is one small set, with
+   negatives written by hand, so 0.60 is a starting value. Injection was proved in a real Claude Code
+   session against a stand-in server.
 2. **Descriptions are the real interface.** The agent picks from them, so a linter flags skills with
    weak ones, and the near-duplicates that split a query.
-3. **An honest miss.** Replies carry a confidence signal, so a weak match reads as "nothing strong
-   here" and the agent stops looking.
+3. **An honest miss.** Replies carry `confidence`, and `weak: true` below `SEARCH_CONFIDENCE_MIN`, so a
+   weak match reads as "nothing strong here" and the agent stops looking.
 4. **A skill loads in layers.** `read` returns the skill. Long reference files are fetched only if the
    skill asks for them.
 5. **Learning from use.** `system.search_log` records each query and what was then read. A search
@@ -322,8 +327,10 @@ git-synced library at this scale with hybrid search, tools and a gateway.
 
 - The Agent Skills format, unchanged.
 - The MCP Skills extension ([SEP-2640](https://modelcontextprotocol.io/seps/2640-skills-extension)):
-  `skills/list`, `skills/get` and `skill://` resources. The catalogue should serve these, so any host that
+  `skills/list`, `skills/get` and `skill://` resources. The catalogue serves these, so any host that
   supports the extension can read Canopy's skills. The extension has no search, which is what Canopy adds.
+  MCPJungle v0.4.7 answers `skills/list` with -32601, so they cannot go through the gateway: the API
+  forwards them at `POST /v1/skills/mcp`, behind its token.
 - Tool discovery is increasingly handled by clients: Claude Code defers tool definitions behind its own
   search. So the toolbox stays small and is not where effort goes. Skills are.
 
@@ -442,24 +449,22 @@ It has no Docker socket. Commands that manage the stack itself run on the host.
 
 ## Connecting a client
 
-**One official plugin, `canopy`, and it is the only one a user installs,** at user level on every device.
+**Two plugins, for context cleanliness.** Whatever sits at user level costs context in every session, and
+puts maintenance skills in front of an agent doing something else.
 
 ```
 /plugin marketplace add danielrosehill/Canopy
-/plugin install canopy@canopy
+/plugin install canopy-connector@canopy
 ```
 
-It holds the MCP connection to the user's own instance and three skills, because each skill description
-costs context in every session:
+- **`canopy-connector`** is the only one a user installs, at user level on every device. It holds the MCP
+  connection to the user's own instance, one skill (`find`), the `/skill` command and the prompt hook.
+- **`canopy-manager`** is for running the infrastructure: setup, diagnosis, upstreams, marketplaces, sync,
+  backup, staging. It is deployed on the server. While setting up, a user can add it at user level for
+  a while. Its skills stay findable from any client, because the server indexes them.
 
-| Skill | For |
-| --- | --- |
-| `find` | Search, read and load skills, and call tools. The everyday one |
-| `validate-connection` | Check the connection, and set it up on a new device |
-| `manage` | Points to the API and `canopy` CLI. Marketplaces, upstreams, namespaces, jobs, backups and updates are reference files it loads only when needed |
-
-It also carries the prompt hook, and a short snippet for the user's `CLAUDE.md`. Management needs the API
-token, so it works where the agent runs on the server, or where a token has been given to that device.
+Management needs the API token, so it works where the agent runs on the server, or where a token has been
+given to that device.
 `clients/canopy-pick`, the terminal picker for people, stays a separate add-on.
 
 ## Documentation
@@ -487,7 +492,8 @@ Each step ends with a clean install on an empty machine, and the contract suite 
 4. **Done.** Scheduler, with `sync`, `embed` and `health` jobs, and backup and restore as jobs, proved on a clean
    install. The `backup` profile and its `/admin` mount are gone.
 5. **Done.** Storage profile, stage route and skill, with the admin-API bootstrap proved on the real image.
-6. The `canopy` plugin with its hook, MCP Skills extension, manual and API reference.
+6. **Done.** The `canopy-connector` and `canopy-manager` plugins, the prompt hook, MCP Skills extension,
+   manual and API reference.
 7. Dashboard.
 8. Memory.
 9. Cache, if measurement still supports it.

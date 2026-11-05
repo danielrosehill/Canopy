@@ -18,7 +18,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from . import scheduler as sched
@@ -30,6 +30,9 @@ from .storage import DEFAULT_EXPIRES, MAX_BYTES, Storage
 
 API_DIR = Path(os.environ.get("CANOPY_API_DIR", "/api"))
 PORT = int(os.environ.get("CANOPY_API_PORT", "8090"))
+
+
+CATALOGUE_URL = os.environ.get("CATALOGUE_URL", "http://catalogue:3000")
 
 
 def load_token(api_dir: Path = API_DIR) -> str:
@@ -166,6 +169,13 @@ def create_app(control: Control, token: str, embedder: Embedder | None = None,
             raise ControlError(e.status, str(e)) from None
         return JSONResponse(reply)
 
+    async def skills_mcp(request: Request) -> Response:
+        """The MCP Skills extension, forwarded to the catalogue. The gateway rejects these methods."""
+        async with httpx.AsyncClient(timeout=60) as http:
+            r = await http.post(f"{CATALOGUE_URL}/skills", content=await request.body(),
+                                headers={"Content-Type": "application/json"})
+        return Response(r.content, status_code=r.status_code, media_type="application/json")
+
     async def run(_: Request, fn, *args, status: int = 200) -> JSONResponse:
         return JSONResponse(await run_in_threadpool(fn, *args), status_code=status)
 
@@ -189,6 +199,7 @@ def create_app(control: Control, token: str, embedder: Embedder | None = None,
         Route("/v1/config/apply", apply, methods=["POST"]),
         Route("/v1/tokens/agent", agent_token),
         Route("/v1/embeddings", embeddings, methods=["POST"]),
+        Route("/v1/skills/mcp", skills_mcp, methods=["POST"]),
         Route("/v1/storage/stage", stage, methods=["POST"]),
         Route("/v1/storage/buckets", list_buckets),
         Route("/v1/jobs", list_jobs),

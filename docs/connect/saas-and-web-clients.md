@@ -1,6 +1,6 @@
 # Hosted and web clients: ChatGPT, claude.ai, Open WebUI and others
 
-How to use a home gateway from clients that are not the `canopy` plugin in Claude Code. Canopy ships none
+How to use a home gateway from clients that are not the `canopy-connector` plugin in Claude Code. Canopy ships none
 of this: each route needs its own scoping, and ChatGPT needs its own marketplace for skills. This page is
 the map. Vendor details were read from their docs on 2026-11-05 and change often, so follow the links.
 
