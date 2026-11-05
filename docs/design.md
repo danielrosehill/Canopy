@@ -471,6 +471,7 @@ given to that device.
 
 ## Documentation
 
+- `docs/overview.md`: what Canopy is and why it is shaped this way, with the architecture diagrams.
 - `docs/manual.md`: the user manual. Install, connect, and above all **how finding skills works**,
   since that is the point of the system: what the connector skills do, how to search, how to load
   what you find, and how to call a long-tail tool.

@@ -1,5 +1,7 @@
 # Architecture
 
+For the reasoning behind the design, and diagrams, start with the [overview](overview.md).
+
 Verified against MCPJungle 0.4.7 on 2026-11-05, on a clean Docker host.
 
 ## Services

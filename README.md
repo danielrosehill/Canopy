@@ -1,3 +1,5 @@
+![Canopy: all your skills and tools under one roof](docs/brand/banner.jpg)
+
 # Canopy
 
 Self-hosted progressive discovery for AI agents, across skills and plugins as well as tools.
@@ -13,6 +15,15 @@ context problem has moved. Thousands of skills cannot all be installed or listed
 
 Canopy targets that. Skills stay out of the agent's context until needed: the agent searches a
 hybrid index and reads only what matches.
+
+I looked for something off the shelf that did this and did not find it. There are good tools for MCP, but
+I found no real progressive discovery for skills, so Canopy joins existing pieces together. It is not offered
+as the best way to do this, just one way that works.
+
+![Sources feed a skills library and an MCP aggregator on a home server, which serves Claude Code, claude.ai, ChatGPT and your own agents](docs/brand/canopy-at-a-glance.png)
+
+It normally lives on a home server, so local tools stay local and the cloud is still reachable. Clients hold
+one connector and no credentials for your tools. The [overview](docs/overview.md) explains why, with diagrams.
 
 ## What you get
 
@@ -143,6 +154,7 @@ follow, so add only sources you trust.
 
 ## Design notes
 
+- [Overview](docs/overview.md): what Canopy is and why it is shaped this way, with diagrams
 - [User manual](docs/manual.md): connecting a client, and how finding skills works
 - [API reference](docs/api.md): every route
 - [Architecture](docs/architecture.md): how the stack fits together
