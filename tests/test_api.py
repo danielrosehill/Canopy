@@ -78,3 +78,15 @@ def test_env_token_wins(tmp_path, monkeypatch):
 
 def test_gateway_class_is_the_default():
     assert Control.__init__.__defaults__[0] is Gateway
+
+
+def test_jobs_say_so_when_no_scheduler_is_running(client):
+    assert client.get("/v1/jobs", headers=AUTH).status_code == 503
+
+
+def test_running_an_unknown_job_is_a_404(tmp_path):
+    from canopy.scheduler import Scheduler
+    c = TestClient(api.create_app(Stub(), "right", scheduler=Scheduler(None, {}, tmp_path)),
+                   raise_server_exceptions=False)
+    assert c.post("/v1/jobs/nope/run", headers=AUTH).status_code == 404
+    assert c.post("/v1/jobs/nope/run").status_code == 401

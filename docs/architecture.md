@@ -142,8 +142,8 @@ Vectors are labelled with the canonical name (`bge-m3`), and `system.model_map` 
 calls it. The column is `vector(1024)`, so a model of another size needs a migration.
 
 A record keeps its vector while `embed_key`, the hash of the embedded text, stays the same. A sync does
-not embed unless `EMBED_ON_SYNC=true`. `catalogue__embed` reports pending records and estimated tokens,
-and `dry_run=false` starts the run.
+not embed: the `embed` job does, after a sync, if `EMBED_ON_SYNC=true`. `catalogue__embed` reports pending
+records and estimated tokens, and `dry_run=false` starts the run.
 
 `scripts/eval-search.py <queries.json>` scores a running stack. `tests/fixtures/search.json` is the generic
 labelled set. Queries that name private skills stay in the operator's own `agent-data`.

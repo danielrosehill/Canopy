@@ -11,6 +11,9 @@
     canopy set-group FILE
     canopy remove-group NAME
     canopy apply                    apply agent-data/config to the gateway
+    canopy jobs                     the scheduler's jobs and their last runs
+    canopy jobs run NAME            run a job now
+    canopy jobs runs NAME           recent runs of a job
     canopy token                    print the agent token for MCP clients
     canopy api METHOD PATH [JSON]   call any route
     canopy run CMD [ARGS...]        run a command in the cli container
@@ -210,6 +213,13 @@ def main() -> int:
         return show("PUT", f"/v1/gateway/groups/{doc['name']}", doc)
     if cmd == "remove-group" and args:
         return show("DELETE", f"/v1/gateway/groups/{args[0]}")
+    if cmd == "jobs":
+        if not args:
+            return show("GET", "/v1/jobs")
+        if args[0] == "run" and len(args) == 2:
+            return show("POST", f"/v1/jobs/{args[1]}/run")
+        if args[0] == "runs" and len(args) == 2:
+            return show("GET", f"/v1/jobs/{args[1]}/runs")
     if cmd == "apply":
         return show("POST", "/v1/config/apply")
     if cmd == "token":

@@ -490,8 +490,8 @@ class Control:
         missing = sorted(wanted - names)
         return {"ok": not missing, "groups": len(names), "missing": missing}
 
-    def _tool_text(self, name: str) -> str:
-        reply = self._mcp.call(name)
+    def _tool_text(self, name: str, arguments: dict | None = None) -> str:
+        reply = self._mcp.call(name, arguments)
         text = "".join(c.get("text", "") for c in reply.get("content", []))
         if reply.get("isError"):
             raise RuntimeError(text[:300])
@@ -505,6 +505,13 @@ class Control:
     def _check_toolbox(self) -> dict:
         self._tool_text("toolbox__list_servers")
         return {"ok": True}
+
+    def health_job(self) -> str:
+        """The `health` job: a failed check fails the run, so the record shows when it broke."""
+        report = self.status()
+        if not report["ok"]:
+            raise RuntimeError(json.dumps(report)[:2000])
+        return json.dumps(report)
 
     def status(self) -> dict:
         checks = {"gateway": self._check_gateway, "upstreams": self._check_upstreams,

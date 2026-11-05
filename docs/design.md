@@ -345,6 +345,12 @@ result and output, which is what the dashboard shows.
 
 A job takes a lock, so two runs never overlap. A missed run starts on the next boot.
 
+Built so far: `sync`, `embed`, `health`. The rest of the table arrives with what each one does, and a job
+named in `jobs.json` with nothing behind it is listed as not `runnable` and left alone. `every` takes a
+number and m, h or d, and `after` chains a job to another's success. `embed` follows `EMBED_ON_SYNC`, off by
+default, so a schedule never spends money by surprise. A sync no longer embeds, and the catalogue no longer
+syncs by itself: without `api` nothing is scheduled. Read `canopy jobs`, or `GET /v1/jobs`.
+
 ## Cache
 
 Valkey, opt-in, and built late. Measured on a real deployment: a warm query embedding takes 40 to 80 ms
@@ -464,7 +470,8 @@ Each step ends with a clean install on an empty machine, and the contract suite 
    `python -m canopy.import_vectors <file>` brings vectors over from an older SQLite index after a first full
    sync, so a move needs no full re-embed: on a real index it filled 3,848 of 3,884 records in 4 seconds, and
    the other 36 cost about 13,000 tokens. See "Checked on the shipped code".
-4. Scheduler, then backup and restore as jobs.
+4. **Scheduler built,** with `sync`, `embed` and `health` jobs, run on a clean install. Next: backup and restore
+   as jobs, which also retires the `/admin` mount in the `backup` profile.
 5. Storage profile, stage route and skill.
 6. The `canopy` plugin with its hook, MCP Skills extension, manual and API reference.
 7. Dashboard.

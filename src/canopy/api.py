@@ -8,6 +8,7 @@ from __future__ import annotations
 import hmac
 import os
 import secrets
+import threading
 from pathlib import Path
 
 import httpx
@@ -20,6 +21,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from . import scheduler as sched
 from . import store
 from .control import Control, ControlError, write_secret
 from .embedder import Embedder, EmbedError
@@ -52,8 +54,28 @@ class RequireToken(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-def create_app(control: Control, token: str, embedder: Embedder | None = None) -> Starlette:
+def create_app(control: Control, token: str, embedder: Embedder | None = None,
+               scheduler: sched.Scheduler | None = None) -> Starlette:
     embedder = embedder or Embedder(primary="", fallback="")
+
+    def need_scheduler() -> sched.Scheduler:
+        if scheduler is None:
+            raise ControlError(503, "the scheduler is not running")
+        return scheduler
+
+    async def list_jobs(request: Request) -> JSONResponse:
+        return await run(request, need_scheduler().listing)
+
+    async def job_runs(request: Request) -> JSONResponse:
+        return await run(request, need_scheduler().runs, request.path_params["name"])
+
+    async def run_job(request: Request) -> JSONResponse:
+        """Starts the job and returns: a sync can take minutes. Poll /v1/jobs/{name}/runs."""
+        name, s = request.path_params["name"], need_scheduler()
+        if name not in s.actions or name not in s.jobs():
+            raise ControlError(404, f"no such job: {name}")
+        threading.Thread(target=s.run, args=(name,), daemon=True).start()
+        return JSONResponse({"job": name, "requested": True}, status_code=202)
 
     async def body(request: Request) -> dict:
         try:
@@ -139,6 +161,9 @@ def create_app(control: Control, token: str, embedder: Embedder | None = None) -
         Route("/v1/config/apply", apply, methods=["POST"]),
         Route("/v1/tokens/agent", agent_token),
         Route("/v1/embeddings", embeddings, methods=["POST"]),
+        Route("/v1/jobs", list_jobs),
+        Route("/v1/jobs/{name}/runs", job_runs),
+        Route("/v1/jobs/{name}/run", run_job, methods=["POST"]),
     ], exception_handlers={ControlError: control_error, httpx.HTTPError: gateway_error},
        middleware=[Middleware(RequireToken, token=token)])
 
@@ -153,7 +178,11 @@ def model_lookup(db: store.Db):
 
 def main() -> None:
     store.migrate()
-    app = create_app(Control(), load_token(), Embedder(provider_model=model_lookup(store.Db())))
+    db, control = store.Db(), Control()
+    jobs = sched.CatalogueJobs(db, control._tool_text)
+    scheduler = sched.Scheduler(db, {"sync": jobs.sync, "embed": jobs.embed, "health": control.health_job})
+    threading.Thread(target=scheduler.loop, daemon=True).start()
+    app = create_app(control, load_token(), Embedder(provider_model=model_lookup(db)), scheduler)
     uvicorn.run(app, host=os.environ.get("CANOPY_API_HOST", "0.0.0.0"), port=PORT, log_level="warning")
 
 

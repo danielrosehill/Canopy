@@ -40,8 +40,6 @@ EMBED_URL = (os.environ.get("CANOPY_API_URL", "http://api:8090").rstrip("/") + "
              if os.environ.get("EMBED_PROVIDER") else "")
 API_TOKEN_FILE = Path(os.environ.get("CANOPY_API_DIR", "/api")) / "token"
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "bge-m3")   # the canonical name: see system.model_map
-# Off by default: embedding costs money on a hosted API, so it is a separate step.
-EMBED_ON_SYNC = os.environ.get("EMBED_ON_SYNC", "false").lower() == "true"
 # Tool records come from what this group serves; empty means everything the services
 # identity can see. CORE_GROUP is what agents list natively; other tools go via toolbox.
 TOOLS_GROUP = os.environ.get("TOOLS_GROUP", "")
@@ -637,15 +635,9 @@ def sync(db: store.Db, only: str | None = None, force: bool = False) -> dict:
         errors.append(f"gateway tool list: {e}")
     mcp_count = rebuild_mcp_records(db)
 
-    embedded = 0
-    if EMBED_ON_SYNC and EMBED_URL:
-        embedded, eerr = embed_pending(db)
-        if eerr:
-            errors.append(eerr)
-
     summary = {"ok": not errors, "manifest_plugins": len(plugins), "checked": len(targets),
                "reindexed_plugins": len(todo), "records_written": sum(written),
-               "removed_plugins": removed, "mcp_and_tool_records": mcp_count, "embedded": embedded,
+               "removed_plugins": removed, "mcp_and_tool_records": mcp_count,
                "embed_pending": pending_estimate(db), "errors": errors,
                "seconds": round(time.time() - started, 1)}
     with write_lock, db:

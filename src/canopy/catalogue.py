@@ -25,13 +25,14 @@ from mcp.server.transport_security import TransportSecuritySettings
 from . import gateway as gw
 from . import index as ix
 from . import ranking
+from . import scheduler
 
 # Reachable only on the stack's internal network; the gateway is the front door.
 _security = TransportSecuritySettings(
     enable_dns_rebinding_protection=False, allowed_hosts=["*"], allowed_origins=["*"])
 mcp = FastMCP("catalogue", transport_security=_security)
 
-SYNC_INTERVAL = int(os.environ.get("SYNC_INTERVAL_SEC", "3600"))
+SYNC_INTERVAL = scheduler.interval("sync", 3600)   # only to judge overdue: `api` runs the jobs
 QUERY_EMBED_TIMEOUT = float(os.environ.get("QUERY_EMBED_TIMEOUT_SEC", "8"))
 KINDS = ("plugin", "skill", "command", "agent", "mcp", "tool")
 TOOL_HITS = int(os.environ.get("SEARCH_TOOL_HITS", "3"))
@@ -87,18 +88,6 @@ def refresh_keywords() -> None:
         ix.log(f"keyword index failed: {e!r}")
     finally:
         _keyword_lock.release()
-
-
-def _scheduler() -> None:
-    refresh_keywords()   # what is already stored is searchable before the first sync ends
-    # The seed creates the tokens; give it a moment on a first start.
-    for _ in range(30):
-        if gw.read_token(gw.READER_TOKEN):
-            break
-        time.sleep(1)
-    while True:
-        _run_sync()
-        time.sleep(SYNC_INTERVAL)
 
 
 # --- helpers ----------------------------------------------------------------------
@@ -601,7 +590,7 @@ for _t in mcp._tool_manager.list_tools():
 
 
 def main() -> None:
-    threading.Thread(target=_scheduler, daemon=True).start()
+    threading.Thread(target=refresh_keywords, daemon=True).start()   # searchable before any sync
     mcp.settings.host = os.environ.get("MCP_HTTP_HOST", "0.0.0.0")
     mcp.settings.port = int(os.environ.get("MCP_HTTP_PORT", "3000"))
     mcp.run(transport="streamable-http")
