@@ -52,3 +52,12 @@ jobs:
           tags: |
             ghcr.io/danielrosehill/canopy:main
             ghcr.io/danielrosehill/canopy:${{ github.sha }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: cli/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/danielrosehill/canopy:cli-main
+            ghcr.io/danielrosehill/canopy:cli-${{ github.sha }}

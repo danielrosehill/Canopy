@@ -1,0 +1,229 @@
+#!/usr/bin/env python3
+"""The Canopy command line. Python standard library only.
+
+    canopy init                     make the folders and default config
+    canopy up [compose args]        start the stack and wait for the seed
+    canopy down [compose args]      stop it. Data stays in the folders
+    canopy status                   health of every component
+    canopy servers | groups | tools list what the gateway has
+    canopy add-server FILE [--replace]    FILE is JSON, or - for stdin
+    canopy remove-server NAME
+    canopy set-group FILE
+    canopy remove-group NAME
+    canopy apply                    apply agent-data/config to the gateway
+    canopy token                    print the agent token for MCP clients
+    canopy api METHOD PATH [JSON]   call any route
+    canopy run CMD [ARGS...]        run a command in the cli container
+    canopy compose [ARGS...]        docker compose, with Canopy's files
+
+    CANOPY_AGENT_DATA   default ~/canopy/agent-data
+    CANOPY_DATA         default ~/canopy/data
+    CANOPY_API_URL      default http://127.0.0.1:8090
+    CANOPY_API_TOKEN    default: read from $CANOPY_DATA/api/token
+"""
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+IN_CLI = os.environ.get("CANOPY_IN_CLI") == "1"
+AGENT_FOLDERS = ("config", "skills", "notes", "cli")
+DATA_FOLDERS = ("api", "admin", "tokens", "postgres", "catalogue", "backups")
+
+
+def read_env_file(path: Path) -> dict[str, str]:
+    out = {}
+    if path.is_file():
+        for line in path.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                out[k.strip().removeprefix("export ").strip()] = v.strip().strip("'\"")
+    return out
+
+
+def setting(name: str, default: str) -> str:
+    """The process environment wins, then the checkout's .env."""
+    return os.environ.get(name) or read_env_file(REPO / ".env").get(name) or default
+
+
+def folders() -> tuple[Path, Path]:
+    home = Path.home()
+    return (Path(setting("CANOPY_AGENT_DATA", str(home / "canopy/agent-data"))).expanduser(),
+            Path(setting("CANOPY_DATA", str(home / "canopy/data"))).expanduser())
+
+
+def init() -> int:
+    agent, data = folders()
+    for f in AGENT_FOLDERS:
+        (agent / f).mkdir(parents=True, exist_ok=True)
+    for f in DATA_FOLDERS:
+        (data / f).mkdir(parents=True, exist_ok=True)
+    for f in ("api", "admin", "tokens"):
+        (data / f).chmod(0o700)
+    for f in ("marketplaces.json", "servers.json"):
+        if not (agent / "config" / f).exists():
+            shutil.copy(REPO / "config" / f, agent / "config" / f)
+    secrets = agent / "secrets.env"
+    if not secrets.exists():
+        shutil.copy(REPO / ".env.example", secrets)
+        secrets.chmod(0o600)
+    print(f"agent data: {agent}\ndata:       {data}\nsettings:   {secrets}")
+    return 0
+
+
+def compose_args() -> list[str]:
+    agent, _ = folders()
+    args = ["docker", "compose", "--project-directory", str(REPO)]
+    for env_file in (REPO / ".env", agent / "secrets.env"):
+        if env_file.is_file():
+            args += ["--env-file", str(env_file)]
+    args += ["-f", str(REPO / "compose.yaml")]
+    override = agent / "compose.override.yaml"
+    if override.is_file():
+        args += ["-f", str(override)]
+    return args
+
+
+def compose_env() -> dict[str, str]:
+    agent, data = folders()
+    return {**os.environ, "CANOPY_AGENT_DATA": str(agent), "CANOPY_DATA": str(data),
+            "CANOPY_UID": str(os.getuid()), "CANOPY_GID": str(os.getgid())}
+
+
+def compose(*args: str) -> int:
+    return subprocess.call([*compose_args(), *args], env=compose_env())
+
+
+def up(args: list[str]) -> int:
+    agent, _ = folders()
+    if not (agent / "config").is_dir():
+        init()
+    code = compose("up", "-d", *args)
+    if code:
+        return code
+    print("waiting for the seed...", flush=True)
+    return compose("logs", "--follow", "--no-log-prefix", "seed") or seed_exit_code()
+
+
+def seed_exit_code() -> int:
+    out = subprocess.run([*compose_args(), "ps", "-a", "--format", "json", "seed"], env=compose_env(),
+                         capture_output=True, text=True).stdout
+    for line in out.splitlines():
+        return int(json.loads(line).get("ExitCode", 1))
+    return 1
+
+
+def run(args: list[str]) -> int:
+    if not args:
+        sys.exit("usage: canopy run CMD [ARGS...]")
+    if IN_CLI:
+        os.execvp(args[0], args)
+    tty = [] if sys.stdin.isatty() and sys.stdout.isatty() else ["-T"]
+    return compose("exec", *tty, "cli", *args)
+
+
+def api_token() -> str:
+    token = os.environ.get("CANOPY_API_TOKEN")
+    if token:
+        return token
+    path = Path("/api/token") if IN_CLI else folders()[1] / "api" / "token"
+    try:
+        return path.read_text().strip()
+    except OSError as e:
+        sys.exit(f"cannot read the API token at {path}: {e.strerror}. Has the stack started?")
+
+
+def api_url() -> str:
+    default = "http://api:8090" if IN_CLI else f"http://127.0.0.1:{setting('CANOPY_API_PORT', '8090')}"
+    return setting("CANOPY_API_URL", default).rstrip("/")
+
+
+def call(method: str, path: str, body: object = None, timeout: float = 900) -> tuple[int, object]:
+    data = None if body is None else json.dumps(body).encode()
+    req = urllib.request.Request(api_url() + path, data=data, method=method, headers={
+        "Authorization": f"Bearer {api_token()}", "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status, json.load(r)
+    except urllib.error.HTTPError as e:
+        text = e.read().decode(errors="replace")
+        try:
+            return e.code, json.loads(text)
+        except ValueError:
+            return e.code, {"error": text[:500]}
+    except urllib.error.URLError as e:
+        sys.exit(f"cannot reach the API at {api_url()}: {e.reason}. Is the stack running?")
+
+
+def show(method: str, path: str, body: object = None) -> int:
+    status, reply = call(method, path, body)
+    print(json.dumps(reply, indent=2, ensure_ascii=False))
+    return 0 if status < 400 else 1
+
+
+def status() -> int:
+    code, reply = call("GET", "/v1/status")
+    print(json.dumps(reply, indent=2, ensure_ascii=False))
+    return 0 if code < 400 and reply.get("ok") else 1
+
+
+def load_json(path: str) -> dict:
+    return json.load(sys.stdin if path == "-" else open(path))
+
+
+def main() -> int:
+    argv = sys.argv[1:]
+    cmd, args = (argv[0], argv[1:]) if argv else ("help", [])
+    if cmd in ("help", "-h", "--help"):
+        print(__doc__)
+        return 0
+    if cmd == "init":
+        return init()
+    if cmd == "up":
+        return up(args)
+    if cmd == "down":
+        return compose("down", *args)
+    if cmd == "compose":
+        return compose(*args)
+    if cmd == "run":
+        return run(args)
+    if cmd == "status":
+        return status()
+    if cmd in ("servers", "groups", "tools"):
+        return show("GET", f"/v1/gateway/{cmd}")
+    if cmd == "add-server" and args:
+        replace = "?replace=true" if "--replace" in args else ""
+        return show("POST", f"/v1/gateway/servers{replace}", load_json(args[0]))
+    if cmd == "remove-server" and args:
+        return show("DELETE", f"/v1/gateway/servers/{args[0]}")
+    if cmd == "set-group" and args:
+        doc = load_json(args[0])
+        return show("PUT", f"/v1/gateway/groups/{doc['name']}", doc)
+    if cmd == "remove-group" and args:
+        return show("DELETE", f"/v1/gateway/groups/{args[0]}")
+    if cmd == "apply":
+        return show("POST", "/v1/config/apply")
+    if cmd == "token":
+        code, reply = call("GET", "/v1/tokens/agent")
+        if code >= 400:
+            sys.exit(reply.get("error", code))
+        if reply["token"] is None:
+            sys.exit("development mode: the gateway has no tokens")
+        print(reply["token"])
+        return 0
+    if cmd == "api" and len(args) >= 2:
+        return show(args[0].upper(), args[1], json.loads(args[2]) if len(args) > 2 else None)
+    sys.exit(f"unknown command: {' '.join(argv)}\n{__doc__}")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

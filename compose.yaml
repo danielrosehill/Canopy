@@ -1,5 +1,5 @@
-# Canopy. `docker compose up -d` starts the core; other pieces are opt-in profiles.
-# Settings: copy .env.example to .env. Content: see config/ and CANOPY_CONFIG_DIR.
+# Canopy. `clients/canopy init` then `clients/canopy up` start the core; other pieces are profiles.
+# Yours: CANOPY_AGENT_DATA. Canopy's: CANOPY_DATA. Settings: see .env.example.
 name: canopy
 
 x-canopy: &canopy
@@ -29,7 +29,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-canopy}   # no published port
       POSTGRES_DB: canopy
     volumes:
-      - db:/var/lib/postgresql/data
+      - ${CANOPY_DATA:-${HOME}/canopy/data}/postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U canopy"]
       interval: 5s
@@ -65,9 +65,9 @@ services:
       EMBED_ON_SYNC: ${EMBED_ON_SYNC:-false}
       SYNC_INTERVAL_SEC: ${SYNC_INTERVAL_SEC:-3600}
     volumes:
-      - catalogue:/data
-      - tokens:/tokens:ro
-      - ${CANOPY_CONFIG_DIR:-./config}:/config:ro
+      - ${CANOPY_DATA:-${HOME}/canopy/data}/catalogue:/data
+      - ${CANOPY_DATA:-${HOME}/canopy/data}/tokens:/tokens:ro
+      - ${CANOPY_AGENT_DATA:-${HOME}/canopy/agent-data}/config:/config:ro
 
   toolbox:
     <<: *canopy
@@ -76,22 +76,28 @@ services:
     environment:
       <<: *canopy-env
     volumes:
-      - tokens:/tokens:ro
+      - ${CANOPY_DATA:-${HOME}/canopy/data}/tokens:/tokens:ro
 
-  # One-shot. It runs on every `up`, and changes only what differs from the config.
-  seed:
+  # The control API. It alone holds the gateway's admin token, and expands ${VAR} in servers.json.
+  api:
     <<: *canopy
-    command: ["python", "-m", "canopy.seed"]
-    restart: "no"
+    command: ["python", "-m", "canopy.api"]
+    healthcheck:
+      <<: *mcp-health
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8090), 2)"]
     environment:
       <<: *canopy-env
+      CANOPY_API_TOKEN: ${CANOPY_API_TOKEN:-}
     env_file:
-      - path: ${CANOPY_ENV_FILE:-.env}   # upstream configs may use any ${VAR} from here
+      - path: ${CANOPY_AGENT_DATA:-${HOME}/canopy/agent-data}/secrets.env
         required: false
+    ports:
+      - "${CANOPY_API_BIND:-127.0.0.1}:${CANOPY_API_PORT:-8090}:8090"
     volumes:
-      - admin:/admin
-      - tokens:/tokens
-      - ${CANOPY_CONFIG_DIR:-./config}:/config:ro
+      - ${CANOPY_DATA:-${HOME}/canopy/data}/api:/api
+      - ${CANOPY_DATA:-${HOME}/canopy/data}/admin:/admin
+      - ${CANOPY_DATA:-${HOME}/canopy/data}/tokens:/tokens
+      - ${CANOPY_AGENT_DATA:-${HOME}/canopy/agent-data}/config:/config
     depends_on:
       gateway:
         condition: service_started
@@ -99,6 +105,36 @@ services:
         condition: service_healthy
       toolbox:
         condition: service_healthy
+
+  # One-shot. It runs on every `up`, and the API changes only what differs from the config.
+  seed:
+    <<: *canopy
+    command: ["python", "-m", "canopy.seed"]
+    restart: "no"
+    environment:
+      CANOPY_API_TOKEN: ${CANOPY_API_TOKEN:-}
+    volumes:
+      - ${CANOPY_DATA:-${HOME}/canopy/data}/api:/api:ro
+    depends_on:
+      api:
+        condition: service_healthy
+
+  # The CLIs that skills use. Run from the host with `canopy run`.
+  cli:
+    image: ghcr.io/danielrosehill/canopy:cli-${CANOPY_TAG:-main}
+    build:
+      context: .
+      dockerfile: cli/Dockerfile
+    init: true
+    user: "${CANOPY_UID:-1000}:${CANOPY_GID:-1000}"
+    env_file:
+      - path: ${CANOPY_AGENT_DATA:-${HOME}/canopy/agent-data}/secrets.env
+        required: false
+    volumes:
+      - ${CANOPY_AGENT_DATA:-${HOME}/canopy/agent-data}:/agent-data
+      - ${CANOPY_DATA:-${HOME}/canopy/data}/api:/api:ro
+    restart: unless-stopped
+    networks: [canopy]
 
   ui:
     <<: *canopy
@@ -110,13 +146,13 @@ services:
     ports:
       - "${CANOPY_BIND:-127.0.0.1}:${CANOPY_UI_PORT:-8081}:8081"
     volumes:
-      - tokens:/tokens:ro
+      - ${CANOPY_DATA:-${HOME}/canopy/data}/tokens:/tokens:ro
 
   ollama:
     image: ollama/ollama:0.12.6
     profiles: [embeddings-local]
     volumes:
-      - ollama:/root/.ollama
+      - ${CANOPY_DATA:-${HOME}/canopy/data}/ollama:/root/.ollama
     restart: unless-stopped
     networks: [canopy]
 
@@ -149,7 +185,7 @@ services:
       TS_USERSPACE: "true"
       TS_SERVE_CONFIG: /serve/tailnet-serve.json
     volumes:
-      - tailnet:/var/lib/tailscale
+      - ${CANOPY_DATA:-${HOME}/canopy/data}/tailnet:/var/lib/tailscale
       - ./config/tailnet-serve.json:/serve/tailnet-serve.json:ro
     restart: unless-stopped
     networks: [canopy]
@@ -164,9 +200,9 @@ services:
     entrypoint: ["sh", "/backup.sh"]
     volumes:
       - ./scripts/backup.sh:/backup.sh:ro
-      - ${CANOPY_BACKUP_DIR:-./backups}:/backups
-      - admin:/admin:ro
-      - tokens:/tokens:ro
+      - ${CANOPY_BACKUP_DIR:-${CANOPY_DATA:-${HOME}/canopy/data}/backups}:/backups
+      - ${CANOPY_DATA:-${HOME}/canopy/data}/admin:/admin:ro
+      - ${CANOPY_DATA:-${HOME}/canopy/data}/tokens:/tokens:ro
     depends_on:
       db:
         condition: service_healthy
@@ -175,11 +211,3 @@ services:
 
 networks:
   canopy:
-
-volumes:
-  db:
-  catalogue:
-  admin:
-  tokens:
-  ollama:
-  tailnet:

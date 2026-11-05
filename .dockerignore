@@ -3,7 +3,8 @@
 .env
 .github
 backups
-clients
+clients/*
 docs
 plugins
 tests
+!clients/canopy
