@@ -466,7 +466,8 @@ token, so it works where the agent runs on the server, or where a token has been
   since that is the point of the system: what the connector skills do, how to search, how to load
   what you find, and how to call a long-tail tool.
 - `docs/api.md`: every route, generated from the API.
-- `docs/connect/`: a page per client (Claude Code, Codex, others).
+- `docs/connect/`: a page per client (Claude Code, Codex, others). `saas-and-web-clients.md` covers ChatGPT,
+  claude.ai and self-run web clients. Canopy documents those routes and ships none of them.
 
 ## Order of work
 

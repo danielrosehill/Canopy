@@ -20,7 +20,7 @@ change, so check their current docs.
 | Agents on the same machine | 1. Localhost | Canopy token |
 | Your own devices | 2. Private network | Network membership, plus Canopy token |
 | Scripts and agents elsewhere that can send headers | 3. Tunnel with a service token | Cloudflare Access, plus Canopy token |
-| Hosted clients such as ChatGPT and claude.ai | 4. Cloudflare MCP portal | Cloudflare Access, per person |
+| Hosted clients such as ChatGPT and claude.ai | 4. Cloudflare MCP portal, or the vendor's own tunnel: see [hosted and web clients](connect/saas-and-web-clients.md) | Cloudflare Access, per person |
 
 Keep three questions apart, whichever pattern you use:
 

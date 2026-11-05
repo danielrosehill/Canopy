@@ -142,6 +142,7 @@ follow, so add only sources you trust.
 ## Design notes
 
 - [Architecture](docs/architecture.md): how the stack fits together
+- [Hosted and web clients](docs/connect/saas-and-web-clients.md): ChatGPT, claude.ai, Open WebUI and others.
 - [Deployment patterns](docs/deployment-patterns.md): remote access with Tailscale and Cloudflare,
   including hosted clients such as ChatGPT and claude.ai
 - [Target design](docs/design.md): where this is heading, and the order of work
