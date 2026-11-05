@@ -160,8 +160,10 @@ use as a normal OpenAI-compatible endpoint.
 - **One model label.** Vectors are stored under a canonical name (`bge-m3`) whichever route produced
   them, with a table mapping that name to each provider's own (`baai/bge-m3`). Today, changing provider
   marks every vector stale, because the label is the provider's name.
-- **Model: `bge-m3`.** See the comparison below. Cloud and local vectors have not yet been confirmed
-  interchangeable: the one attempt hit an overloaded provider, so check before relying on the fallback.
+- **Model: `bge-m3`.** See the comparison below. Cloud and local vectors are interchangeable, so the
+  fallback is safe and an index need not be re-embedded to change route. Measured on 2026-11-05, Ollama
+  0.12.6 against OpenRouter `baai/bge-m3`: cosine 0.99999 on five short texts, one of them Hebrew, and
+  0.99853 on one long text (cause not looked into). The largest change in any pairwise similarity was 0.003.
 
 If the embedder is down, search falls back to keyword and says so, as it does today.
 
@@ -202,6 +204,31 @@ A far bigger gain than any embedding change, for about 4 cents per 1,000 searche
 worse: descriptions are the right input. It is a setting (`RERANK_MODEL`), off by default so a fresh install
 needs no cloud account, and if it fails or times out, search returns the fused order. It sends the query
 and candidate descriptions to the provider, so a user who wants nothing to leave the host leaves it off.
+
+**Checked on the shipped code,** 2026-11-05: Canopy 4098852 from the published image, a real sync of 6
+marketplaces (295 plugins, 3,884 records, no tool records as the test stack had no private upstreams),
+and 3,848 vectors imported from an older index. 50 labelled queries, ranked among all kinds, limit 6.
+
+| Mode | First | Top 3 | Top 6 | MRR | Median | p90 | Max |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Keywords only | 24 | 35 | 40 | 0.599 | 13 ms | 30 ms | 43 ms |
+| Fused, query embedded by local Ollama | 34 | 44 | 46 | 0.782 | 153 ms | 171 ms | 209 ms |
+| Fused, query embedded by OpenRouter | 34 | 43 | 46 | 0.781 | 688 ms | 1,598 ms | 1,956 ms |
+| Fused (OpenRouter) and `cohere/rerank-5-fast` | 43 | 47 | 48 | 0.900 | 1,198 ms | 1,772 ms | 2,884 ms |
+
+- **The rewrite held up.** Fused and reranked land within one query of the tables above at every cut.
+  Keywords alone are one query lower on first place (24 against 26). All of that is noise at this size.
+- **The set is probably the same 50, but that is inferred.** The source set has 57 queries. 7 name only
+  records that no longer exist, in the older index either, so they were left out rather than relabelled.
+  The index differs too: smaller, and 3 plugins had left the marketplaces.
+- **Scoring within the expected kind reads higher:** fused 38 / 44 / 46, 0.826; reranked 44 / 47 / 48, 0.910;
+  keywords 27 / 38 / 40, 0.643. Ranking among all kinds is what matched the tables above.
+- **The hosted query embedding is the slow part.** It costs about 530 ms at the median beside local, and far
+  more at p90, for the same results: first place agreed on 50 of 50 queries and the top 3 on 49. The 40 to
+  80 ms quoted above was a local figure. Rerank adds about 510 ms, as measured before.
+- **`RERANK_TIMEOUT_SEC` at 2 s is about right:** one search in 50 fell back to the fused order in the scored
+  pass. Raising it would rescue little and slow the worst case.
+- **Cold start:** the first local embedding took 1.6 s, inside the 6 s query budget. Ollama used 1.5 GB.
 
 ## What the agent sees
 
@@ -432,13 +459,11 @@ Each step ends with a clean install on an empty machine, and the contract suite 
    behind the API. `/admin` is still mounted read-only in the `backup` profile, until step 4.
 2. **Done.** Contract suite in CI, with `compat.json`, and the `MCPJungle watch` workflow. Early, because
    every later step changes what it protects.
-3. **Built, with gaps below.** Postgres with pgvector, reranking step, roles, schemas and migrations, records and vectors moved there, embedder
-   route, Ollama in `search`, weighted search, and a labelled query set as a regression check.
-   Still open: the `search` profile has not been run (Ollama loads a model, so not on a small test
-   machine), cloud and local vectors are unconfirmed, the in-memory BM25 is a new implementation whose
-   quality on a real index is unmeasured (the table above came from a prototype that was not kept).
-   `python -m canopy.import_vectors <file>` brings vectors over from an older SQLite index, after a first
-   full sync, so a move needs no full re-embed. Tested on fixtures; not yet run on a real index.
+3. **Done.** Postgres with pgvector, reranking step, roles, schemas and migrations, records and vectors moved
+   there, embedder route, Ollama in `search`, weighted search, and a labelled query set as a regression check.
+   `python -m canopy.import_vectors <file>` brings vectors over from an older SQLite index after a first full
+   sync, so a move needs no full re-embed: on a real index it filled 3,848 of 3,884 records in 4 seconds, and
+   the other 36 cost about 13,000 tokens. See "Checked on the shipped code".
 4. Scheduler, then backup and restore as jobs.
 5. Storage profile, stage route and skill.
 6. The `canopy` plugin with its hook, MCP Skills extension, manual and API reference.

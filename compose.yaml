@@ -71,6 +71,7 @@ services:
       SYNC_INTERVAL_SEC: ${SYNC_INTERVAL_SEC:-3600}
       RERANK_MODEL: ${RERANK_MODEL:-}
       RERANK_API_KEY: ${RERANK_API_KEY:-}
+      RERANK_TIMEOUT_SEC: ${RERANK_TIMEOUT_SEC:-2}
     depends_on:
       db:
         condition: service_healthy
