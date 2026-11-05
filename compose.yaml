@@ -103,6 +103,9 @@ services:
       EMBED_ON_SYNC: ${EMBED_ON_SYNC:-false}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-canopy}   # dumps and restores both databases
+      CANOPY_STORAGE_PUBLIC_URL: ${CANOPY_STORAGE_PUBLIC_URL:-http://127.0.0.1:${CANOPY_STORAGE_PORT:-3900}}
+      CANOPY_STORAGE_CAPACITY_GB: ${CANOPY_STORAGE_CAPACITY_GB:-10}
+      CANOPY_STAGE_MAX_MB: ${CANOPY_STAGE_MAX_MB:-256}
     env_file:
       - path: ${CANOPY_AGENT_DATA:-${HOME}/canopy/agent-data}/secrets.env
         required: false
@@ -115,6 +118,7 @@ services:
       - ${CANOPY_AGENT_DATA:-${HOME}/canopy/agent-data}/config:/config
       - ${CANOPY_AGENT_DATA:-${HOME}/canopy/agent-data}:/agent-data
       - ${CANOPY_DATA:-${HOME}/canopy/data}/backups:/backups
+      - ${CANOPY_DATA:-${HOME}/canopy/data}/storage-secrets:/storage-secrets
     depends_on:
       gateway:
         condition: service_started
@@ -164,6 +168,22 @@ services:
       - "${CANOPY_BIND:-127.0.0.1}:${CANOPY_UI_PORT:-8081}:8081"
     volumes:
       - ${CANOPY_DATA:-${HOME}/canopy/data}/tokens:/tokens:ro
+
+  # S3-compatible staging. Unmodified, and it has no shell, so `api` bootstraps it on first use.
+  storage:
+    image: dxflrs/garage:v2.5.0
+    profiles: [storage]
+    ports:
+      - "${CANOPY_STORAGE_BIND:-127.0.0.1}:${CANOPY_STORAGE_PORT:-3900}:3900"
+    volumes:
+      - ./config/garage.toml:/etc/garage.toml:ro
+      - ${CANOPY_DATA:-${HOME}/canopy/data}/storage:/var/lib/garage
+      - ${CANOPY_DATA:-${HOME}/canopy/data}/storage-secrets:/secrets:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [canopy]
 
   ollama:
     image: ollama/ollama:0.12.6

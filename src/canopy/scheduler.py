@@ -33,7 +33,8 @@ def defaults(config: Path) -> list[dict]:
     return [{"name": "sync", "every": "1h"}, {"name": "embed", "after": "sync", "enabled": EMBED_ON_SYNC},
             {"name": "health", "every": "5m"}, {"name": "backup-data", "every": "1d", "enabled": target},
             {"name": "backup-config", "every": "1h", "enabled": target},
-            {"name": "restore-test", "after": "backup-data", "enabled": target}]
+            {"name": "restore-test", "after": "backup-data", "enabled": target},
+            {"name": "storage-expiry", "every": "1d"}]
 
 
 _UNITS = {"m": 60, "h": 3600, "d": 86400}

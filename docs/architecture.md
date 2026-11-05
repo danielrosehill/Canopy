@@ -76,6 +76,18 @@ any override that reaches the target. A database holding data is refused without
 
 `tests/contract/backup.sh` proves all of this against a throwaway Garage, and runs in CI.
 
+## Storage
+
+The `storage` profile runs Garage, unmodified. `api` writes `data/storage-secrets/rpc_secret` and `admin_token`
+at start, and `storage` starts after it. The first `POST /v1/storage/stage` or `GET /v1/storage/buckets` does
+the rest through Garage's admin API on port 3903, which is not published: layout, the buckets in
+`config/storage.json` (default `transient`, 1 day), one key in `s3.json`, and the expiry rules, each read back.
+Every step is safe to repeat. Staged files and these secrets are not backed up: after a restore the same
+bootstrap runs again.
+
+`/v1/status` shows `storage` as `off`, `not used yet` or `running`, and red only if a store that was in use
+stopped answering. `tests/contract/storage.sh` proves this on the real image, and runs in CI.
+
 ## Start order
 
 Services start before tokens exist, so they read token files on every use. The API starts once

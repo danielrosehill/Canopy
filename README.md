@@ -125,6 +125,7 @@ Then hand the id to your agent with `/skill <id>` from the Canopy plugin:
 | (none) | gateway, Postgres, catalogue, toolbox, API, seed, cli | Yes |
 | `ui` | Web UI | Yes |
 | `search` | Ollama with bge-m3, with `EMBED_PROVIDER=local` | Not yet |
+| `storage` | Garage: S3-compatible staging, `canopy stage FILE` | Yes |
 | `tunnel` | Cloudflare Tunnel | Not yet |
 | `tailnet` | Tailscale sidecar | Not yet |
 

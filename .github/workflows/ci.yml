@@ -38,6 +38,12 @@ jobs:
       - uses: actions/checkout@v5
       - run: tests/contract/backup.sh
 
+  storage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: tests/contract/storage.sh
+
   secrets:
     runs-on: ubuntu-latest
     steps:

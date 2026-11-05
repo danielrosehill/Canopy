@@ -26,6 +26,7 @@ from .backup import Backups
 from . import store
 from .control import Control, ControlError, write_secret
 from .embedder import Embedder, EmbedError
+from .storage import DEFAULT_EXPIRES, MAX_BYTES, Storage
 
 API_DIR = Path(os.environ.get("CANOPY_API_DIR", "/api"))
 PORT = int(os.environ.get("CANOPY_API_PORT", "8090"))
@@ -56,8 +57,34 @@ class RequireToken(BaseHTTPMiddleware):
 
 
 def create_app(control: Control, token: str, embedder: Embedder | None = None,
-               scheduler: sched.Scheduler | None = None) -> Starlette:
+               scheduler: sched.Scheduler | None = None, storage: Storage | None = None) -> Starlette:
     embedder = embedder or Embedder(primary="", fallback="")
+
+    def need_storage() -> Storage:
+        if storage is None:
+            raise ControlError(503, "storage is not set up")
+        return storage
+
+    async def stage(request: Request) -> JSONResponse:
+        """The body is the file. `name` is required; `bucket`, `audience` and `expires` are not."""
+        q, s = request.query_params, need_storage()
+        if not q.get("name"):
+            raise ControlError(400, "needs `name`")
+        try:
+            expires = int(q.get("expires", DEFAULT_EXPIRES))
+        except ValueError:
+            raise ControlError(400, "`expires` is a number of seconds") from None
+        data = bytearray()
+        async for chunk in request.stream():
+            data += chunk
+            if len(data) > MAX_BYTES:
+                raise ControlError(413, f"over the {MAX_BYTES // 2**20} MB limit, CANOPY_STAGE_MAX_MB")
+        return await run(request, s.stage, bytes(data), q["name"], q.get("bucket"),
+                         q.get("audience", "remote"), expires, request.headers.get("content-type"),
+                         status=201)
+
+    async def list_buckets(request: Request) -> JSONResponse:
+        return await run(request, need_storage().buckets)
 
     def need_scheduler() -> sched.Scheduler:
         if scheduler is None:
@@ -162,6 +189,8 @@ def create_app(control: Control, token: str, embedder: Embedder | None = None,
         Route("/v1/config/apply", apply, methods=["POST"]),
         Route("/v1/tokens/agent", agent_token),
         Route("/v1/embeddings", embeddings, methods=["POST"]),
+        Route("/v1/storage/stage", stage, methods=["POST"]),
+        Route("/v1/storage/buckets", list_buckets),
         Route("/v1/jobs", list_jobs),
         Route("/v1/jobs/{name}/runs", job_runs),
         Route("/v1/jobs/{name}/run", run_job, methods=["POST"]),
@@ -179,12 +208,14 @@ def model_lookup(db: store.Db):
 
 def main() -> None:
     store.migrate()
-    db, control = store.Db(), Control()
+    db, control, storage = store.Db(), Control(), Storage()
+    storage.prepare()
+    control.extra_checks["storage"] = storage.check
     jobs = sched.CatalogueJobs(db, control._tool_text)
     scheduler = sched.Scheduler(db, {"sync": jobs.sync, "embed": jobs.embed, "health": control.health_job,
-                                     **Backups(db).actions()})
+                                     **Backups(db).actions(), **storage.actions()})
     threading.Thread(target=scheduler.loop, daemon=True).start()
-    app = create_app(control, load_token(), Embedder(provider_model=model_lookup(db)), scheduler)
+    app = create_app(control, load_token(), Embedder(provider_model=model_lookup(db)), scheduler, storage)
     uvicorn.run(app, host=os.environ.get("CANOPY_API_HOST", "0.0.0.0"), port=PORT, log_level="warning")
 
 

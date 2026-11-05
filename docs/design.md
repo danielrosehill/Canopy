@@ -258,13 +258,15 @@ store. It runs as a separate unmodified container, so its licence (AGPL-3.0, to 
 touch Canopy's MIT.
 
 - **Bootstrap.** The image has no shell, so the `api` service does the layout, buckets and keys
-  through Garage's admin API. That route is not yet tested: the commands were tested through its CLI.
+  through Garage's admin API, on first use. `api` also writes Garage's two secrets, so `storage` starts
+  after it. `tests/contract/storage.sh` proves this on the real image, in CI.
 - **Region.** Set `s3_region = "us-east-1"`, or presigned URLs from standard clients fail.
 - **Host.** A presigned URL only works for the hostname it was signed with, on both stores tested. So
   `/v1/storage/stage` takes the audience (a stack service, or a remote client) and signs for that
   name.
 - **Expiry.** A transient bucket has a lifecycle rule. Garage accepted the rule and returned it, but no
-  deletion has been observed yet, so the `storage-expiry` job checks that it happens.
+  deletion has been observed yet: its worker runs daily, so a test cannot wait for it. The `storage-expiry`
+  job fails if an object outlives its rule by more than 2 days, and that failure path is tested.
 - **Console.** Garage has none. The dashboard shows buckets and use.
 
 ## Memory
@@ -346,7 +348,7 @@ result and output, which is what the dashboard shows.
 
 A job takes a lock, so two runs never overlap. A missed run starts on the next boot.
 
-Built so far: `sync`, `embed`, `health`, `backup-data`, `backup-config`, and `restore-test`, which runs after
+Built so far: `sync`, `embed`, `health`, `storage-expiry`, `backup-data`, `backup-config`, and `restore-test`, which runs after
 `backup-data`. The backup jobs start once `backup.json` exists. The rest of the table arrives with what each one does, and a job
 named in `jobs.json` with nothing behind it is listed as not `runnable` and left alone. `every` takes a
 number and m, h or d, and `after` chains a job to another's success. `embed` follows `EMBED_ON_SYNC`, off by

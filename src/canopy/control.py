@@ -256,6 +256,7 @@ class Control:
         self.env = os.environ if env is None else env
         self.lock = threading.RLock()
         self.last_apply: dict | None = None
+        self.extra_checks: dict[str, Callable[[], dict]] = {}   # parts /v1/status reports, set by `api`
         self._mcp = gw.McpClient(f"{gw.GATEWAY_URL}/mcp", timeout=10, name="canopy-status")
 
     # --- files ---------------------------------------------------------------------
@@ -516,7 +517,7 @@ class Control:
     def status(self) -> dict:
         checks = {"gateway": self._check_gateway, "upstreams": self._check_upstreams,
                   "groups": self._check_groups, "catalogue": self._check_catalogue,
-                  "toolbox": self._check_toolbox}
+                  "toolbox": self._check_toolbox, **self.extra_checks}
 
         def run(check: Callable[[], dict]) -> dict:
             try:
