@@ -98,7 +98,9 @@ Services start before tokens exist, so they read token files on every use. The A
 1. Initialises the gateway and creates identities, if needed.
 2. Registers built-in and configured upstreams whose expanded config changed.
 3. Rebuilds groups, if a server was registered or a group definition changed.
-4. Asks the catalogue to sync, so tool records appear straight away.
+4. Deregisters upstreams it registered earlier that the config no longer lists. It never touches an upstream it did not
+   register, one still in a group, or anything at all if the config is missing or lists no servers.
+5. Asks the catalogue to sync, so tool records appear straight away.
 
 The seed exits 1 if anything failed, and lists each failure.
 

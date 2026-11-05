@@ -341,6 +341,28 @@ class Control:
                         time.sleep(3)
         return changed, failures
 
+    def _prune(self, g: Gateway, doc: dict, state: dict, say, failures: list[str]) -> None:
+        """Deregister servers dropped from the config. Only names in the state file are candidates, so a
+        server registered by hand is never touched. A missing or empty config reads the same as one that
+        was lost, so it removes nothing: use remove_server to take the last server out."""
+        if not doc["servers"]:
+            say("no servers in the config, so nothing was pruned")
+            return
+        keep = BUILTIN_NAMES | {s.get("name") for s in doc["servers"]}
+        grouped = {n: x["name"] for x in merged_groups(doc["groups"]) for n in group_servers(x)}
+        for name in [n for n in state if not n.startswith("#") and n not in keep]:
+            if name in grouped:
+                failures.append(f"{name}: dropped from the config but still in group {grouped[name]}")
+                continue
+            try:
+                g.deregister(name)
+            except (RuntimeError, httpx.HTTPError) as e:
+                failures.append(f"{name}: {e}")
+                continue
+            state.pop(name)
+            self.write_state(state)
+            say(f"removed {name}")
+
     def apply(self) -> dict:
         """Bring the gateway to what the config describes. Safe to repeat."""
         log: list[str] = []
@@ -373,6 +395,8 @@ class Control:
                 if ok:
                     state["#groups"] = d
                     self.write_state(state)
+
+            self._prune(g, doc, state, log.append, failures)
 
             err = self.sync()
             if err:

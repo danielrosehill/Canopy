@@ -146,6 +146,75 @@ def test_a_server_in_a_group_cannot_be_removed(ctl):
     assert ctl.read_config() == {"servers": [], "groups": []}
 
 
+@pytest.fixture
+def applied(ctl, monkeypatch):
+    """`a` and `b` registered through the config."""
+    monkeypatch.setattr("canopy.control.wait_for_gateway", lambda: None)
+    ctl.servers_path.write_text(json.dumps({"servers": [{"name": "a"}, {"name": "b"}], "groups": []}))
+    assert ctl.apply()["ok"]
+    return ctl
+
+
+def write_servers(ctl, doc):
+    ctl.servers_path.write_text(json.dumps(doc))
+
+
+def test_apply_removes_a_server_dropped_from_the_config(applied, jungle):
+    write_servers(applied, {"servers": [{"name": "a"}], "groups": []})
+    out = applied.apply()
+    assert out["ok"] and "removed b" in out["log"]
+    assert "b" not in jungle.servers and "a" in jungle.servers
+    assert "b" not in applied.read_state()
+
+
+def test_apply_leaves_a_server_it_did_not_register(applied, jungle):
+    jungle.servers["by-hand"] = {"name": "by-hand"}
+    assert applied.apply()["ok"]
+    assert "by-hand" in jungle.servers
+
+
+def test_apply_never_touches_builtins(applied, jungle):
+    write_servers(applied, {"servers": [{"name": "a"}], "groups": []})
+    applied.apply()
+    assert {"catalogue", "toolbox"} <= set(jungle.servers)
+
+
+def test_a_missing_config_removes_nothing(applied, jungle):
+    applied.servers_path.unlink()
+    out = applied.apply()
+    assert {"a", "b"} <= set(jungle.servers) and {"a", "b"} <= set(applied.read_state())
+    assert "no servers in the config, so nothing was pruned" in out["log"]
+
+
+def test_a_config_with_no_servers_removes_nothing(applied, jungle):
+    write_servers(applied, {"groups": []})
+    applied.apply()
+    assert {"a", "b"} <= set(jungle.servers)
+
+
+def test_an_unreadable_config_stops_apply_and_removes_nothing(applied, jungle):
+    applied.servers_path.write_text('{"servers": [')
+    with pytest.raises(json.JSONDecodeError):
+        applied.apply()
+    assert {"a", "b"} <= set(jungle.servers)
+
+
+def test_a_dropped_server_still_in_a_group_stays_and_is_reported(applied, jungle):
+    write_servers(applied, {"servers": [{"name": "a"}], "groups": [{"name": "g", "included_servers": ["b"]}]})
+    out = applied.apply()
+    assert "b" in jungle.servers and not out["ok"]
+    assert any("still in group g" in f for f in out["failures"])
+
+
+def test_a_failed_removal_is_reported_and_retried(applied, jungle):
+    write_servers(applied, {"servers": [{"name": "a"}], "groups": []})
+    jungle.lie = True
+    out = applied.apply()
+    assert not out["ok"] and "b" in applied.read_state()
+    jungle.lie = False
+    assert applied.apply()["ok"] and "b" not in jungle.servers
+
+
 def test_a_group_naming_an_unknown_server_is_refused_and_not_saved(ctl):
     with pytest.raises(ControlError) as e:
         ctl.set_group({"name": "g", "included_servers": ["ghost"]})
