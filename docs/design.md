@@ -193,6 +193,11 @@ names and descriptions, and it returns the final order. Measured on the full ind
 | `qwen3-reranker-8b`, descriptions | 40 | 46 | 47 | 0.863 | About 550 ms | $0.0007 |
 | `qwen3-reranker-8b`, with skill text | 38 | 47 | 47 | 0.850 | About 810 ms | $0.0018 |
 
+Local rerankers were tested on the same queries, on 4 CPU threads (`fastembed`, ONNX). None is worth
+shipping: `jina-reranker-v2-base-multilingual` reached 38 first and 45 in the top 3 at about 2.3 s per
+search, `jina-reranker-v1-turbo-en` 35 and 42 at 440 ms, and `bge-reranker-base` made results worse. So
+reranking is a hosted step. `bge-reranker-v2-m3` was not tested: it is larger, so slower still on CPU.
+
 A far bigger gain than any embedding change, for about 4 cents per 1,000 searches. More text made it
 worse: descriptions are the right input. It is a setting (`RERANK_MODEL`), off by default so a fresh install
 needs no cloud account, and if it fails or times out, search returns the fused order. It sends the query
