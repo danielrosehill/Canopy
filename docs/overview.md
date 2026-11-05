@@ -96,6 +96,9 @@ Bundling, thin clients and context efficiency are the point of Canopy, and none 
 runs. So there are two templates, and both are valid. The question is where your orchestrator should sit,
 and that comes down to how much of what you automate is at home.
 
+The full network diagrams show every component and connection: [Home Canopy](diagrams/home-canopy.pdf) and
+[Cloud Canopy](diagrams/cloud-canopy.pdf). The pictures below are the short version.
+
 | | Home Canopy | Cloud Canopy |
 | --- | --- | --- |
 | Gateway runs on | A home server | A cloud VPS |
