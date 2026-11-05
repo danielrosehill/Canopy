@@ -486,7 +486,7 @@ Each step ends with a clean install on an empty machine, and the contract suite 
    the other 36 cost about 13,000 tokens. See "Checked on the shipped code".
 4. **Done.** Scheduler, with `sync`, `embed` and `health` jobs, and backup and restore as jobs, proved on a clean
    install. The `backup` profile and its `/admin` mount are gone.
-5. Storage profile, stage route and skill.
+5. **Done.** Storage profile, stage route and skill, with the admin-API bootstrap proved on the real image.
 6. The `canopy` plugin with its hook, MCP Skills extension, manual and API reference.
 7. Dashboard.
 8. Memory.
