@@ -1,0 +1,12 @@
+{
+  "name": "canopy",
+  "owner": { "name": "Daniel Rosehill" },
+  "metadata": { "description": "Skills for setting up and running a Canopy server." },
+  "plugins": [
+    {
+      "name": "canopy",
+      "source": "./plugins/canopy",
+      "description": "Set up, run and diagnose a Canopy server, and find skills on it."
+    }
+  ]
+}

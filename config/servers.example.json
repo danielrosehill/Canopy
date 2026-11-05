@@ -1,0 +1,25 @@
+{
+  "servers": [
+    {
+      "name": "time",
+      "transport": "stdio",
+      "description": "Current time and timezone conversion",
+      "command": "uvx",
+      "args": ["mcp-server-time"]
+    },
+    {
+      "name": "example-http",
+      "transport": "streamable_http",
+      "description": "An upstream with a bearer token from .env",
+      "url": "https://mcp.example.com/mcp",
+      "bearer_token": "${EXAMPLE_TOKEN}"
+    }
+  ],
+  "groups": [
+    {
+      "name": "core",
+      "description": "Listed natively. Everything else is reached through the toolbox.",
+      "included_tools": ["time__get_current_time"]
+    }
+  ]
+}

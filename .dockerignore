@@ -1,0 +1,9 @@
+.git
+.venv
+.env
+.github
+backups
+clients
+docs
+plugins
+tests

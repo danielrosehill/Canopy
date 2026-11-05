@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Canopy</title>
+<style>
+  :root { color-scheme: light dark; --line: #8884; --dim: #888; --hit: #2a7; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.45 system-ui, sans-serif; height: 100vh; display: flex; flex-direction: column; }
+  header { display: flex; gap: .5rem; padding: .75rem; border-bottom: 1px solid var(--line); align-items: center; flex-wrap: wrap; }
+  h1 { font-size: 1rem; margin: 0 .5rem 0 0; }
+  input[type=search] { flex: 1; min-width: 12rem; font: inherit; padding: .4rem .6rem; }
+  select, button { font: inherit; padding: .35rem .5rem; }
+  main { flex: 1; display: grid; grid-template-columns: minmax(18rem, 2fr) 3fr; min-height: 0; }
+  #list { overflow: auto; border-right: 1px solid var(--line); margin: 0; padding: 0; list-style: none; }
+  #list li { padding: .45rem .75rem; border-bottom: 1px solid var(--line); cursor: pointer; }
+  #list li[aria-selected=true] { outline: 2px solid var(--hit); outline-offset: -2px; }
+  .id { font-family: ui-monospace, monospace; font-size: .85em; overflow-wrap: anywhere; }
+  .desc { color: var(--dim); font-size: .85em; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  #side { display: flex; flex-direction: column; min-height: 0; }
+  #bar { padding: .5rem .75rem; border-bottom: 1px solid var(--line); display: flex; gap: .5rem; align-items: center; }
+  #preview { flex: 1; overflow: auto; margin: 0; padding: .75rem; white-space: pre-wrap; font: 13px/1.5 ui-monospace, monospace; }
+  #status { color: var(--dim); font-size: .85em; }
+  @media (max-width: 700px) { main { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; } #list { border-right: 0; } }
+</style>
+<header>
+  <h1>Canopy</h1>
+  <input id="q" type="search" placeholder="Fuzzy search skills and tools" autofocus aria-label="Search">
+  <select id="kind" aria-label="Kind">
+    <option value="">all kinds</option><option>skill</option><option>command</option>
+    <option>agent</option><option>tool</option><option>plugin</option><option>mcp</option>
+  </select>
+  <button id="semantic" title="Hybrid search on the server, for when you know the job but not the word">Search by meaning</button>
+  <span id="status"></span>
+</header>
+<main>
+  <ul id="list" role="listbox" aria-label="Results"></ul>
+  <section id="side">
+    <div id="bar"><span id="sel" class="id"></span><button id="copy" hidden>Copy id</button></div>
+    <pre id="preview"></pre>
+  </section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+let records = [], shown = [], selected = -1;
+
+// Subsequence match, rewarding runs and word starts. Lower bound 0 means no match.
+function score(needle, hay) {
+  let at = -1, total = 0, run = 0;
+  for (const ch of needle) {
+    const i = hay.indexOf(ch, at + 1);
+    if (i < 0) return 0;
+    run = i === at + 1 ? run + 1 : 0;
+    total += 1 + run * 2 + (i === 0 || /[\s/:_-]/.test(hay[i - 1]) ? 3 : 0);
+    at = i;
+  }
+  return total - hay.length / 200;
+}
+function filter() {
+  const needle = $('q').value.trim().toLowerCase(), kind = $('kind').value;
+  let rows = records.filter(r => !kind || r.kind === kind);
+  if (needle) {
+    rows = rows.map(r => {
+      const nameScore = score(needle, (r.id).toLowerCase());
+      const descScore = score(needle, (r.description || '').toLowerCase()) / 4;
+      return [Math.max(nameScore, descScore), r];
+    }).filter(x => x[0] > 0).sort((a, b) => b[0] - a[0]).map(x => x[1]);
+  }
+  render(rows);
+}
+function render(rows) {
+  shown = rows.slice(0, 300);
+  selected = -1;
+  $('status').textContent = `${rows.length} of ${records.length}`;
+  $('list').replaceChildren(...shown.map((r, i) => {
+    const li = document.createElement('li'), id = document.createElement('div'), d = document.createElement('div');
+    li.setAttribute('role', 'option');
+    id.className = 'id'; id.textContent = r.id;
+    d.className = 'desc'; d.textContent = r.description || '';
+    li.append(id, d);
+    li.onclick = () => select(i);
+    return li;
+  }));
+  if (shown.length) select(0);
+}
+async function select(i) {
+  if (!shown[i]) return;
+  [...$('list').children].forEach((li, n) => li.setAttribute('aria-selected', n === i));
+  $('list').children[i].scrollIntoView({ block: 'nearest' });
+  selected = i;
+  const id = shown[i].id;
+  $('sel').textContent = id;
+  $('copy').hidden = false;
+  $('preview').textContent = 'Loading…';
+  const r = await fetch('/api/read?id=' + encodeURIComponent(id));
+  const text = await r.text();
+  if (shown[selected]?.id === id) $('preview').textContent = text;
+}
+$('q').oninput = filter;
+$('kind').onchange = filter;
+$('q').onkeydown = e => {
+  if (e.key === 'ArrowDown') { e.preventDefault(); select(Math.min(selected + 1, shown.length - 1)); }
+  if (e.key === 'ArrowUp') { e.preventDefault(); select(Math.max(selected - 1, 0)); }
+  if (e.key === 'Enter') { e.preventDefault(); copyId(); }
+};
+async function copyId() {
+  if (!shown[selected]) return;
+  await navigator.clipboard.writeText(shown[selected].id);
+  $('copy').textContent = 'Copied';
+  setTimeout(() => $('copy').textContent = 'Copy id', 1200);
+}
+$('copy').onclick = copyId;
+$('semantic').onclick = async () => {
+  const q = $('q').value.trim();
+  if (!q) return;
+  $('status').textContent = 'Searching…';
+  const d = await (await fetch('/api/search?q=' + encodeURIComponent(q))).json();
+  render([...(d.results || []), ...(d.tools || [])]);
+  if (d.degraded) $('status').textContent += ' (keyword only)';
+};
+(async () => {
+  $('status').textContent = 'Loading…';
+  const r = await fetch('/api/records');
+  const d = await r.json();
+  if (!r.ok) { $('status').textContent = d.error; return; }
+  records = d;
+  filter();
+})();
+</script>
+</html>

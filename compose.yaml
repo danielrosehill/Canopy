@@ -1,0 +1,185 @@
+# Canopy. `docker compose up -d` starts the core; other pieces are opt-in profiles.
+# Settings: copy .env.example to .env. Content: see config/ and CANOPY_CONFIG_DIR.
+name: canopy
+
+x-canopy: &canopy
+  image: ghcr.io/danielrosehill/canopy:${CANOPY_TAG:-main}
+  build: .
+  restart: unless-stopped
+  networks: [canopy]
+
+x-mcp-health: &mcp-health
+  test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 3000), 2)"]
+  interval: 3s
+  timeout: 3s
+  retries: 20
+  start_period: 2s
+
+x-canopy-env: &canopy-env
+  SERVER_MODE: ${SERVER_MODE:-enterprise}
+  CORE_GROUP: ${CORE_GROUP:-core}
+  TOOLS_GROUP: ${TOOLS_GROUP:-}
+  CANOPY_CLIENT_NAME: ${CANOPY_CLIENT_NAME:-canopy}
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: canopy
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-canopy}   # no published port
+      POSTGRES_DB: canopy
+    volumes:
+      - db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U canopy"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+    networks: [canopy]
+
+  gateway:
+    image: ghcr.io/mcpjungle/mcpjungle:${MCPJUNGLE_TAG:-0.4.7-stdio}
+    environment:
+      DATABASE_URL: postgres://canopy:${POSTGRES_PASSWORD:-canopy}@db:5432/canopy
+      SERVER_MODE: ${SERVER_MODE:-enterprise}
+      MCP_SERVER_INIT_REQ_TIMEOUT_SEC: ${MCP_SERVER_INIT_REQ_TIMEOUT_SEC:-20}
+    ports:
+      - "${CANOPY_BIND:-127.0.0.1}:${CANOPY_PORT:-8080}:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [canopy]
+
+  catalogue:
+    <<: *canopy
+    command: ["python", "-m", "canopy.catalogue"]
+    healthcheck: *mcp-health
+    environment:
+      <<: *canopy-env
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      EMBED_URL: ${EMBED_URL:-}
+      EMBED_API_KEY: ${EMBED_API_KEY:-}
+      EMBED_MODEL: ${EMBED_MODEL:-bge-m3}
+      EMBED_ON_SYNC: ${EMBED_ON_SYNC:-false}
+      SYNC_INTERVAL_SEC: ${SYNC_INTERVAL_SEC:-3600}
+    volumes:
+      - catalogue:/data
+      - tokens:/tokens:ro
+      - ${CANOPY_CONFIG_DIR:-./config}:/config:ro
+
+  toolbox:
+    <<: *canopy
+    command: ["python", "-m", "canopy.toolbox"]
+    healthcheck: *mcp-health
+    environment:
+      <<: *canopy-env
+    volumes:
+      - tokens:/tokens:ro
+
+  # One-shot. It runs on every `up`, and changes only what differs from the config.
+  seed:
+    <<: *canopy
+    command: ["python", "-m", "canopy.seed"]
+    restart: "no"
+    environment:
+      <<: *canopy-env
+    env_file:
+      - path: .env        # upstream configs may use any ${VAR} from here
+        required: false
+    volumes:
+      - admin:/admin
+      - tokens:/tokens
+      - ${CANOPY_CONFIG_DIR:-./config}:/config:ro
+    depends_on:
+      gateway:
+        condition: service_started
+      catalogue:
+        condition: service_healthy
+      toolbox:
+        condition: service_healthy
+
+  ui:
+    <<: *canopy
+    profiles: [ui]
+    command: ["python", "-m", "canopy.ui"]
+    environment:
+      <<: *canopy-env
+      UI_ALLOWED_HOSTS: ${UI_ALLOWED_HOSTS:-localhost,127.0.0.1}
+    ports:
+      - "${CANOPY_BIND:-127.0.0.1}:${CANOPY_UI_PORT:-8081}:8081"
+    volumes:
+      - tokens:/tokens:ro
+
+  ollama:
+    image: ollama/ollama:0.12.6
+    profiles: [embeddings-local]
+    volumes:
+      - ollama:/root/.ollama
+    restart: unless-stopped
+    networks: [canopy]
+
+  ollama-pull:
+    image: ollama/ollama:0.12.6
+    profiles: [embeddings-local]
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["sh", "-c", "sleep 5 && ollama pull ${EMBED_MODEL:-bge-m3}"]
+    depends_on:
+      - ollama
+    networks: [canopy]
+
+  tunnel:
+    image: cloudflare/cloudflared:2025.10.0
+    profiles: [tunnel]
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    restart: unless-stopped
+    networks: [canopy]
+
+  tailnet:
+    image: tailscale/tailscale:v1.88.3
+    profiles: [tailnet]
+    hostname: ${TS_HOSTNAME:-canopy}
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:-}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "true"
+      TS_SERVE_CONFIG: /serve/tailnet-serve.json
+    volumes:
+      - tailnet:/var/lib/tailscale
+      - ./config/tailnet-serve.json:/serve/tailnet-serve.json:ro
+    restart: unless-stopped
+    networks: [canopy]
+
+  backup:
+    image: postgres:17-alpine
+    profiles: [backup]
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-canopy}
+      BACKUP_INTERVAL_SEC: ${BACKUP_INTERVAL_SEC:-86400}
+      BACKUP_KEEP: ${BACKUP_KEEP:-14}
+    entrypoint: ["sh", "/backup.sh"]
+    volumes:
+      - ./scripts/backup.sh:/backup.sh:ro
+      - ${CANOPY_BACKUP_DIR:-./backups}:/backups
+      - admin:/admin:ro
+      - tokens:/tokens:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [canopy]
+
+networks:
+  canopy:
+
+volumes:
+  db:
+  catalogue:
+  admin:
+  tokens:
+  ollama:
+  tailnet:

@@ -1,0 +1,221 @@
+#!/usr/bin/env python3
+"""canopy-pick: fuzzy-search the skills and tools on a Canopy server, in the terminal.
+
+Needs only Python 3.10+ with curses (Linux, macOS, WSL). Configure with:
+
+    CANOPY_URL     default http://127.0.0.1:8080
+    CANOPY_TOKEN   agent token: docker compose run --rm seed python -m canopy.seed token
+    CANOPY_GROUP   default core
+
+Keys: type to filter, Up/Down to move, PgUp/PgDn to scroll the preview, Enter to pick,
+Esc to quit. The picked id is printed, and copied if a clipboard tool is available.
+"""
+from __future__ import annotations
+
+import argparse
+import curses
+import json
+import os
+import shutil
+import subprocess
+import sys
+import textwrap
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+URL = os.environ.get("CANOPY_URL", "http://127.0.0.1:8080").rstrip("/")
+TOKEN = os.environ.get("CANOPY_TOKEN", "")
+GROUP = os.environ.get("CANOPY_GROUP", "core")
+CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "canopy" / "records.json"
+CACHE_TTL = 3600
+KINDS = ("skill", "command", "agent", "tool", "plugin", "mcp")
+
+
+class Client:
+    def __init__(self) -> None:
+        self.url, self.session, self.next_id = f"{URL}/v0/groups/{GROUP}/mcp", None, 1
+        self._post({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {
+            "protocolVersion": "2025-06-18", "capabilities": {},
+            "clientInfo": {"name": "canopy-pick", "version": "1"}}})
+        self._post({"jsonrpc": "2.0", "method": "notifications/initialized"})
+
+    def _post(self, body: dict) -> dict | None:
+        headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+        if TOKEN:
+            headers["Authorization"] = f"Bearer {TOKEN}"
+        if self.session:
+            headers["Mcp-Session-Id"] = self.session
+        req = urllib.request.Request(self.url, json.dumps(body).encode(), headers, method="POST")
+        with urllib.request.urlopen(req, timeout=60) as r:
+            self.session = r.headers.get("Mcp-Session-Id") or self.session
+            text = r.read().decode()
+        for line in text.splitlines():
+            if line.startswith("data:"):
+                return json.loads(line[5:])
+        return json.loads(text) if text.strip() else None
+
+    def call(self, tool: str, **args) -> str:
+        self.next_id += 1
+        reply = self._post({"jsonrpc": "2.0", "id": self.next_id, "method": "tools/call",
+                            "params": {"name": tool, "arguments": args}}) or {}
+        if "error" in reply:
+            raise RuntimeError(reply["error"])
+        return "".join(c.get("text", "") for c in reply.get("result", {}).get("content", []))
+
+
+def fetch_records(client: Client) -> list[dict]:
+    records: list[dict] = []
+    while True:
+        page = json.loads(client.call("catalogue__list", offset=len(records), limit=1000))
+        records += page["records"]
+        if not page["records"] or len(records) >= page["total"]:
+            return records
+
+
+def load_records(refresh: bool) -> list[dict]:
+    if not refresh and CACHE.exists() and time.time() - CACHE.stat().st_mtime < CACHE_TTL:
+        return json.loads(CACHE.read_text())
+    records = fetch_records(Client())
+    CACHE.parent.mkdir(parents=True, exist_ok=True)
+    CACHE.write_text(json.dumps(records))
+    return records
+
+
+def score(needle: str, hay: str) -> float:
+    """Subsequence match, rewarding runs and word starts. 0 means no match."""
+    at, total, run = -1, 0.0, 0
+    for ch in needle:
+        i = hay.find(ch, at + 1)
+        if i < 0:
+            return 0
+        run = run + 1 if i == at + 1 else 0
+        total += 1 + run * 2 + (3 if i == 0 or hay[i - 1] in " /:_-" else 0)
+        at = i
+    return total - len(hay) / 200
+
+
+def rank(records: list[dict], query: str) -> list[dict]:
+    needle = query.strip().lower()
+    if not needle:
+        return records
+    scored = []
+    for r in records:
+        s = max(score(needle, r["id"].lower()), score(needle, (r.get("description") or "").lower()) / 4)
+        if s > 0:
+            scored.append((s, r))
+    scored.sort(key=lambda x: -x[0])
+    return [r for _, r in scored]
+
+
+def copy(text: str) -> bool:
+    for cmd in (["wl-copy"], ["xclip", "-selection", "clipboard"], ["xsel", "-ib"], ["pbcopy"], ["clip.exe"]):
+        if shutil.which(cmd[0]):
+            return subprocess.run(cmd, input=text.encode(), check=False).returncode == 0
+    return False
+
+
+def tui(stdscr, records: list[dict], client_factory, query: str) -> str | None:
+    curses.curs_set(1)
+    curses.use_default_colors()
+    stdscr.timeout(150)
+    rows, pos, top, scroll = rank(records, query), 0, 0, 0
+    previews: dict[str, list[str]] = {}
+    client = None
+    idle = 0
+    while True:
+        h, w = stdscr.getmaxyx()
+        stdscr.erase()
+        left = max(24, w * 2 // 5) if w >= 80 else w
+        list_h = h - 2
+        if pos < top:
+            top = pos
+        elif pos >= top + list_h:
+            top = pos - list_h + 1
+        for y, r in enumerate(rows[top:top + list_h]):
+            attr = curses.A_REVERSE if top + y == pos else curses.A_NORMAL
+            stdscr.addnstr(y + 1, 0, r["id"].ljust(left - 1), left - 1, attr)
+        if rows and w >= 80:
+            rid = rows[pos]["id"]
+            if rid not in previews and idle >= 2:   # wait for typing to pause
+                try:
+                    client = client or client_factory()
+                    text = client.call("catalogue__read", ids=[rid])
+                except Exception as e:  # noqa: BLE001
+                    text = f"could not read: {e}"
+                previews[rid] = [p for line in text.splitlines()
+                                 for p in (textwrap.wrap(line, w - left - 2) or [""])]
+            lines = previews.get(rid) or textwrap.wrap(rows[pos].get("description") or "", w - left - 2)
+            for y, line in enumerate(lines[scroll:scroll + list_h]):
+                stdscr.addnstr(y + 1, left + 1, line, w - left - 2)
+        status = f" {len(rows)}/{len(records)} "
+        stdscr.addnstr(h - 1, 0, status, w - 1, curses.A_DIM)
+        stdscr.addnstr(0, 0, "> " + query, w - 1)
+        stdscr.move(0, min(len(query) + 2, w - 1))
+        stdscr.refresh()
+        try:
+            key = stdscr.get_wch()
+        except curses.error:
+            idle += 1
+            continue
+        idle = 0
+        if key in (curses.KEY_DOWN, "\x0e"):
+            pos, scroll = min(pos + 1, max(len(rows) - 1, 0)), 0
+        elif key in (curses.KEY_UP, "\x10"):
+            pos, scroll = max(pos - 1, 0), 0
+        elif key == curses.KEY_NPAGE:
+            scroll += list_h
+        elif key == curses.KEY_PPAGE:
+            scroll = max(scroll - list_h, 0)
+        elif key in ("\n", "\r", curses.KEY_ENTER):
+            return rows[pos]["id"] if rows else None
+        elif key in ("\x1b", "\x03"):
+            return None
+        elif key in (curses.KEY_BACKSPACE, "\x7f", "\b"):
+            query = query[:-1]
+            rows, pos, top, scroll = rank(records, query), 0, 0, 0
+        elif isinstance(key, str) and key.isprintable():
+            query += key
+            rows, pos, top, scroll = rank(records, query), 0, 0, 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Fuzzy-search the skills and tools on a Canopy server.")
+    ap.add_argument("query", nargs="*", help="starting filter, or the search words with --semantic")
+    ap.add_argument("--kind", choices=KINDS, help="only this kind of record")
+    ap.add_argument("--plugin", help="only this plugin")
+    ap.add_argument("--semantic", action="store_true", help="hybrid search on the server, by meaning")
+    ap.add_argument("--refresh", action="store_true", help="ignore the local cache")
+    ap.add_argument("--json", action="store_true", help="print matches as JSON, with no interface")
+    args = ap.parse_args()
+    query = " ".join(args.query)
+    try:
+        if args.semantic:
+            d = json.loads(Client().call("catalogue__search", query=query, limit=25))
+            records, query = [*d.get("results", []), *d.get("tools", [])], ""
+            for r in records:
+                r.setdefault("kind", r["id"].split(":", 1)[0])
+        else:
+            records = load_records(args.refresh)
+    except (urllib.error.URLError, OSError, RuntimeError) as e:
+        hint = "check CANOPY_TOKEN" if getattr(e, "code", 0) in (401, 403) else f"is Canopy running at {URL}?"
+        print(f"canopy-pick: {e} ({hint})", file=sys.stderr)
+        return 1
+    if args.kind:
+        records = [r for r in records if r.get("kind") == args.kind]
+    if args.plugin:
+        records = [r for r in records if r.get("plugin") == args.plugin]
+    if args.json or not sys.stdout.isatty():
+        print(json.dumps(rank(records, query)[:50], ensure_ascii=False, indent=1))
+        return 0
+    picked = curses.wrapper(tui, records, Client, query)
+    if picked:
+        print(picked)
+        if copy(picked):
+            print("(copied)", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

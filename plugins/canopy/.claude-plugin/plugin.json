@@ -1,0 +1,8 @@
+{
+  "name": "canopy",
+  "version": "0.1.0",
+  "description": "Set up, run and diagnose a Canopy server, and find skills on it.",
+  "author": { "name": "Daniel Rosehill" },
+  "license": "MIT",
+  "repository": "https://github.com/danielrosehill/Canopy"
+}
