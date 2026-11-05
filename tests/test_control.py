@@ -160,3 +160,27 @@ def test_names_cannot_be_paths(ctl):
 
 def test_agent_token_is_none_in_development(ctl):
     assert ctl.agent_token() is None
+
+
+# --- a registration that times out ------------------------------------------------------
+
+
+def timing_out(tools: list[dict]) -> httpx.MockTransport:
+    """The gateway as measured: the POST times out, the server is listed, tools may follow."""
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            raise httpx.ReadTimeout("slow upstream", request=request)
+        if request.url.path == "/api/v0/tools":
+            return httpx.Response(200, json=tools)
+        return httpx.Response(200, json=[{"name": "x"}])
+    return httpx.MockTransport(handle)
+
+
+def test_register_accepts_a_timeout_once_the_tools_are_there():
+    Gateway("", timing_out([{"name": "x__a"}])).register({"name": "x"})
+
+
+def test_register_fails_if_the_tools_never_arrive(monkeypatch):
+    monkeypatch.setattr("canopy.control.REGISTER_SETTLE", 0)
+    with pytest.raises(RuntimeError, match="no tools arrived"):
+        Gateway("", timing_out([{"name": "xy__a"}])).register({"name": "x"})

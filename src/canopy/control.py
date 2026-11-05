@@ -5,7 +5,8 @@ the gateway's CLI is not in this image. Writes are believed only once a read agr
 
 Group rules, each learned from a failure:
 
-- A group update only adds servers it has not seen, so groups are deleted and created.
+- A group update keeps any list it was not given, and the stored and live groups then
+  disagree until a restart, so groups are deleted and created.
 - A create that names an unregistered server fails after the delete, so membership is
   checked first, and the old definition is restored if the create still fails.
 - A new server does not join an existing group by itself, so groups are rebuilt
@@ -33,6 +34,7 @@ CONFIG = Path(os.environ.get("CANOPY_CONFIG", "/config"))
 MODE = os.environ.get("SERVER_MODE", "enterprise")
 CORE_GROUP = os.environ.get("CORE_GROUP", "core")
 REGISTER_TIMEOUT = float(os.environ.get("REGISTER_TIMEOUT_SEC", "30"))
+REGISTER_SETTLE = float(os.environ.get("REGISTER_SETTLE_SEC", "30"))
 
 BUILTIN_SERVERS = [
     {"name": "catalogue", "transport": "streamable_http", "url": "http://catalogue:3000/mcp",
@@ -149,18 +151,30 @@ class Gateway:
         return r.json()
 
     def register(self, server: dict) -> None:
-        """A registration can time out even though it worked, so the server list decides."""
+        """A registration can time out even though it worked, so the server list decides. The
+        gateway lists a server before it has fetched the tools, so after a timeout the tools
+        have to arrive too, or a group built next would miss them."""
         name = server["name"]
         self.http.delete(f"/api/v0/servers/{name}")
-        err = ""
+        err, timed_out = "", False
         try:
             r = self.http.post("/api/v0/servers", json=server)
             if not r.is_success:
                 err = r.text[:300]
         except httpx.TimeoutException:
-            err = "timed out"
+            err, timed_out = "timed out", True
         if name not in self.server_names():
             raise RuntimeError(err or "the gateway accepted it, but does not list it")
+        if timed_out and not self._tools_arrive(name):
+            raise RuntimeError(f"timed out, and no tools arrived within {REGISTER_SETTLE:.0f}s")
+
+    def _tools_arrive(self, name: str) -> bool:
+        deadline = time.time() + REGISTER_SETTLE
+        while not any(t["name"].startswith(f"{name}__") for t in self.tools()):
+            if time.time() > deadline:
+                return False
+            time.sleep(0.5)
+        return True
 
     def deregister(self, name: str) -> None:
         self.http.delete(f"/api/v0/servers/{name}")
@@ -391,7 +405,7 @@ class Control:
             state = self.read_state()
             state[name] = digest(server)
             self.write_state(state)
-            # Re-registering drops a server from its groups' tool sets.
+            # On 0.4.7 a group follows the name, so this is a precaution. See the contract suite.
             registered = g.server_names()
             rebuilt = []
             for group in merged_groups(doc["groups"]):

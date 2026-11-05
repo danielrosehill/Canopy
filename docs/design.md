@@ -1,6 +1,6 @@
 # Target design
 
-Status: **proposed, 2026-11-05. Step 1 of the order of work is built. Nothing else here is, unless it
+Status: **proposed, 2026-11-05. Steps 1 and 2 of the order of work are built. Nothing else here is, unless it
 says so.** For what runs today, see
 [architecture](architecture.md). This page is the shape Canopy is moving to, and the order of work.
 
@@ -352,7 +352,8 @@ MCPJungle is the piece we do not control. Canopy depends on specific behaviour o
 2. `compat.json` lists the MCPJungle versions Canopy has been tested against.
 3. A scheduled CI job watches MCPJungle releases, starts the real stack on the new version, and runs
    the **contract suite**: one test per behaviour we rely on, including identities, group rebuilds,
-   registration, tool listing and enterprise mode. A pass opens a PR that bumps the pin and `compat.json`.
+   registration, tool listing and enterprise mode. A pass opens a PR that bumps the pin and `compat.json`
+   (or an issue pointing at the branch, if the repo does not let Actions create PRs).
    A failure opens an issue naming the behaviour that changed.
 4. On a server, the `update` skill runs `canopy update`: backup, pull, apply, status check, search
    comparison, and restore on failure. MCPJungle migrates its database on start, so rollback means
@@ -429,7 +430,8 @@ Each step ends with a clean install on an empty machine, and the contract suite 
 
 1. **Done.** Folder layout, the `api` service, `/v1/status`, `canopy` CLI, `cli` image, gateway writes moved
    behind the API. `/admin` is still mounted read-only in the `backup` profile, until step 4.
-2. Contract suite in CI, with `compat.json`. Early, because every later step changes what it protects.
+2. **Done.** Contract suite in CI, with `compat.json`, and the `MCPJungle watch` workflow. Early, because
+   every later step changes what it protects.
 3. Postgres with pgvector, reranking step, roles, schemas and migrations, records and vectors moved there, embedder
    route, Ollama in `search`, weighted search, and a labelled query set as a regression check.
 4. Scheduler, then backup and restore as jobs.

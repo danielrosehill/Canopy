@@ -1,0 +1,92 @@
+# Tests each new MCPJungle release against the contract suite. A pass proposes the bump, and a
+# failure opens an issue naming the behaviours that changed. Nothing here changes a deployment.
+name: MCPJungle watch
+
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to test, such as 0.4.8. Defaults to the latest release.
+        required: false
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --frozen
+
+      - name: Find a version not tested yet
+        id: find
+        env:
+          REQUESTED: ${{ inputs.version }}
+        run: |
+          version="${REQUESTED:-$(gh api repos/mcpjungle/MCPJungle/releases/latest --jq .tag_name)}"
+          version="${version#v}"
+          tag="${version}-stdio"
+          if jq -e --arg t "$tag" '.mcpjungle.tested[] | select(.tag == $t)' compat.json >/dev/null; then
+            echo "$tag is already tested"; exit 0
+          fi
+          if ! docker manifest inspect "ghcr.io/mcpjungle/mcpjungle:$tag" >/dev/null 2>&1; then
+            echo "$tag has no image yet"; exit 0
+          fi
+          if [ -n "$(gh issue list --state open --search "\"MCPJungle $tag\" in:title" --json number --jq '.[]')" ] \
+             || git ls-remote --exit-code origin "mcpjungle-$tag" >/dev/null; then
+            echo "$tag already has an open issue or branch"; exit 0
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Run the contract suite in both modes
+        id: suite
+        if: steps.find.outputs.tag
+        env:
+          MCPJUNGLE_TAG: ${{ steps.find.outputs.tag }}
+        run: |
+          result=passed
+          for mode in enterprise development; do
+            SERVER_MODE=$mode tests/contract/run.sh -q --tb=line 2>&1 | tee "contract-$mode.log" || result=failed
+          done
+          echo "result=$result" >> "$GITHUB_OUTPUT"
+
+      - name: Propose the bump
+        if: steps.suite.outputs.result == 'passed'
+        env:
+          TAG: ${{ steps.find.outputs.tag }}
+        run: |
+          scripts/bump-mcpjungle.py "$TAG"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "mcpjungle-$TAG"
+          git commit -am "Bump MCPJungle to $TAG"
+          git push origin "mcpjungle-$TAG"
+          body="The contract suite passed on $TAG, in enterprise and development modes."
+          # Needs "Allow GitHub Actions to create pull requests" in the repo's settings.
+          gh pr create --title "Bump MCPJungle to $TAG" --body "$body" --head "mcpjungle-$TAG" \
+            || gh issue create --title "MCPJungle $TAG passed: merge branch mcpjungle-$TAG" --body "$body"
+
+      - name: Report what changed
+        if: steps.suite.outputs.result == 'failed'
+        env:
+          TAG: ${{ steps.find.outputs.tag }}
+        run: |
+          {
+            echo "The contract suite failed on $TAG, so the pin stays where it is."
+            echo "Each failure names a behaviour in docs/architecture.md."
+            echo
+            echo '```'
+            grep -h -E '^(FAILED|ERROR)|(passed|failed|error).* in [0-9.]+s|^/.*(Error|assert)' contract-*.log | head -60
+            echo '```'
+            echo
+            echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          } > issue.md
+          gh issue create --title "MCPJungle $TAG fails the contract suite" --body-file issue.md

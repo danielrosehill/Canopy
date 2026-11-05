@@ -87,14 +87,29 @@ to the gateway. Built-in servers and the core group cannot be removed.
 
 ## Gateway behaviour the seed depends on
 
-- A group update adds only servers it has not seen, so groups are deleted and created again.
-- A group create fails if it names an unregistered server, or if it resolves to no tools. Membership
-  is checked before the delete, and the old definition is restored if the create still fails.
-- A new server does not join an existing group by itself.
-- A registration can report a timeout although it worked, so a failure is believed only if the server
-  list agrees.
+Each line has a test in `tests/contract/`, run by CI against the real image, in both modes. Run it
+yourself with `tests/contract/run.sh`, or `MCPJUNGLE_TAG=<tag> tests/contract/run.sh` for another
+version. `compat.json` records what has passed. Measured on 0.4.7, 2026-11-05.
+
+- A group update keeps any list it was not given. The stored definition then disagrees with the live
+  group until the gateway restarts, so groups are deleted and created.
+- A group create fails if it names an unregistered server (404), or if it resolves to no tools (400).
+  Membership is checked before the delete, and the old definition is restored if the create still fails.
+- A group follows server names. A new server joins only a group that names it, and a named server
+  that is removed and registered again returns to its groups. Canopy still rebuilds after a
+  registration, as a precaution.
+- A registration can report a timeout although it worked. The server is listed at once and its tools
+  arrive later, so a failure is believed only if the server list agrees, and after a timeout the
+  tools must arrive too.
+- A second registration of a name fails, so `register` deletes first. Tool lists freeze at registration,
+  and registering again is what refreshes them.
+- An upstream that cannot be reached is refused, and is not listed.
 - Writes use the REST API. The gateway's CLI is in a different image.
 - `GET /api/v0/tools` lists tools for an admin token.
+- `/init` gives the admin token once. A client token works only on MCP endpoints, and a user token only
+  reads REST (401 on MCP, 403 on a write). A lost token cannot be shown again, so the identity is replaced.
+- Development mode needs no `/init` and no tokens.
+- A group with nothing in it answers `tools/list` with `"tools": null`.
 
 ## Search
 

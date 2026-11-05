@@ -18,6 +18,20 @@ jobs:
       - run: uv run pytest
       - run: docker compose config --quiet
 
+  contract:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [enterprise, development]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --frozen
+      - run: tests/contract/run.sh
+        env:
+          SERVER_MODE: ${{ matrix.mode }}
+
   secrets:
     runs-on: ubuntu-latest
     steps:
@@ -29,7 +43,7 @@ jobs:
             git /repo --redact --no-banner
 
   image:
-    needs: [test, secrets]
+    needs: [test, contract, secrets]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:

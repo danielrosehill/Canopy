@@ -1,0 +1,8 @@
+{
+  "mcpjungle": {
+    "pinned": "0.4.7-stdio",
+    "tested": [
+      {"tag": "0.4.7-stdio", "version": "v0.4.7", "date": "2026-11-05", "modes": ["enterprise", "development"]}
+    ]
+  }
+}

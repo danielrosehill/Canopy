@@ -96,7 +96,8 @@ class McpClient:
         return reply.get("result", {})
 
     def tools(self) -> list[dict]:
-        return self.request("tools/list").get("tools", [])
+        # The gateway sends `"tools": null` for a group with nothing in it.
+        return self.request("tools/list").get("tools") or []
 
     def call(self, name: str, arguments: dict | None = None) -> dict:
         return self.request("tools/call", {"name": name, "arguments": arguments or {}})

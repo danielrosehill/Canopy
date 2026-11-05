@@ -1,0 +1,22 @@
+# Added to the main compose file by run.sh: the real `db` and `gateway`, on throwaway storage,
+# with a fixture upstream. The gateway's image and settings stay those of compose.yaml.
+services:
+  db:
+    volumes: !reset []
+    tmpfs:
+      - /var/lib/postgresql/data
+
+  gateway:
+    ports: !override
+      - "127.0.0.1:${CONTRACT_GATEWAY_PORT:-18080}:8080"
+
+  upstream:
+    image: python:3.13-alpine
+    command: ["python", "/upstream.py"]
+    environment:
+      SLOW_SEC: "4"
+    ports:
+      - "127.0.0.1:${CONTRACT_UPSTREAM_PORT:-18081}:3000"
+    volumes:
+      - ./tests/contract/upstream.py:/upstream.py:ro
+    networks: [canopy]
