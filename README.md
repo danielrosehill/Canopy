@@ -26,12 +26,26 @@ The aim is bundling, thin clients and context efficiency: clients hold one conne
 your tools. Run it on a home server if you orchestrate a lot at home (Home Canopy), or on a VPS if you don't
 (Cloud Canopy). The [overview](docs/overview.md) explains both, with diagrams.
 
-### Architecture diagrams
+## Deployment architectures
 
-Every component and connection, as landscape PDFs:
+Every component and connection for each way of deploying Canopy. Click an image for the PDF. They are designed
+as a pair of A1 posters: [print notes](docs/diagrams/README.md).
 
-- [Home Canopy](docs/diagrams/home-canopy.pdf): the gateway on a home server
-- [Cloud Canopy](docs/diagrams/cloud-canopy.pdf): the gateway on a VPS, with a local proxy at home
+### Architecture 1: Home Canopy
+
+The gateway on a home server.
+
+[![Home Canopy network diagram](docs/diagrams/home-canopy.png)](docs/diagrams/home-canopy.pdf)
+
+[PDF](docs/diagrams/home-canopy.pdf) | [Print-ready PDF](docs/diagrams/home-canopy-print.pdf)
+
+### Architecture 2: Cloud Canopy
+
+The gateway on a VPS, with a local proxy at home.
+
+[![Cloud Canopy network diagram](docs/diagrams/cloud-canopy.png)](docs/diagrams/cloud-canopy.pdf)
+
+[PDF](docs/diagrams/cloud-canopy.pdf) | [Print-ready PDF](docs/diagrams/cloud-canopy-print.pdf)
 
 ## What you get
 
@@ -163,7 +177,7 @@ follow, so add only sources you trust.
 ## Design notes
 
 - [Overview](docs/overview.md): what Canopy is and why it is shaped this way, with diagrams
-- [Network diagrams](docs/diagrams/): full PDFs of both templates. Rebuild with `python3 docs/diagrams/build.py`
+- [Network diagrams](docs/diagrams/README.md): the posters for both templates, and how to rebuild and print them
 - [User manual](docs/manual.md): connecting a client, and how finding skills works
 - [API reference](docs/api.md): every route
 - [Architecture](docs/architecture.md): how the stack fits together

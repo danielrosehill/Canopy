@@ -1,14 +1,26 @@
-#!/usr/bin/env python3
-"""Build the Home Canopy and Cloud Canopy network diagrams.
+#!/usr/bin/env -S uv run --script
+# /// script
+# dependencies = ["pypdf"]
+# ///
+"""Build the Home Canopy and Cloud Canopy posters.
 
-Writes <name>.dot and <name>.pdf beside this file. Needs Graphviz: python3 docs/diagrams/build.py
+Run: uv run docs/diagrams/build.py. Needs Graphviz, Typst and pdftoppm. Fonts are in fonts/, so nothing is installed.
+Per poster it writes <name>.dot, <name>.pdf (A1, for screens), <name>.png and <name>-print.pdf
+(A1 with 3 mm bleed, crop marks, and TrimBox and BleedBox set). Layout is in poster.typ.
 Keep the Canopy stack in stack() in step with compose.yaml.
 """
+import os
 import subprocess
 from pathlib import Path
 
+from pypdf import PdfReader, PdfWriter
+from pypdf.generic import RectangleObject
+
 HERE = Path(__file__).parent
-FONT = "Helvetica"
+FONT = "Nunito"
+BUILD = HERE / ".build"
+MM = 72 / 25.4
+DATE = "2026-11-05"
 LINK = {  # class: (colour, style, width, legend)
     "mcp":    ("#1b5e20", "solid", 1.8, "MCP over HTTP, with a token"),
     "ts":     ("#1565c0", "solid", 1.8, "Tailscale (WireGuard)"),
@@ -129,18 +141,21 @@ def outbound_links():
 
 
 def legend(used):
-    rows = "".join(f'<TR><TD ALIGN="LEFT"><FONT COLOR="{c}"><B>{"- - - -" if s == "dashed" else "━━━━"}</B></FONT></TD>'
-                   f'<TD ALIGN="LEFT">{t}</TD></TR>' for k, (c, s, _, t) in LINK.items() if k in used)
+    def sample(c, s):
+        if s == "dashed":
+            return f'<TD ALIGN="LEFT"><FONT COLOR="{c}"><B>- - - -</B></FONT></TD>'
+        return f'<TD ALIGN="LEFT"><FONT COLOR="{c}"><B>———</B></FONT></TD>'
+
+    rows = "".join(f'<TR>{sample(c, s)}<TD ALIGN="LEFT">{t}</TD></TR>' for k, (c, s, _, t) in LINK.items() if k in used)
     return ('legend [shape=plaintext, fontsize=15, label=<<TABLE BORDER="1" COLOR="#90a4ae" CELLBORDER="0" CELLSPACING="3" CELLPADDING="3">'
             f'<TR><TD COLSPAN="2" ALIGN="LEFT"><B>Key</B></TD></TR>{rows}'
             '<TR><TD ALIGN="LEFT">Dashed box</TD><TD ALIGN="LEFT">Opt-in compose profile, or optional</TD></TR></TABLE>>];')
 
 
-def graph(title, status, body):
+def graph(nodesep, body):
     head = f'''digraph G {{
-rankdir=LR; compound=true; newrank=true; nodesep=0.55; ranksep=0.7; splines=true; pad=0.5; bgcolor=white;
-labelloc=t; labeljust=l; fontname="{FONT}"; fontsize=20;
-label=<<FONT POINT-SIZE="40"><B>{title}</B></FONT><BR ALIGN="LEFT"/><BR ALIGN="LEFT"/>{status}<BR ALIGN="LEFT"/><BR ALIGN="LEFT"/>>;
+rankdir=LR; compound=true; newrank=true; nodesep={nodesep}; ranksep=0.7; splines=true; pad=0.1; bgcolor=transparent;
+fontname="{FONT}";
 node [shape=box, fontname="{FONT}", fontsize=17, color="#546e7a", margin="0.12,0.07"];
 edge [fontname="{FONT}", fontsize=14, arrowsize=0.7];
 '''
@@ -177,8 +192,7 @@ def home():
             e("gateway", "boxmcp", "ts", "upstream over the tailnet"),
             e("cfedge", "vpscfd", "cf", "its own hostnames"), e("vpscfd", "vpsapps", "cf"), e("boxmcp", "vpsapps", "lan"),
             e("gateway", "sitegw", "ts", "one upstream"), e("sitegw", "sitetools", "lan")]
-    return graph("Home Canopy", "The gateway lives on the home network. Runs in the source deployment, except where marked. "
-                 "Canopy ships the stack only: local tools and VPS plugins are yours to add. 2026-11-05.", body)
+    return graph(0.25, body)
 
 
 def cloud():
@@ -202,12 +216,57 @@ def cloud():
             e("gateway", "proxy", "ts", "one upstream, every local call: proxy dials out to the tailnet"),
             e("proxy", "proxymcp", "mcp"), *local_links("proxymcp"),
             e("athome", "proxy", "idea", "local tools, direct")]
-    return graph("Cloud Canopy", "The gateway lives on a VPS, and a small proxy reaches home. A proposed template: not deployed as a whole. "
-                 "The proxy is the site gateway pattern, which runs in the source deployment. 2026-11-05.", body)
+    return graph(0.55, body)
 
 
-for name, text in (("home-canopy", home()), ("cloud-canopy", cloud())):
-    dot = HERE / f"{name}.dot"
-    dot.write_text(text)
-    subprocess.run(["dot", "-Tpdf", str(dot), "-o", str(HERE / f"{name}.pdf")], check=True)
-    print(name)
+POSTERS = [
+    {"name": "home-canopy", "number": "1", "title": "Home Canopy", "dot": home,
+     "summary": "The gateway lives on the home network. Runs in the source deployment, except where marked. "
+                "Canopy ships the stack only: local tools and VPS plugins are yours to add.",
+     "short": "the gateway on a home server"},
+    {"name": "cloud-canopy", "number": "2", "title": "Cloud Canopy", "dot": cloud,
+     "summary": "The gateway lives on a VPS, and a small proxy reaches home. A proposed template, not deployed as a whole. "
+                "The proxy is the site gateway pattern, which runs in the source deployment.",
+     "short": "the gateway on a VPS, with a local proxy at home"},
+]
+
+
+def typst(poster, other, diagram, out, print_):
+    inputs = {"title": poster["title"], "number": poster["number"], "summary": poster["summary"], "date": DATE,
+              "other-number": other["number"], "other-title": other["title"], "other-summary": other["short"],
+              "diagram": diagram, "print": "1" if print_ else "0"}
+    args = [x for k, v in inputs.items() for x in ("--input", f"{k}={v}")]
+    subprocess.run(["typst", "compile", "--root", str(HERE.parent), "--font-path", str(HERE / "fonts"), *args,
+                    str(HERE / "poster.typ"), str(out)], check=True)
+
+
+def set_boxes(path, bleed=3, slug=9):
+    """Tell the printer where the trim and bleed are. Typst does not set these."""
+    writer = PdfWriter(clone_from=PdfReader(path))
+    page = writer.pages[0]
+    w, h = float(page.mediabox.width), float(page.mediabox.height)
+    box = lambda m: RectangleObject([m * MM, m * MM, w - m * MM, h - m * MM])
+    page.bleedbox, page.trimbox = box(slug), box(slug + bleed)
+    writer.write(path)
+
+
+def main():
+    BUILD.mkdir(exist_ok=True)
+    conf = BUILD / "fonts.conf"
+    conf.write_text(f"<fontconfig><dir>{HERE / 'fonts'}</dir><cachedir>{BUILD / 'fc'}</cachedir></fontconfig>")
+    env = {**os.environ, "FONTCONFIG_FILE": str(conf)}
+    for poster, other in zip(POSTERS, reversed(POSTERS)):
+        name = poster["name"]
+        dot = HERE / f"{name}.dot"
+        dot.write_text(poster["dot"]())
+        subprocess.run(["dot", "-Tpdf", str(dot), "-o", str(BUILD / f"{name}.pdf")], check=True, env=env)
+        diagram = f".build/{name}.pdf"
+        typst(poster, other, diagram, HERE / f"{name}.pdf", False)
+        typst(poster, other, diagram, HERE / f"{name}-print.pdf", True)
+        set_boxes(HERE / f"{name}-print.pdf")
+        subprocess.run(["pdftoppm", "-png", "-scale-to", "3200", "-singlefile", str(HERE / f"{name}.pdf"), str(HERE / name)],
+                       check=True)
+        print(name)
+
+
+main()

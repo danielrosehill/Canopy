@@ -8,6 +8,7 @@ on [fal](https://fal.ai) on 2026-11-05.
 | `avatar.png` | Avatar, 512x512, transparent corners | `google/nano-banana-2.1/edit` | 11 |
 | `banner.jpg` | README banner | `google/nano-banana-2.1/edit`, 21:9, 2K, with the avatar as reference | 21 |
 | `social-preview.jpg` | GitHub social preview, 1280x640, a centre crop of the banner | As above | 21 |
+| `poster-frame.jpg` | Background of the network posters, 5056x3392 | `google/nano-banana-2.1/edit`, 3:2, 4K, with the avatar as reference | 42 |
 | `canopy-at-a-glance.png` | Overview diagram | `google/nano-banana-2.1/edit`, 16:9, 1K, with the avatar as reference | 31 |
 | `home-canopy.png` | Home Canopy diagram | As above | 31 |
 | `cloud-canopy.png` | Cloud Canopy diagram | As above | 31 |
@@ -72,4 +73,10 @@ Arrows: "Clients" to "Canopy". "Canopy" to "Cloud APIs". "Canopy" down to "Local
 Each card contains only its label and any subtitle given: no sample content, mini-diagrams, screenshots or example text inside it.
 No other text, logos or watermarks anywhere.
 Include this exact sloth character small, in the bottom right corner, not covering any label or arrow.
+```
+
+Poster background:
+
+```text
+Keep this exact sloth character and its flat illustrated style. Decorative poster background with no text. A dense band of lush rainforest canopy foliage runs across only the top 19% of the image, ending in a clean straight edge, deep greens with lime highlights, very dark behind the left 55% so light lettering can sit there. The sloth sits small and completely inside that band on a thick branch towards the right, with no part of it below the band. A narrow fringe of monstera and fern leaves runs along the left and right edges, no deeper than 3% of the image, and small clusters in the two bottom corners only. Everything else is empty, plain flat warm cream. No text, letters, logos, icons or watermarks anywhere.
 ```
