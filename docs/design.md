@@ -431,8 +431,9 @@ CLI, out of 3,571 skills, commands and agents in a real catalogue on 2026-11-05.
 | Added per user | `hf` (37), `modal` (56), `wrangler`, `vercel`, `gcloud`, `op`, `infisical`, anything else | `canopy cli add <name>`, recorded in `agent-data/config/cli.json` |
 
 Added CLIs install into `agent-data/cli` with `uv tool`, `npm` or a release download, so they survive an
-image update. `canopy cli add` is not built yet: the `manage-clis` skill in `canopy-manager` does this today
-from `cli.json`, and copies logins from the host. `uvx` and `npx` cover anything run only once.
+image update. The library is `config/cli-library.json`. `canopy clis choose` is the picker, `canopy clis install` applies the
+choices in `agent-data/config/cli.json`, and skill `manage-clis` is the agent's way in. It replaces the `canopy cli add`
+planned above. Alpine packages are reinstalled after an update, because they live in the container. `uvx` and `npx` cover anything run only once.
 
 **Updating them.** A `cli-update` job runs weekly. It compares each added CLI with its latest release,
 installs the new version beside the old one, runs a smoke test (`--version`, and a read-only command if

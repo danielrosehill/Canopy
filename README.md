@@ -91,6 +91,7 @@ canopy servers                      # also groups, tools
 canopy add-server upstream.json     # registers it, confirms by reading back, saves it to config
 canopy remove-server NAME
 canopy run gh repo list             # any command, in the cli container
+canopy clis choose                  # pick tools for that container from the library
 canopy api GET /v1/gateway/groups   # any route
 ```
 

@@ -1,7 +1,7 @@
 # The CLIs that skills use, so they do not have to be installed on the host. See docs/design.md.
 FROM alpine:3.22
 
-RUN apk add --no-cache aws-cli curl git github-cli jq nodejs npm postgresql17-client python3 \
+RUN apk add --no-cache aws-cli curl git github-cli jq nodejs npm openssh-client postgresql17-client python3 \
     rclone restic uv
 
 COPY clients/canopy /usr/local/bin/canopy

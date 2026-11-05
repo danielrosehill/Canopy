@@ -20,6 +20,7 @@
     canopy buckets                  the staging buckets and their use
     canopy api METHOD PATH [JSON]   call any route
     canopy run CMD [ARGS...]        run a command in the cli container
+    canopy clis ACTION [NAME...]    tools in the cli container: list, choose, add, remove, install, logins, check, all
     canopy compose [ARGS...]        docker compose, with Canopy's files
     canopy restore [--replace]      bring back the latest backup, stopping the stack to do it
 
@@ -219,6 +220,10 @@ def main() -> int:
         return compose("down", *args)
     if cmd == "compose":
         return compose(*args)
+    if cmd == "clis":
+        script = REPO / "plugins/canopy-manager/skills/manage-clis/scripts/clis.py"
+        return subprocess.call([sys.executable, str(script), "--agent-data", str(folders()[0]),
+                                "--canopy", str(Path(__file__).resolve()), *args])
     if cmd == "run":
         return run(args)
     if cmd == "status":
