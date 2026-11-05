@@ -15,6 +15,9 @@ x-mcp-health: &mcp-health
   retries: 20
   start_period: 2s
 
+x-canopy-db: &canopy-db
+  CANOPY_DATABASE_URL: postgres://canopy:${CANOPY_DB_PASSWORD:-canopy}@db:5432/canopy
+
 x-canopy-env: &canopy-env
   SERVER_MODE: ${SERVER_MODE:-enterprise}
   CORE_GROUP: ${CORE_GROUP:-core}
@@ -59,15 +62,21 @@ services:
     command: ["python", "-m", "canopy.catalogue"]
     healthcheck: *mcp-health
     environment:
-      <<: *canopy-env
+      <<: [*canopy-env, *canopy-db]
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
-      EMBED_URL: ${EMBED_URL:-}
-      EMBED_API_KEY: ${EMBED_API_KEY:-}
+      CANOPY_API_TOKEN: ${CANOPY_API_TOKEN:-}
+      EMBED_PROVIDER: ${EMBED_PROVIDER:-}
       EMBED_MODEL: ${EMBED_MODEL:-bge-m3}
       EMBED_ON_SYNC: ${EMBED_ON_SYNC:-false}
       SYNC_INTERVAL_SEC: ${SYNC_INTERVAL_SEC:-3600}
+      RERANK_MODEL: ${RERANK_MODEL:-}
+      RERANK_API_KEY: ${RERANK_API_KEY:-}
+    depends_on:
+      db:
+        condition: service_healthy
     volumes:
       - ${CANOPY_DATA:-${HOME}/canopy/data}/catalogue:/data
+      - ${CANOPY_DATA:-${HOME}/canopy/data}/api:/api:ro
       - ${CANOPY_DATA:-${HOME}/canopy/data}/tokens:/tokens:ro
       - ${CANOPY_AGENT_DATA:-${HOME}/canopy/agent-data}/config:/config:ro
 
@@ -88,8 +97,11 @@ services:
       <<: *mcp-health
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8090), 2)"]
     environment:
-      <<: *canopy-env
+      <<: [*canopy-env, *canopy-db]
       CANOPY_API_TOKEN: ${CANOPY_API_TOKEN:-}
+      EMBED_PROVIDER: ${EMBED_PROVIDER:-}
+      EMBED_FALLBACK: ${EMBED_FALLBACK:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
     env_file:
       - path: ${CANOPY_AGENT_DATA:-${HOME}/canopy/agent-data}/secrets.env
         required: false
@@ -152,7 +164,7 @@ services:
 
   ollama:
     image: ollama/ollama:0.12.6
-    profiles: [embeddings-local]
+    profiles: [search]
     volumes:
       - ${CANOPY_DATA:-${HOME}/canopy/data}/ollama:/root/.ollama
     restart: unless-stopped
@@ -160,7 +172,7 @@ services:
 
   ollama-pull:
     image: ollama/ollama:0.12.6
-    profiles: [embeddings-local]
+    profiles: [search]
     environment:
       OLLAMA_HOST: http://ollama:11434
     entrypoint: ["sh", "-c", "sleep 5 && ollama pull ${EMBED_MODEL:-bge-m3}"]

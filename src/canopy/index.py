@@ -1,9 +1,10 @@
-"""The index: marketplaces -> shallow clones -> SQLite.
+"""The index: marketplaces -> shallow clones -> Postgres.
 
 Records are plugins, the skills, commands and agents inside them, and the MCP
-servers and tools known to the gateway. The database is a cache: everything in it
-except `reads` (usage history) comes from git and the gateway, so deleting it and
-syncing rebuilds it.
+servers and tools known to the gateway. The `catalogue` schema is a cache: everything in
+it except `reads` (usage history) comes from git and the gateway, so deleting it and
+syncing rebuilds it. Vectors are the costly part, so a record keeps its vector while the
+text that was embedded stays the same.
 
 A plugin's head commit is written in the same transaction as its records, so a
 failed pass leaves the old head and the next pass retries it.
@@ -18,7 +19,6 @@ import json
 import os
 import re
 import shutil
-import sqlite3
 import subprocess
 import threading
 import time
@@ -30,14 +30,16 @@ import numpy as np
 import yaml
 
 from . import gateway as gw
+from . import store
 
 DATA = Path(os.environ.get("CANOPY_DATA", "/data"))
 CONFIG = Path(os.environ.get("CANOPY_CONFIG", "/config"))
 GIT_TOKEN = os.environ.get("GITHUB_TOKEN", "")
-# OpenAI-compatible embeddings endpoint. Unset means keyword search only.
-EMBED_URL = os.environ.get("EMBED_URL", "").rstrip("/")
-EMBED_KEY = os.environ.get("EMBED_API_KEY", "")
-EMBED_MODEL = os.environ.get("EMBED_MODEL", "bge-m3")
+# Every embedding goes through the API. No provider means keyword search only.
+EMBED_URL = (os.environ.get("CANOPY_API_URL", "http://api:8090").rstrip("/") + "/v1"
+             if os.environ.get("EMBED_PROVIDER") else "")
+API_TOKEN_FILE = Path(os.environ.get("CANOPY_API_DIR", "/api")) / "token"
+EMBED_MODEL = os.environ.get("EMBED_MODEL", "bge-m3")   # the canonical name: see system.model_map
 # Off by default: embedding costs money on a hosted API, so it is a separate step.
 EMBED_ON_SYNC = os.environ.get("EMBED_ON_SYNC", "false").lower() == "true"
 # Tool records come from what this group serves; empty means everything the services
@@ -47,31 +49,6 @@ CORE_GROUP = os.environ.get("CORE_GROUP", "core")
 # The name clients give this gateway, which is the `<client>` in mcp__<client>__<tool>.
 CLIENT_NAME = os.environ.get("CANOPY_CLIENT_NAME", "canopy")
 BODY_CAP = 200_000   # bytes kept per record
-
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS plugins (
-    name TEXT PRIMARY KEY, marketplace TEXT, repo TEXT, description TEXT,
-    head TEXT, status TEXT, error TEXT, synced_at REAL);
-CREATE TABLE IF NOT EXISTS records (
-    id TEXT PRIMARY KEY, kind TEXT, plugin TEXT, name TEXT, description TEXT,
-    path TEXT, body TEXT, hash TEXT, embed_key TEXT);
-CREATE INDEX IF NOT EXISTS records_plugin ON records(plugin);
-CREATE VIRTUAL TABLE IF NOT EXISTS records_fts USING fts5(
-    id UNINDEXED, name, description, plugin, body, tokenize='porter unicode61');
-CREATE TABLE IF NOT EXISTS embeddings (key TEXT PRIMARY KEY, model TEXT, vec BLOB);
-CREATE TABLE IF NOT EXISTS mcp_decls (
-    plugin TEXT, server TEXT, transport TEXT, config TEXT, PRIMARY KEY (plugin, server));
-CREATE TABLE IF NOT EXISTS mcp_refs (
-    record_id TEXT, plugin TEXT, route TEXT, server TEXT, tool TEXT,
-    PRIMARY KEY (record_id, route, server, tool));
-CREATE TABLE IF NOT EXISTS gateway_servers (name TEXT PRIMARY KEY, description TEXT, enabled INT);
-CREATE TABLE IF NOT EXISTS gateway_tools (name TEXT PRIMARY KEY, description TEXT, schema TEXT, core INT);
-CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
-CREATE TABLE IF NOT EXISTS runs (
-    id INTEGER PRIMARY KEY, started REAL, finished REAL, ok INT, summary TEXT);
-CREATE TABLE IF NOT EXISTS reads (id TEXT, ts REAL, hit INT);
-CREATE INDEX IF NOT EXISTS reads_id ON reads(id, ts);
-"""
 
 write_lock = threading.Lock()
 
@@ -84,13 +61,10 @@ def market_dir() -> Path:
     return DATA / "marketplaces"
 
 
-def connect() -> sqlite3.Connection:
+def connect() -> store.Db:
     DATA.mkdir(parents=True, exist_ok=True)
-    db = sqlite3.connect(DATA / "catalogue.db", timeout=30, check_same_thread=False)
-    db.row_factory = sqlite3.Row
-    db.execute("PRAGMA journal_mode=WAL")
-    db.executescript(SCHEMA)
-    return db
+    store.migrate()
+    return store.Db()
 
 
 def log(msg: str) -> None:
@@ -334,8 +308,9 @@ def embed_text(r: dict) -> str:
 def embed(texts: list[str], timeout: float = 120) -> list[list[float]]:
     if not EMBED_URL:
         raise RuntimeError("EMBED_URL is not set")
+    token = os.environ.get("CANOPY_API_TOKEN") or API_TOKEN_FILE.read_text().strip()
     r = httpx.post(f"{EMBED_URL}/embeddings", json={"model": EMBED_MODEL, "input": texts},
-                   headers={"Authorization": f"Bearer {EMBED_KEY}"} if EMBED_KEY else {}, timeout=timeout)
+                   headers={"Authorization": f"Bearer {token}"}, timeout=timeout)
     r.raise_for_status()
     data = sorted(r.json()["data"], key=lambda d: d["index"])
     if len(data) != len(texts):
@@ -343,21 +318,22 @@ def embed(texts: list[str], timeout: float = 120) -> list[list[float]]:
     return [d["embedding"] for d in data]
 
 
-def _pending(db: sqlite3.Connection) -> list[sqlite3.Row]:
+def _pending(db: store.Db) -> list[store.Row]:
+    """One row per distinct text: records sharing a text share a vector."""
     return db.execute(
-        "SELECT r.id, r.kind, r.plugin, r.name, r.description, r.body, r.embed_key FROM records r "
-        "LEFT JOIN embeddings e ON e.key = r.embed_key AND e.model = ? WHERE e.key IS NULL",
+        "SELECT DISTINCT ON (embed_key) id, kind, plugin, name, description, body, embed_key FROM records "
+        "WHERE embedding IS NULL OR embed_model IS DISTINCT FROM %s ORDER BY embed_key, id",
         (EMBED_MODEL,)).fetchall()
 
 
-def pending_estimate(db: sqlite3.Connection) -> dict:
+def pending_estimate(db: store.Db) -> dict:
     """What an embedding run would process, so its cost can be judged first."""
     rows = _pending(db)
     return {"records": len(rows), "model": EMBED_MODEL, "configured": bool(EMBED_URL),
             "est_tokens": sum(len(embed_text(dict(r))) for r in rows) // 4}
 
 
-def embed_pending(db: sqlite3.Connection, batch: int = 32) -> tuple[int, str | None]:
+def embed_pending(db: store.Db, batch: int = 32) -> tuple[int, str | None]:
     """Embed records whose content has no vector yet. Keyed by content hash, so
     unchanged records are never embedded twice."""
     rows = _pending(db)
@@ -372,8 +348,8 @@ def embed_pending(db: sqlite3.Connection, batch: int = 32) -> tuple[int, str | N
             for r, v in zip(chunk, vecs):
                 a = np.asarray(v, dtype=np.float32)
                 a /= np.linalg.norm(a) or 1.0
-                db.execute("INSERT OR REPLACE INTO embeddings VALUES (?,?,?)",
-                           (r["embed_key"], EMBED_MODEL, a.tobytes()))
+                db.execute("UPDATE records SET embedding = %s, embed_model = %s WHERE embed_key = %s",
+                           (a, EMBED_MODEL, r["embed_key"]))
         done += len(chunk)
     return done, None
 
@@ -452,28 +428,34 @@ def read_manifests(fetch: bool = True) -> tuple[dict[str, dict], list[str], set[
 
 # --- sync ----------------------------------------------------------------------
 
-def _store(db: sqlite3.Connection, plugin: str, recs: list[dict]) -> None:
-    """Replace every record of one plugin. The caller holds the transaction."""
-    db.execute("DELETE FROM records_fts WHERE id IN (SELECT id FROM records WHERE plugin=?)", (plugin,))
-    db.execute("DELETE FROM records WHERE plugin=?", (plugin,))
+def _store(db: store.Db, plugin: str, recs: list[dict]) -> None:
+    """Replace every record of one plugin, keeping a vector whose text has not changed. The
+    caller holds the transaction."""
+    db.execute("DELETE FROM records WHERE plugin = %s AND NOT (id = ANY(%s))", (plugin, [r["id"] for r in recs]))
     for r in recs:
         key = hashlib.sha256(embed_text(r).encode()).hexdigest()
-        db.execute("INSERT INTO records VALUES (?,?,?,?,?,?,?,?,?)",
-                   (r["id"], r["kind"], r["plugin"], r["name"], r["description"],
-                    r["path"], r["body"], r["hash"], key))
-        db.execute("INSERT INTO records_fts VALUES (?,?,?,?,?)",
-                   (r["id"], r["name"], r["description"], r["plugin"], r["body"]))
+        db.execute(
+            "INSERT INTO records (id, kind, plugin, name, description, path, body, hash, embed_key) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (id) DO UPDATE SET "
+            "kind = excluded.kind, plugin = excluded.plugin, name = excluded.name, "
+            "description = excluded.description, path = excluded.path, body = excluded.body, "
+            "hash = excluded.hash, embed_key = excluded.embed_key, "
+            "embedding = CASE WHEN records.embed_key = excluded.embed_key THEN records.embedding END, "
+            "embed_model = CASE WHEN records.embed_key = excluded.embed_key THEN records.embed_model END",
+            [v.replace("\x00", "") if isinstance(v, str) else v   # Postgres text cannot hold NUL
+             for v in (r["id"], r["kind"], r["plugin"], r["name"], r["description"], r["path"],
+                       r["body"], r["hash"], key)])
 
 
-def _drop_plugin(db: sqlite3.Connection, plugin: str) -> None:
+def _drop_plugin(db: store.Db, plugin: str) -> None:
     _store(db, plugin, [])
     for t in ("mcp_decls", "mcp_refs"):
-        db.execute(f"DELETE FROM {t} WHERE plugin=?", (plugin,))
-    db.execute("DELETE FROM plugins WHERE name=?", (plugin,))
+        db.execute(f"DELETE FROM {t} WHERE plugin = %s", (plugin,))
+    db.execute("DELETE FROM plugins WHERE name=%s", (plugin,))
     shutil.rmtree(clones() / plugin, ignore_errors=True)
 
 
-def _index_plugin(db: sqlite3.Connection, name: str, meta: dict, head: str, gateway: set[str]) -> int:
+def _index_plugin(db: store.Db, name: str, meta: dict, head: str, gateway: set[str]) -> int:
     fetch_clone(meta["repo"], clones() / name, meta.get("ref"))
     root = plugin_root(name, meta)
     if not root.is_dir():
@@ -482,36 +464,40 @@ def _index_plugin(db: sqlite3.Connection, name: str, meta: dict, head: str, gate
     decls = mcp_declarations(root)
     with write_lock, db:
         _store(db, name, recs)
-        db.execute("DELETE FROM mcp_decls WHERE plugin=?", (name,))
-        db.execute("DELETE FROM mcp_refs WHERE plugin=?", (name,))
+        db.execute("DELETE FROM mcp_decls WHERE plugin=%s", (name,))
+        db.execute("DELETE FROM mcp_refs WHERE plugin=%s", (name,))
         for server, transport, cfg in decls:
-            db.execute("INSERT INTO mcp_decls VALUES (?,?,?,?)", (name, server, transport, json.dumps(cfg)))
+            db.execute("INSERT INTO mcp_decls VALUES (%s,%s,%s,%s)", (name, server, transport, json.dumps(cfg)))
         for r in recs:
             for route, server, tool in mcp_references(r["body"], gateway):
-                db.execute("INSERT OR IGNORE INTO mcp_refs VALUES (?,?,?,?,?)",
+                db.execute("INSERT INTO mcp_refs VALUES (%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
                            (r["id"], name, route, server, tool))
-        db.execute("INSERT OR REPLACE INTO plugins VALUES (?,?,?,?,?,?,?,?)",
+        db.execute("INSERT INTO plugins VALUES (%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (name) DO UPDATE SET "
+                   "marketplace = excluded.marketplace, repo = excluded.repo, description = excluded.description, "
+                   "head = excluded.head, status = excluded.status, error = excluded.error, "
+                   "synced_at = excluded.synced_at",
                    (name, meta["marketplace"], meta["repo"], meta["description"], head, "ok", None, time.time()))
     return len(recs)
 
 
-def _mark_failed(db: sqlite3.Connection, name: str, meta: dict, err: str) -> None:
+def _mark_failed(db: store.Db, name: str, meta: dict, err: str) -> None:
     with write_lock, db:
         db.execute(
             "INSERT INTO plugins (name, marketplace, repo, description, head, status, error, synced_at) "
-            "VALUES (?,?,?,?,NULL,'error',?,?) ON CONFLICT(name) DO UPDATE SET "
+            "VALUES (%s,%s,%s,%s,NULL,'error',%s,%s) ON CONFLICT(name) DO UPDATE SET "
             "status='error', error=excluded.error, synced_at=excluded.synced_at",
             (name, meta["marketplace"], meta["repo"], meta["description"], err, time.time()))
 
 
-def refresh_gateway(db: sqlite3.Connection) -> set[str]:
+def refresh_gateway(db: store.Db) -> set[str]:
     servers = gw.api_get("servers")
     with write_lock, db:
         db.execute("DELETE FROM gateway_servers")
         for s in servers:
-            db.execute("INSERT INTO gateway_servers VALUES (?,?,?)",
-                       (s["name"], s.get("description", ""), int(bool(s.get("enabled", True)))))
-        db.execute("INSERT OR REPLACE INTO meta VALUES ('gateway_fetched_at', ?)", (str(time.time()),))
+            db.execute("INSERT INTO gateway_servers VALUES (%s,%s,%s)",
+                       (s["name"], s.get("description", ""), bool(s.get("enabled", True))))
+        db.execute("INSERT INTO meta VALUES ('gateway_fetched_at', %s) "
+                   "ON CONFLICT (key) DO UPDATE SET value = excluded.value", (str(time.time()),))
     return {s["name"] for s in servers}
 
 
@@ -519,7 +505,7 @@ def group_url(group: str) -> str:
     return f"{gw.GATEWAY_URL}/v0/groups/{group}/mcp" if group else f"{gw.GATEWAY_URL}/mcp"
 
 
-def refresh_tools(db: sqlite3.Connection) -> int:
+def refresh_tools(db: store.Db) -> int:
     """Snapshot the tools a client actually sees, and which of them are in CORE_GROUP.
     A failure keeps the last snapshot; the caller reports it."""
     tools = gw.McpClient(group_url(TOOLS_GROUP), timeout=60).tools()
@@ -532,9 +518,9 @@ def refresh_tools(db: sqlite3.Connection) -> int:
         for t in tools:
             if t["name"].startswith("toolbox__"):
                 continue
-            db.execute("INSERT INTO gateway_tools VALUES (?,?,?,?)",
+            db.execute("INSERT INTO gateway_tools VALUES (%s,%s,%s,%s)",
                        (t["name"], t.get("description") or "", json.dumps(t.get("inputSchema") or {}),
-                        int(t["name"] in core)))
+                        t["name"] in core))
     return len(tools)
 
 
@@ -553,7 +539,7 @@ def tool_record(name: str, description: str, schema: dict, core: bool) -> dict:
             "path": "", "body": body, "hash": hashlib.sha256((desc + body).encode()).hexdigest()}
 
 
-def rebuild_mcp_records(db: sqlite3.Connection) -> int:
+def rebuild_mcp_records(db: store.Db) -> int:
     """One `mcp:<server>` record per server that is declared, referenced or registered."""
     servers: dict[str, dict] = {}
 
@@ -584,7 +570,7 @@ def rebuild_mcp_records(db: sqlite3.Connection) -> int:
     return len(recs)
 
 
-def sync(db: sqlite3.Connection, only: str | None = None, force: bool = False) -> dict:
+def sync(db: store.Db, only: str | None = None, force: bool = False) -> dict:
     """One pass. `ok` in the summary is False if anything at all failed."""
     started = time.time()
     plugins, errors, healthy = read_manifests()
@@ -656,8 +642,6 @@ def sync(db: sqlite3.Connection, only: str | None = None, force: bool = False) -
         embedded, eerr = embed_pending(db)
         if eerr:
             errors.append(eerr)
-    with write_lock, db:
-        db.execute("DELETE FROM embeddings WHERE key NOT IN (SELECT embed_key FROM records)")
 
     summary = {"ok": not errors, "manifest_plugins": len(plugins), "checked": len(targets),
                "reindexed_plugins": len(todo), "records_written": sum(written),
@@ -665,7 +649,7 @@ def sync(db: sqlite3.Connection, only: str | None = None, force: bool = False) -
                "embed_pending": pending_estimate(db), "errors": errors,
                "seconds": round(time.time() - started, 1)}
     with write_lock, db:
-        db.execute("INSERT INTO runs (started, finished, ok, summary) VALUES (?,?,?,?)",
-                   (started, time.time(), int(not errors), json.dumps(summary)))
+        db.execute("INSERT INTO runs (started, finished, ok, summary) VALUES (%s,%s,%s,%s)",
+                   (started, time.time(), not errors, json.dumps(summary)))
     log(f"sync: {json.dumps(summary)[:1000]}")
     return summary

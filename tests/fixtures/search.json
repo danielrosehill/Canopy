@@ -1,0 +1,420 @@
+{
+ "records": [
+  {
+   "id": "skill:docs/pdf-merge",
+   "kind": "skill",
+   "plugin": "docs",
+   "name": "pdf-merge",
+   "description": "Merge several PDF files into one document",
+   "body": "# pdf-merge\n\nMerge several PDF files into one document."
+  },
+  {
+   "id": "skill:docs/pdf-extract-text",
+   "kind": "skill",
+   "plugin": "docs",
+   "name": "pdf-extract-text",
+   "description": "Extract the text from a scanned or digital PDF",
+   "body": "# pdf-extract-text\n\nExtract the text from a scanned or digital PDF."
+  },
+  {
+   "id": "skill:finance/invoice-parser",
+   "kind": "skill",
+   "plugin": "finance",
+   "name": "invoice-parser",
+   "description": "Read supplier invoices and pull out totals, dates and tax",
+   "body": "# invoice-parser\n\nRead supplier invoices and pull out totals, dates and tax."
+  },
+  {
+   "id": "skill:finance/expense-report",
+   "kind": "skill",
+   "plugin": "finance",
+   "name": "expense-report",
+   "description": "Build a monthly expense report from receipts",
+   "body": "# expense-report\n\nBuild a monthly expense report from receipts."
+  },
+  {
+   "id": "skill:finance/currency-convert",
+   "kind": "skill",
+   "plugin": "finance",
+   "name": "currency-convert",
+   "description": "Convert amounts between currencies at the latest exchange rate",
+   "body": "# currency-convert\n\nConvert amounts between currencies at the latest exchange rate."
+  },
+  {
+   "id": "skill:media/audio-transcribe",
+   "kind": "skill",
+   "plugin": "media",
+   "name": "audio-transcribe",
+   "description": "Transcribe speech in an audio recording to text",
+   "body": "# audio-transcribe\n\nTranscribe speech in an audio recording to text."
+  },
+  {
+   "id": "skill:media/video-trim",
+   "kind": "skill",
+   "plugin": "media",
+   "name": "video-trim",
+   "description": "Cut a video to a start and end time without re-encoding",
+   "body": "# video-trim\n\nCut a video to a start and end time without re-encoding."
+  },
+  {
+   "id": "skill:media/image-resize",
+   "kind": "skill",
+   "plugin": "media",
+   "name": "image-resize",
+   "description": "Resize and compress images for the web",
+   "body": "# image-resize\n\nResize and compress images for the web."
+  },
+  {
+   "id": "skill:media/podcast-show-notes",
+   "kind": "skill",
+   "plugin": "media",
+   "name": "podcast-show-notes",
+   "description": "Write show notes and chapters for a podcast episode",
+   "body": "# podcast-show-notes\n\nWrite show notes and chapters for a podcast episode."
+  },
+  {
+   "id": "skill:web/deploy-static-site",
+   "kind": "skill",
+   "plugin": "web",
+   "name": "deploy-static-site",
+   "description": "Publish a static website to a hosting provider",
+   "body": "# deploy-static-site\n\nPublish a static website to a hosting provider."
+  },
+  {
+   "id": "skill:web/dns-records",
+   "kind": "skill",
+   "plugin": "web",
+   "name": "dns-records",
+   "description": "List and change DNS records for a domain",
+   "body": "# dns-records\n\nList and change DNS records for a domain."
+  },
+  {
+   "id": "skill:web/domain-search",
+   "kind": "skill",
+   "plugin": "web",
+   "name": "domain-search",
+   "description": "Check whether a domain name is available and what it costs",
+   "body": "# domain-search\n\nCheck whether a domain name is available and what it costs."
+  },
+  {
+   "id": "skill:web/broken-link-check",
+   "kind": "skill",
+   "plugin": "web",
+   "name": "broken-link-check",
+   "description": "Crawl a site and report dead links",
+   "body": "# broken-link-check\n\nCrawl a site and report dead links."
+  },
+  {
+   "id": "skill:code/pr-review",
+   "kind": "skill",
+   "plugin": "code",
+   "name": "pr-review",
+   "description": "Review a pull request for bugs before merging",
+   "body": "# pr-review\n\nReview a pull request for bugs before merging."
+  },
+  {
+   "id": "skill:code/release-notes",
+   "kind": "skill",
+   "plugin": "code",
+   "name": "release-notes",
+   "description": "Draft release notes from the commits since the last tag",
+   "body": "# release-notes\n\nDraft release notes from the commits since the last tag."
+  },
+  {
+   "id": "skill:code/flaky-test-hunt",
+   "kind": "skill",
+   "plugin": "code",
+   "name": "flaky-test-hunt",
+   "description": "Find tests that pass and fail at random",
+   "body": "# flaky-test-hunt\n\nFind tests that pass and fail at random."
+  },
+  {
+   "id": "skill:code/dependency-audit",
+   "kind": "skill",
+   "plugin": "code",
+   "name": "dependency-audit",
+   "description": "List outdated packages and known vulnerabilities in a project",
+   "body": "# dependency-audit\n\nList outdated packages and known vulnerabilities in a project."
+  },
+  {
+   "id": "skill:ops/postgres-backup",
+   "kind": "skill",
+   "plugin": "ops",
+   "name": "postgres-backup",
+   "description": "Dump a Postgres database and verify the dump can be restored",
+   "body": "# postgres-backup\n\nDump a Postgres database and verify the dump can be restored."
+  },
+  {
+   "id": "skill:ops/disk-usage",
+   "kind": "skill",
+   "plugin": "ops",
+   "name": "disk-usage",
+   "description": "Find what is filling up a server's disk",
+   "body": "# disk-usage\n\nFind what is filling up a server's disk."
+  },
+  {
+   "id": "skill:ops/docker-cleanup",
+   "kind": "skill",
+   "plugin": "ops",
+   "name": "docker-cleanup",
+   "description": "Remove unused Docker images, containers and volumes",
+   "body": "# docker-cleanup\n\nRemove unused Docker images, containers and volumes."
+  },
+  {
+   "id": "skill:ops/cron-schedule",
+   "kind": "skill",
+   "plugin": "ops",
+   "name": "cron-schedule",
+   "description": "Write and explain crontab schedules",
+   "body": "# cron-schedule\n\nWrite and explain crontab schedules."
+  },
+  {
+   "id": "skill:comms/send-email",
+   "kind": "skill",
+   "plugin": "comms",
+   "name": "send-email",
+   "description": "Send an email with attachments from your account",
+   "body": "# send-email\n\nSend an email with attachments from your account."
+  },
+  {
+   "id": "skill:comms/calendar-invite",
+   "kind": "skill",
+   "plugin": "comms",
+   "name": "calendar-invite",
+   "description": "Create a calendar event and invite people to it",
+   "body": "# calendar-invite\n\nCreate a calendar event and invite people to it."
+  },
+  {
+   "id": "skill:comms/meeting-minutes",
+   "kind": "skill",
+   "plugin": "comms",
+   "name": "meeting-minutes",
+   "description": "Turn a meeting transcript into minutes and action items",
+   "body": "# meeting-minutes\n\nTurn a meeting transcript into minutes and action items."
+  },
+  {
+   "id": "skill:language/translate-hebrew",
+   "kind": "skill",
+   "plugin": "language",
+   "name": "translate-hebrew",
+   "description": "Translate text between Hebrew and English",
+   "body": "# translate-hebrew\n\nTranslate text between Hebrew and English."
+  },
+  {
+   "id": "skill:language/proofread",
+   "kind": "skill",
+   "plugin": "language",
+   "name": "proofread",
+   "description": "Check grammar and spelling and suggest fixes",
+   "body": "# proofread\n\nCheck grammar and spelling and suggest fixes."
+  },
+  {
+   "id": "skill:language/summarise-article",
+   "kind": "skill",
+   "plugin": "language",
+   "name": "summarise-article",
+   "description": "Summarise a long web article in a few lines",
+   "body": "# summarise-article\n\nSummarise a long web article in a few lines."
+  },
+  {
+   "id": "skill:home/grocery-list",
+   "kind": "skill",
+   "plugin": "home",
+   "name": "grocery-list",
+   "description": "Plan a week of meals and produce a shopping list",
+   "body": "# grocery-list\n\nPlan a week of meals and produce a shopping list."
+  },
+  {
+   "id": "skill:home/plant-care",
+   "kind": "skill",
+   "plugin": "home",
+   "name": "plant-care",
+   "description": "Watering and light advice for house plants",
+   "body": "# plant-care\n\nWatering and light advice for house plants."
+  },
+  {
+   "id": "skill:home/smart-lights",
+   "kind": "skill",
+   "plugin": "home",
+   "name": "smart-lights",
+   "description": "Turn smart lights on and off and set scenes",
+   "body": "# smart-lights\n\nTurn smart lights on and off and set scenes."
+  }
+ ],
+ "queries": [
+  {
+   "query": "join two pdfs together",
+   "expected": [
+    "skill:docs/pdf-merge"
+   ]
+  },
+  {
+   "query": "get the words out of a pdf",
+   "expected": [
+    "skill:docs/pdf-extract-text"
+   ]
+  },
+  {
+   "query": "pull totals from an invoice",
+   "expected": [
+    "skill:finance/invoice-parser"
+   ]
+  },
+  {
+   "query": "exchange rate dollars to shekels",
+   "expected": [
+    "skill:finance/currency-convert"
+   ]
+  },
+  {
+   "query": "transcribe this recording",
+   "expected": [
+    "skill:media/audio-transcribe"
+   ]
+  },
+  {
+   "query": "trim a video",
+   "expected": [
+    "skill:media/video-trim"
+   ]
+  },
+  {
+   "query": "compress images for my website",
+   "expected": [
+    "skill:media/image-resize"
+   ]
+  },
+  {
+   "query": "show notes for an episode",
+   "expected": [
+    "skill:media/podcast-show-notes"
+   ]
+  },
+  {
+   "query": "publish my static site",
+   "expected": [
+    "skill:web/deploy-static-site"
+   ]
+  },
+  {
+   "query": "change a dns record",
+   "expected": [
+    "skill:web/dns-records"
+   ]
+  },
+  {
+   "query": "is this domain available",
+   "expected": [
+    "skill:web/domain-search"
+   ]
+  },
+  {
+   "query": "find dead links on my site",
+   "expected": [
+    "skill:web/broken-link-check"
+   ]
+  },
+  {
+   "query": "review this pull request",
+   "expected": [
+    "skill:code/pr-review"
+   ]
+  },
+  {
+   "query": "write release notes",
+   "expected": [
+    "skill:code/release-notes"
+   ]
+  },
+  {
+   "query": "tests failing at random",
+   "expected": [
+    "skill:code/flaky-test-hunt"
+   ]
+  },
+  {
+   "query": "outdated packages",
+   "expected": [
+    "skill:code/dependency-audit"
+   ]
+  },
+  {
+   "query": "back up postgres",
+   "expected": [
+    "skill:ops/postgres-backup"
+   ]
+  },
+  {
+   "query": "what is filling my disk",
+   "expected": [
+    "skill:ops/disk-usage"
+   ]
+  },
+  {
+   "query": "remove unused docker images",
+   "expected": [
+    "skill:ops/docker-cleanup"
+   ]
+  },
+  {
+   "query": "explain this crontab",
+   "expected": [
+    "skill:ops/cron-schedule"
+   ]
+  },
+  {
+   "query": "email with an attachment",
+   "expected": [
+    "skill:comms/send-email"
+   ]
+  },
+  {
+   "query": "invite people to an event",
+   "expected": [
+    "skill:comms/calendar-invite"
+   ]
+  },
+  {
+   "query": "minutes from a meeting transcript",
+   "expected": [
+    "skill:comms/meeting-minutes"
+   ]
+  },
+  {
+   "query": "translate to hebrew",
+   "expected": [
+    "skill:language/translate-hebrew"
+   ]
+  },
+  {
+   "query": "check my spelling",
+   "expected": [
+    "skill:language/proofread"
+   ]
+  },
+  {
+   "query": "summarise this article",
+   "expected": [
+    "skill:language/summarise-article"
+   ]
+  },
+  {
+   "query": "meal plan and shopping list",
+   "expected": [
+    "skill:home/grocery-list"
+   ]
+  },
+  {
+   "query": "how often to water plants",
+   "expected": [
+    "skill:home/plant-care"
+   ]
+  },
+  {
+   "query": "turn off the lights",
+   "expected": [
+    "skill:home/smart-lights"
+   ]
+  }
+ ]
+}

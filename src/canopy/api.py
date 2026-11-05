@@ -20,7 +20,9 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from . import store
 from .control import Control, ControlError, write_secret
+from .embedder import Embedder, EmbedError
 
 API_DIR = Path(os.environ.get("CANOPY_API_DIR", "/api"))
 PORT = int(os.environ.get("CANOPY_API_PORT", "8090"))
@@ -50,7 +52,9 @@ class RequireToken(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-def create_app(control: Control, token: str) -> Starlette:
+def create_app(control: Control, token: str, embedder: Embedder | None = None) -> Starlette:
+    embedder = embedder or Embedder(primary="", fallback="")
+
     async def body(request: Request) -> dict:
         try:
             doc = await request.json()
@@ -100,6 +104,18 @@ def create_app(control: Control, token: str) -> Starlette:
     def agent_token(_: Request) -> JSONResponse:
         return JSONResponse({"token": control.agent_token(), "mode": control.mode})
 
+    async def embeddings(request: Request) -> JSONResponse:
+        doc = await body(request)
+        texts = doc.get("input")
+        texts = [texts] if isinstance(texts, str) else texts
+        if not isinstance(doc.get("model"), str) or not isinstance(texts, list) or not texts:
+            raise ControlError(400, "needs `model` and `input`")
+        try:
+            reply = await run_in_threadpool(embedder.embed, doc["model"], texts)
+        except EmbedError as e:
+            raise ControlError(e.status, str(e)) from None
+        return JSONResponse(reply)
+
     async def run(_: Request, fn, *args, status: int = 200) -> JSONResponse:
         return JSONResponse(await run_in_threadpool(fn, *args), status_code=status)
 
@@ -122,12 +138,22 @@ def create_app(control: Control, token: str) -> Starlette:
         Route("/v1/config", read_config),
         Route("/v1/config/apply", apply, methods=["POST"]),
         Route("/v1/tokens/agent", agent_token),
+        Route("/v1/embeddings", embeddings, methods=["POST"]),
     ], exception_handlers={ControlError: control_error, httpx.HTTPError: gateway_error},
        middleware=[Middleware(RequireToken, token=token)])
 
 
+def model_lookup(db: store.Db):
+    def provider_model(model: str, provider: str) -> str:
+        row = db.execute("SELECT provider_model FROM system.model_map WHERE model = %s AND provider = %s",
+                         (model, provider)).fetchone()
+        return row["provider_model"] if row else model
+    return provider_model
+
+
 def main() -> None:
-    app = create_app(Control(), load_token())
+    store.migrate()
+    app = create_app(Control(), load_token(), Embedder(provider_model=model_lookup(store.Db())))
     uvicorn.run(app, host=os.environ.get("CANOPY_API_HOST", "0.0.0.0"), port=PORT, log_level="warning")
 
 

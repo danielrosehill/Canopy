@@ -1,6 +1,6 @@
 # Target design
 
-Status: **proposed, 2026-11-05. Steps 1 and 2 of the order of work are built. Nothing else here is, unless it
+Status: **proposed, 2026-11-05. Steps 1 to 3 of the order of work are built, step 3 with gaps it lists. Nothing else here is, unless it
 says so.** For what runs today, see
 [architecture](architecture.md). This page is the shape Canopy is moving to, and the order of work.
 
@@ -142,8 +142,8 @@ What this shows:
   AGPL extension and a heavier image, for no gain here.
 - pgvector returned the same results as an exact scan, in about 11 ms. Total ranking is about 16 ms,
   beside 40 to 80 ms for the query embedding.
-- The in-memory index took 30 s to build in plain Python. That runs in the background after a sync,
-  but it needs a faster build or an incremental one before larger catalogues.
+- The prototype's in-memory index took 30 s to build in plain Python. The shipped one stems each distinct
+  word once, and took 4.8 s on 5,162 synthetic records. It runs in the background after a sync.
 
 **Context cost.** A search reply is about 2,900 characters (roughly 700 tokens) for 9 items, and a median
 skill is 3,200 characters (800 tokens), so one find-and-load costs about 1,500 tokens. Better first-hit
@@ -153,7 +153,7 @@ ranking is what lets the default shrink. Next to test: 4 results instead of 6, a
 use as a normal OpenAI-compatible endpoint.
 
 - **Provider is a setting.** `EMBED_PROVIDER` is `local` or `openrouter`, with `OPENROUTER_API_KEY` for
-  the second. A hosted provider is the sensible default for bulk and incremental runs, since a full
+  the second. Unset means keyword search. A hosted provider is the sensible default for bulk and incremental runs, since a full
   index of this size costs cents. Ollama then matters for offline use and as a fallback.
 - **Primary and fallback.** If the primary does not answer inside a budget, the fallback serves that
   request. This needs a model that both routes can serve, such as `bge-m3`.
@@ -432,9 +432,12 @@ Each step ends with a clean install on an empty machine, and the contract suite 
    behind the API. `/admin` is still mounted read-only in the `backup` profile, until step 4.
 2. **Done.** Contract suite in CI, with `compat.json`, and the `MCPJungle watch` workflow. Early, because
    every later step changes what it protects.
-3. **Started:** image, databases, roles, schemas and migrations are in; nothing uses `canopy` yet.
-   Postgres with pgvector, reranking step, roles, schemas and migrations, records and vectors moved there, embedder
+3. **Built, with gaps below.** Postgres with pgvector, reranking step, roles, schemas and migrations, records and vectors moved there, embedder
    route, Ollama in `search`, weighted search, and a labelled query set as a regression check.
+   Still open: the `search` profile has not been run (Ollama loads a model, so not on a small test
+   machine), cloud and local vectors are unconfirmed, the in-memory BM25 is a new implementation whose
+   quality on a real index is unmeasured (the table above came from a prototype that was not kept), and
+   there is no import of vectors from an older SQLite index.
 4. Scheduler, then backup and restore as jobs.
 5. Storage profile, stage route and skill.
 6. The `canopy` plugin with its hook, MCP Skills extension, manual and API reference.

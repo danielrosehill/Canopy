@@ -24,4 +24,6 @@ cleanup() {
 trap cleanup EXIT
 
 "${compose[@]}" up -d --wait db gateway upstream
-uv run pytest tests/contract -rs "$@"
+# Set here, not exported: to compose this name means the stack's data folder.
+CANOPY_DATA="$CANOPY_TOKEN_DIR/catalogue" CANOPY_CONFIG="$CANOPY_TOKEN_DIR/config" \
+  uv run pytest tests/contract -rs "$@"

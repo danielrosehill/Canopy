@@ -17,7 +17,6 @@ import os
 import re
 import threading
 import time
-from collections import Counter
 
 import numpy as np
 from mcp.server.fastmcp import FastMCP
@@ -25,6 +24,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from . import gateway as gw
 from . import index as ix
+from . import ranking
 
 # Reachable only on the stack's internal network; the gateway is the front door.
 _security = TransportSecuritySettings(
@@ -42,7 +42,8 @@ _sync_lock = threading.Lock()
 _embed_lock = threading.Lock()
 _job: dict = {"running": False, "started": None, "last": None, "queued": None}
 _embed_job: dict = {"running": False, "last": None}
-_vec_cache: dict = {"key": None, "ids": [], "mat": None}
+_keywords: dict = {"index": None, "signature": None}
+_keyword_lock = threading.Lock()
 
 
 # --- sync scheduling -------------------------------------------------------------
@@ -59,9 +60,10 @@ def _run_sync(only: str | None = None, force: bool = False) -> None:
             except Exception as e:  # noqa: BLE001 — a crashed pass must show in health
                 _job["last"] = {"ok": False, "errors": [f"sync crashed: {e!r}"]}
                 with ix.write_lock, db:
-                    db.execute("INSERT INTO runs (started, finished, ok, summary) VALUES (?,?,0,?)",
+                    db.execute("INSERT INTO runs (started, finished, ok, summary) VALUES (%s,%s,FALSE,%s)",
                                (_job["started"], time.time(), json.dumps(_job["last"])))
                 ix.log(f"sync crashed: {e!r}")
+            refresh_keywords()
             nxt, _job["queued"] = _job["queued"], None
             if not nxt:
                 break
@@ -71,7 +73,24 @@ def _run_sync(only: str | None = None, force: bool = False) -> None:
         _sync_lock.release()
 
 
+def refresh_keywords() -> None:
+    """Build a new keyword index if the records changed, then swap it in. Search keeps using the
+    previous one meanwhile."""
+    if not _keyword_lock.acquire(blocking=False):
+        return
+    try:
+        signature = db.execute("SELECT COUNT(*), md5(string_agg(hash, '' ORDER BY id)) FROM records").fetchone()
+        if signature != _keywords["signature"]:
+            rows = db.execute("SELECT id, name, description, plugin, body FROM records").fetchall()
+            _keywords.update(index=ranking.KeywordIndex(rows), signature=signature)
+    except Exception as e:  # noqa: BLE001 - search says so through `degraded`
+        ix.log(f"keyword index failed: {e!r}")
+    finally:
+        _keyword_lock.release()
+
+
 def _scheduler() -> None:
+    refresh_keywords()   # what is already stored is searchable before the first sync ends
     # The seed creates the tokens; give it a moment on a first start.
     for _ in range(30):
         if gw.read_token(gw.READER_TOKEN):
@@ -89,33 +108,17 @@ def _filters(kind: str | None, plugin: str | None, marketplace: str | None) -> t
     if kind:
         if kind not in KINDS:
             raise ValueError(f"kind must be one of {KINDS}")
-        where.append("r.kind = ?"); args.append(kind)
+        where.append("r.kind = %s"); args.append(kind)
     if plugin:
-        where.append("r.plugin = ?"); args.append(plugin)
+        where.append("r.plugin = %s"); args.append(plugin)
     if marketplace:
-        where.append("r.plugin IN (SELECT name FROM plugins WHERE marketplace = ?)"); args.append(marketplace)
+        where.append("r.plugin IN (SELECT name FROM plugins WHERE marketplace = %s)"); args.append(marketplace)
     return (" AND ".join(where) or "1=1"), args
 
 
 def _summary(r) -> dict:
     return {"id": r["id"], "kind": r["kind"], "plugin": r["plugin"] or None,
             "name": r["name"], "description": r["description"]}
-
-
-def _fts_query(q: str) -> str:
-    toks = re.findall(r"[\w-]+", q.lower())
-    return " OR ".join(f'"{t}"' for t in toks if len(t) > 1)
-
-
-def _vectors() -> tuple[list[str], np.ndarray | None]:
-    key = db.execute("SELECT COUNT(*), MAX(rowid) FROM embeddings").fetchone()
-    key = (tuple(key), ix.EMBED_MODEL)
-    if _vec_cache["key"] != key:
-        rows = db.execute("SELECT r.id, e.vec FROM records r JOIN embeddings e "
-                          "ON e.key = r.embed_key AND e.model = ?", (ix.EMBED_MODEL,)).fetchall()
-        _vec_cache.update(key=key, ids=[r["id"] for r in rows],
-                          mat=np.vstack([np.frombuffer(r["vec"], dtype=np.float32) for r in rows]) if rows else None)
-    return _vec_cache["ids"], _vec_cache["mat"]
 
 
 # --- tools ------------------------------------------------------------------------
@@ -136,34 +139,35 @@ def search(query: str, kind: str | None = None, plugin: str | None = None,
     """
     where, args = _filters(kind, plugin, marketplace)
     allowed = {r["id"] for r in db.execute(f"SELECT r.id FROM records r WHERE {where}", args)}
-    ranks: dict[str, float] = Counter()
     degraded = []
 
-    fq = _fts_query(query)
-    if fq:
-        rows = db.execute("SELECT id FROM records_fts WHERE records_fts MATCH ? "
-                          "ORDER BY bm25(records_fts, 0, 10.0, 4.0, 2.0, 1.0) LIMIT 200", (fq,)).fetchall()
-        for i, r in enumerate(x for x in rows if x["id"] in allowed):
-            ranks[r["id"]] += 1 / (60 + i)
+    keyword_ids: list[str] = []
+    if _keywords["index"] is None:
+        degraded.append("keyword index is not built yet")
+    else:
+        keyword_ids = [i for i in _keywords["index"].search(query, 1000) if i in allowed][:200]
 
+    vector_ids: list[str] = []
     try:
         if not ix.EMBED_URL:
-            raise RuntimeError("no embedding endpoint configured")
-        ids, mat = _vectors()
-        if mat is None:
-            raise RuntimeError("no embeddings stored")
+            raise RuntimeError("no embedding provider configured")
         # Short timeout: keyword-only with `degraded` beats a hung call.
         qv = np.asarray(ix.embed([query], timeout=QUERY_EMBED_TIMEOUT)[0], dtype=np.float32)
         qv /= np.linalg.norm(qv) or 1.0
-        sims = mat @ qv
-        order = [ids[j] for j in np.argsort(-sims) if ids[j] in allowed][:200]
-        for i, rid in enumerate(order):
-            ranks[rid] += 1 / (60 + i)
+        vector_ids = [r["id"] for r in db.execute(
+            f"SELECT r.id FROM records r WHERE {where} AND r.embedding IS NOT NULL AND r.embed_model = %s "
+            "ORDER BY r.embedding <=> %s LIMIT 200", [*args, ix.EMBED_MODEL, qv])]
+        if not vector_ids and allowed:
+            raise RuntimeError("no embeddings stored")
     except Exception as e:  # noqa: BLE001
         degraded.append(f"semantic search unavailable, keyword only: {e}")
 
+    ranks = ranking.fuse(keyword_ids, vector_ids)
+
     limit = max(1, min(limit, 50))
-    ordered = [rid for rid, _ in ranks.most_common()]
+    ordered = list(ranks)
+    if ranking.RERANK_MODEL:
+        ordered = _reranked(query, ordered, degraded)
     if kind:
         top, tool_ids = ordered[:limit], []
     else:
@@ -172,12 +176,12 @@ def search(query: str, kind: str | None = None, plugin: str | None = None,
         tool_ids = [r for r in ordered if r.startswith("tool:")][:TOOL_HITS]
     want = top + tool_ids
     rows = {r["id"]: r for r in db.execute(
-        f"SELECT * FROM records WHERE id IN ({','.join('?' * len(want))})", want)} if want else {}
+        "SELECT * FROM records WHERE id = ANY(%s)", (want,))} if want else {}
 
     def item(rid: str) -> dict:
         r = rows[rid]
         if full:
-            d = _summary(r) | {"score": round(ranks[rid] * 60, 3)}
+            d = _summary(r) | {"score": round(ranks.get(rid, 0) * 60, 3)}
         else:
             # The id already encodes kind, plugin and name; the score is only an ordering.
             desc = " ".join((r["description"] or "").split())
@@ -196,6 +200,22 @@ def search(query: str, kind: str | None = None, plugin: str | None = None,
     if not top and not db.execute("SELECT 1 FROM records LIMIT 1").fetchone():
         out["error"] = "the index is EMPTY - this is a fault, not a miss. Run health."
     return _out(out)
+
+
+def _reranked(query: str, ordered: list[str], degraded: list[str]) -> list[str]:
+    """Rerank the best candidates that are not tools, which rank in their own list."""
+    head = [r for r in ordered if not r.startswith("tool:")][:ranking.RERANK_CANDIDATES]
+    if len(head) < 2:
+        return ordered
+    try:
+        rows = {r["id"]: r for r in db.execute(
+            "SELECT id, name, description FROM records WHERE id = ANY(%s)", (head,))}
+        best = ranking.rerank(query, [rows[r] for r in head])
+    except Exception as e:  # noqa: BLE001 - the fused order is a good answer
+        degraded.append(f"reranking unavailable, fused order: {e}")
+        return ordered
+    chosen = set(best)
+    return best + [r for r in ordered if r not in chosen]
 
 
 README_CHARS = 1500
@@ -285,7 +305,7 @@ def _side_file(rid: str) -> dict | None:
     m = re.fullmatch(r"skill:([^/]+)/([^/]+)/(.+)", rid)
     if not m:
         return None
-    r = db.execute("SELECT * FROM records WHERE id = ?", (f"skill:{m[1]}/{m[2]}",)).fetchone()
+    r = db.execute("SELECT * FROM records WHERE id = %s", (f"skill:{m[1]}/{m[2]}",)).fetchone()
     if not r:
         return None
     d = ((_plugin_root(r["plugin"]) / r["path"]).parent).resolve()
@@ -322,8 +342,8 @@ def _log_reads(out: dict) -> None:
     try:
         now = time.time()
         with ix.write_lock, db:
-            db.executemany("INSERT INTO reads (id, ts, hit) VALUES (?,?,?)",
-                           [(rid, now, int("error" not in item)) for rid, item in out.items()])
+            for rid, item in out.items():
+                db.execute("INSERT INTO reads (id, ts, hit) VALUES (%s,%s,%s)", (rid, now, "error" not in item))
     except Exception as e:  # noqa: BLE001
         ix.log(f"read log failed: {e!r}")
 
@@ -340,7 +360,7 @@ def _render(out: dict) -> str:
 def _read(ids: list[str], full_readme: bool = False) -> dict:
     out = {}
     for rid in ids:
-        r = db.execute("SELECT * FROM records WHERE id = ?", (rid,)).fetchone()
+        r = db.execute("SELECT * FROM records WHERE id = %s", (rid,)).fetchone()
         if not r:
             side = _side_file(rid)
             out[rid] = side or {"error": "no such record; use list or search to find the id"}
@@ -352,17 +372,17 @@ def _read(ids: list[str], full_readme: bool = False) -> dict:
                 item["content"] = item["content"][:README_CHARS] + (
                     f"\n\n[README truncated at {README_CHARS} of {len(r['body'])} chars; "
                     "pass full_readme=true for all of it]")
-            p = db.execute("SELECT * FROM plugins WHERE name = ?", (r["name"],)).fetchone()
+            p = db.execute("SELECT * FROM plugins WHERE name = %s", (r["name"],)).fetchone()
             if p:
                 item |= {"marketplace": p["marketplace"], "repo": p["repo"], "head": p["head"]}
             item["contains"] = [x["id"] for x in db.execute(
-                "SELECT id FROM records WHERE plugin = ? AND kind != 'plugin' ORDER BY id", (r["name"],))]
+                "SELECT id FROM records WHERE plugin = %s AND kind != 'plugin' ORDER BY id", (r["name"],))]
             item["mcp_declared"] = [x["server"] for x in db.execute(
-                "SELECT server FROM mcp_decls WHERE plugin = ?", (r["name"],))]
+                "SELECT server FROM mcp_decls WHERE plugin = %s", (r["name"],))]
             item["mcp_referenced"] = sorted({f"{x['route']}/{x['server']}" for x in db.execute(
-                "SELECT route, server FROM mcp_refs WHERE plugin = ?", (r["name"],))})
+                "SELECT route, server FROM mcp_refs WHERE plugin = %s", (r["name"],))})
         elif r["kind"] == "tool":
-            t = db.execute("SELECT * FROM gateway_tools WHERE name = ?", (r["name"],)).fetchone()
+            t = db.execute("SELECT * FROM gateway_tools WHERE name = %s", (r["name"],)).fetchone()
             item["description"] = t["description"] if t else r["description"]
             item["input_schema"] = json.loads(t["schema"]) if t else None
             item["call"] = r["body"].split("\n", 1)[0].removeprefix("call: ")
@@ -372,7 +392,7 @@ def _read(ids: list[str], full_readme: bool = False) -> dict:
             item.pop("content")
         else:
             item["mcp_referenced"] = sorted({f"{x['route']}/{x['server']}" for x in db.execute(
-                "SELECT route, server FROM mcp_refs WHERE record_id = ?", (rid,))})
+                "SELECT route, server FROM mcp_refs WHERE record_id = %s", (rid,))})
             files = _skill_files(r) + _mentioned_files(r, exclude_own_dir=True)
             if files:
                 item["files"] = files
@@ -391,7 +411,7 @@ def list_records(kind: str | None = None, plugin: str | None = None,
     Returns ids, names and descriptions, and `total` for paging."""
     where, args = _filters(kind, plugin, marketplace)
     total = db.execute(f"SELECT COUNT(*) FROM records r WHERE {where}", args).fetchone()[0]
-    rows = db.execute(f"SELECT * FROM records r WHERE {where} ORDER BY r.kind, r.id LIMIT ? OFFSET ?",
+    rows = db.execute(f"SELECT * FROM records r WHERE {where} ORDER BY r.kind, r.id LIMIT %s OFFSET %s",
                       [*args, limit, offset]).fetchall()
     return _out({"total": total, "offset": offset, "records": [_summary(r) for r in rows]})
 
@@ -416,8 +436,8 @@ def _mcp_servers(name: str | None = None, problems_only: bool = False) -> dict:
     out = []
     for n in sorted(names):
         decl = [{"plugin": d["plugin"], "transport": d["transport"], "config": json.loads(d["config"])}
-                for d in db.execute("SELECT * FROM mcp_decls WHERE server = ?", (n,))]
-        refs = db.execute("SELECT record_id, route, tool FROM mcp_refs WHERE server = ? ORDER BY record_id",
+                for d in db.execute("SELECT * FROM mcp_decls WHERE server = %s", (n,))]
+        refs = db.execute("SELECT record_id, route, tool FROM mcp_refs WHERE server = %s ORDER BY record_id",
                           (n,)).fetchall()
         routes = sorted({r["route"] for r in refs})
         problems = []
@@ -443,12 +463,12 @@ def health() -> str:
     is in its clone on disk, or a manifest plugin that is missing or in error. Every
     problem is listed. Checks the index itself, not the sync job's bookkeeping."""
     problems, warnings = [], []
-    counts = {k: v for k, v in db.execute("SELECT kind, COUNT(*) FROM records GROUP BY kind")}
+    counts = {r["kind"]: r["count"] for r in db.execute("SELECT kind, COUNT(*) FROM records GROUP BY kind")}
     if not counts:
         problems.append("index is empty")
 
     last = db.execute("SELECT * FROM runs ORDER BY id DESC LIMIT 1").fetchone()
-    last_ok = db.execute("SELECT finished FROM runs WHERE ok = 1 ORDER BY id DESC LIMIT 1").fetchone()
+    last_ok = db.execute("SELECT finished FROM runs WHERE ok ORDER BY id DESC LIMIT 1").fetchone()
     if not last:
         problems.append("no sync has ever run")
     else:
@@ -476,17 +496,17 @@ def health() -> str:
             problems.append(f"{n}: clone missing on disk")
             continue
         on_disk = len(ix.extract(n, root)) + 1
-        indexed = db.execute("SELECT COUNT(*) FROM records WHERE plugin = ?", (n,)).fetchone()[0]
+        indexed = db.execute("SELECT COUNT(*) FROM records WHERE plugin = %s", (n,)).fetchone()[0]
         if on_disk != indexed:
             problems.append(f"{n}: {indexed} records indexed, {on_disk} in clone")
 
-    pending = db.execute("SELECT COUNT(*) FROM records r LEFT JOIN embeddings e ON e.key = r.embed_key "
-                         "AND e.model = ? WHERE e.key IS NULL", (ix.EMBED_MODEL,)).fetchone()[0]
+    pending = db.execute("SELECT COUNT(*) FROM records WHERE embedding IS NULL "
+                         "OR embed_model IS DISTINCT FROM %s", (ix.EMBED_MODEL,)).fetchone()[0]
     if pending and ix.EMBED_URL:
         warnings.append(f"{pending} records have no embedding (semantic search misses them); "
                         "run embed to see the cost, then embed(dry_run=false)")
     if not ix.EMBED_URL:
-        warnings.append("no embedding endpoint configured: keyword search only")
+        warnings.append("no embedding provider configured: keyword search only")
     gw_at = db.execute("SELECT value FROM meta WHERE key = 'gateway_fetched_at'").fetchone()
     if not gw_at or time.time() - float(gw_at[0]) > 2 * SYNC_INTERVAL + 600:
         warnings.append("gateway server list is stale; mcp registration status may be wrong")
@@ -511,15 +531,15 @@ def usage(kind: str | None = "skill", plugin: str | None = None, since_days: flo
     order to slim skills in) | reads | last. Tokens are estimated at chars/3.3.
     """
     since = time.time() - since_days * 86400
-    where, args = ["l.ts >= ?", "l.hit = 1"], [since]
+    where, args = ["l.ts >= %s", "l.hit"], [since]
     if kind == "file":
         where.append("l.id NOT IN (SELECT id FROM records)")
     elif kind:
-        where.append("l.id IN (SELECT id FROM records WHERE kind = ?)"); args.append(kind)
+        where.append("l.id IN (SELECT id FROM records WHERE kind = %s)"); args.append(kind)
     if plugin:
-        where.append("(l.id LIKE ? OR l.id LIKE ?)"); args += [f"%:{plugin}/%", f"%:{plugin}"]
+        where.append("(l.id LIKE %s OR l.id LIKE %s)"); args += [f"%:{plugin}/%", f"%:{plugin}"]
     rows = db.execute(
-        f"SELECT l.id, COUNT(*) n, MAX(l.ts) last, LENGTH(r.body) chars FROM reads l "
+        f"SELECT l.id, COUNT(*) AS n, MAX(l.ts) AS last, MAX(LENGTH(r.body)) AS chars FROM reads l "
         f"LEFT JOIN records r ON r.id = l.id WHERE {' AND '.join(where)} GROUP BY l.id", args).fetchall()
     items = [{"id": r["id"], "reads": r["n"], "last": time.strftime("%Y-%m-%d", time.gmtime(r["last"])),
               "est_tokens": (r["chars"] or 0) * 10 // 33} for r in rows]
@@ -568,7 +588,7 @@ def embed(dry_run: bool = True) -> str:
     if dry_run:
         return _out(out)
     if not ix.EMBED_URL:
-        return _out(out | {"started": False, "reason": "EMBED_URL is not set"})
+        return _out(out | {"started": False, "reason": "EMBED_PROVIDER is not set"})
     already = _embed_job["running"]
     if not already:
         threading.Thread(target=_run_embed, daemon=True).start()

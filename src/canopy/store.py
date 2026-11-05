@@ -7,11 +7,11 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 from pathlib import Path
 
 import psycopg
 from pgvector.psycopg import register_vector
-from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
 MIGRATIONS = Path(__file__).parent / "migrations"
@@ -48,7 +48,70 @@ def migrate(url: str = DATABASE_URL, folder: Path = MIGRATIONS) -> list[int]:
     return applied
 
 
-def pool(url: str = DATABASE_URL, size: int = 8) -> ConnectionPool:
-    """Readers and a long sync each get their own connection, so a sync cannot hold up search."""
-    return ConnectionPool(url, min_size=1, max_size=size, open=True, kwargs={"row_factory": dict_row},
-                          configure=register_vector)
+class Row(dict):
+    """A row read by column name or by position."""
+
+    def __getitem__(self, key):
+        return list(self.values())[key] if isinstance(key, int) else super().__getitem__(key)
+
+
+def _rows(cursor):
+    names = [c.name for c in cursor.description or []]
+    return lambda values: Row(zip(names, values))
+
+
+class Result:
+    def __init__(self, rows: list[Row]):
+        self.rows = rows
+
+    def fetchone(self) -> Row | None:
+        return self.rows[0] if self.rows else None
+
+    def fetchall(self) -> list[Row]:
+        return self.rows
+
+    def __iter__(self):
+        return iter(self.rows)
+
+
+class Db:
+    """One handle shared by threads. `execute` borrows a connection for the statement, and
+    `with db:` holds one for a transaction, on this thread only, so a long sync does not hold up
+    search. Table names resolve through `catalogue`, then `system`."""
+
+    def __init__(self, url: str = DATABASE_URL, size: int = 10):
+        self.pool = ConnectionPool(
+            url, min_size=1, max_size=size, open=True, configure=register_vector,
+            kwargs={"autocommit": True, "row_factory": _rows,
+                    "options": "-c search_path=catalogue,system,public"})
+        self._local = threading.local()
+
+    def __enter__(self) -> "Db":
+        depth = getattr(self._local, "depth", 0)
+        if depth == 0:
+            self._local.conn = self.pool.getconn()
+            self._local.tx = self._local.conn.transaction()
+            self._local.tx.__enter__()
+        self._local.depth = depth + 1
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self._local.depth -= 1
+        if self._local.depth == 0:
+            conn, self._local.conn = self._local.conn, None
+            try:
+                self._local.tx.__exit__(*exc)
+            finally:
+                self.pool.putconn(conn)
+
+    @staticmethod
+    def _run(conn, sql: str, args) -> Result:
+        cur = conn.execute(sql, args)
+        return Result(cur.fetchall() if cur.description else [])
+
+    def execute(self, sql: str, args=None) -> Result:
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            return self._run(conn, sql, args)
+        with self.pool.connection() as conn:
+            return self._run(conn, sql, args)

@@ -91,7 +91,7 @@ to the gateway. Built-in servers and the core group cannot be removed.
 its own role, and neither role can connect to the other's. `canopy` has the `vector` extension. Tables
 come from `src/canopy/migrations/NNN_name.sql`, applied by `canopy.store.migrate` and recorded in
 `system.schema_version`. A data folder from before this layout has no such roles: start from an empty
-folder. The catalogue itself still uses SQLite until the rest of design step 3 lands.
+folder.
 
 ## Gateway behaviour the seed depends on
 
@@ -121,12 +121,32 @@ version. `compat.json` records what has passed. Measured on 0.4.7, 2026-11-05.
 
 ## Search
 
-`catalogue__search` fuses BM25 (SQLite FTS5) and cosine similarity with reciprocal rank fusion. With
-no `EMBED_URL`, or if the embeddings call fails, results are keyword only and `degraded` says so.
+`catalogue__search` fuses two rankings with reciprocal rank fusion, vectors counted three times
+(`SEARCH_VECTOR_WEIGHT`):
 
-Embeddings use any OpenAI-compatible `/embeddings` endpoint, and are keyed by content hash and model.
-A sync does not embed unless `EMBED_ON_SYNC=true`. `catalogue__embed` reports pending records and
-estimated tokens, and `dry_run=false` starts the run.
+- Keywords: `canopy.ranking.KeywordIndex`, BM25 in memory, with field weights name 10, description 4,
+  plugin 2, body 1, and Snowball stemming. It is rebuilt after a sync that changed a record, and search
+  uses the previous one meanwhile. On 5,162 synthetic records of about 500 words, a build took 4.8 s
+  and 250 MB at peak, and a query 0.2 ms, on a laptop, 2026-11-05.
+- Vectors: exact pgvector search over `catalogue.records.embedding`.
+
+With `RERANK_MODEL` set, the top 20 candidates that are not tools go to the provider's `/rerank` with their
+names and descriptions. If that fails or takes over `RERANK_TIMEOUT_SEC`, search returns the fused order.
+Anything that falls short shows in `degraded`: no provider, a failed embedding, a failed rerank, or a
+keyword index not built yet.
+
+Embeddings go through `POST /v1/embeddings` on the API, the only place that knows the providers.
+`EMBED_PROVIDER` is `local` (Ollama, the `search` profile) or `openrouter`, and `EMBED_FALLBACK` names a second
+route. A single text is a query, so it gets a short budget (`EMBED_QUERY_BUDGET_SEC`) before the fallback.
+Vectors are labelled with the canonical name (`bge-m3`), and `system.model_map` says what each provider
+calls it. The column is `vector(1024)`, so a model of another size needs a migration.
+
+A record keeps its vector while `embed_key`, the hash of the embedded text, stays the same. A sync does
+not embed unless `EMBED_ON_SYNC=true`. `catalogue__embed` reports pending records and estimated tokens,
+and `dry_run=false` starts the run.
+
+`scripts/eval-search.py <queries.json>` scores a running stack. `tests/fixtures/search.json` is the generic
+labelled set. Queries that name private skills stay in the operator's own `agent-data`.
 
 ## Marketplaces are untrusted input
 

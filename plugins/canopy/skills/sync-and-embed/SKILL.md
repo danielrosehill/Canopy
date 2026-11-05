@@ -10,7 +10,7 @@ description: Trigger a Canopy sync or an incremental embedding run, and check th
 - Call `catalogue__sync`. Pass `plugin` for just one, and `force=true` to reindex unchanged commits.
 - Poll `catalogue__health` until `sync_running` is false.
 
-**Embedding** is a separate step, so that a sync never spends money by surprise. It needs `EMBED_URL`
+**Embedding** is a separate step, so that a sync never spends money by surprise. It needs `EMBED_PROVIDER`
 in `agent-data/secrets.env`. Without it, search is keyword only, and works.
 
 1. Call `catalogue__embed` with no arguments. This is a dry run: it reports pending records and
