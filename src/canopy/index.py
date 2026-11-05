@@ -47,6 +47,7 @@ CORE_GROUP = os.environ.get("CORE_GROUP", "core")
 # The name clients give this gateway, which is the `<client>` in mcp__<client>__<tool>.
 CLIENT_NAME = os.environ.get("CANOPY_CLIENT_NAME", "canopy")
 BODY_CAP = 200_000   # bytes kept per record
+RECENT_LIMIT = 100   # repos in the push list, which is GitHub's page size
 
 write_lock = threading.Lock()
 
@@ -570,11 +571,70 @@ def rebuild_mcp_records(db: store.Db) -> int:
 
 def stale(row: dict, name: str, meta: dict, head: str) -> bool:
     """A restored database remembers heads whose clones were never backed up, so the disk counts too."""
-    return row.get("head") != head or row.get("status") != "ok" or not plugin_root(name, meta).exists()
+    return (row.get("head") != head or row.get("status") != "ok" or not plugin_root(name, meta).exists()
+            or (row.get("description") or "") != (meta.get("description") or ""))   # edited in the marketplace only
 
 
-def sync(db: store.Db, only: str | None = None, force: bool = False) -> dict:
-    """One pass. `ok` in the summary is False if anything at all failed."""
+def pushed_repos(token: str = GIT_TOKEN, get=httpx.get) -> list[tuple[str, str]]:
+    """(owner/repo in lower case, pushed_at), newest first, for what the token can see. One call
+    stands in for a head check on every plugin."""
+    r = get("https://api.github.com/user/repos", timeout=30,
+            params={"affiliation": "owner,organization_member", "sort": "pushed", "direction": "desc",
+                    "per_page": RECENT_LIMIT},
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"})
+    r.raise_for_status()
+    return [(x["full_name"].lower(), x["pushed_at"]) for x in r.json() if x.get("pushed_at")]
+
+
+def moved_since(pushes: list[tuple[str, str]], mark: str | None) -> set[str] | None:
+    """Repos pushed at or after `mark`. None if the list cannot vouch for the whole gap: no mark yet, or
+    a full page that never reaches back to it. `pushed_at` is ISO UTC, so strings sort as times, and
+    GitHub's own clock means no local one is involved. `>=` rechecks the newest repo rather than risk
+    losing a push in the same second."""
+    if mark is None or (len(pushes) >= RECENT_LIMIT and pushes[-1][1] >= mark):
+        return None
+    return {repo for repo, at in pushes if at >= mark}
+
+
+def _set_mark(db: store.Db, mark: str | None) -> None:
+    if mark:
+        with write_lock, db:
+            db.execute("INSERT INTO meta VALUES ('recent_push_mark', %s) "
+                       "ON CONFLICT (key) DO UPDATE SET value = excluded.value", (mark,))
+
+
+def sync_recent(db: store.Db) -> dict:
+    """Quick pass: only what was pushed since the last one, so a new skill arrives in minutes. A
+    marketplace push counts, since that is how a plugin is added or removed. Anything that stops
+    this pass vouching for the gap, including no token or a failed call, becomes a full pass."""
+    started = time.time()
+    try:
+        pushes = pushed_repos()
+    except Exception as e:  # noqa: BLE001 - the full pass needs no list
+        log(f"quick pass unavailable, running a full one: {e!r}")
+        return {**sync(db), "mode": "full"}
+    row = db.execute("SELECT value FROM meta WHERE key = 'recent_push_mark'").fetchone()
+    moved = moved_since(pushes, row[0] if row else None)
+    mark = pushes[0][1] if pushes else None
+    if moved is None:
+        summary = sync(db)
+    else:
+        watched = {r["repo"].lower() for r in db.execute("SELECT repo FROM plugins")}
+        watched |= {m["repo"].lower() for m in load_marketplaces()}
+        relevant = moved & watched
+        if not relevant:
+            _set_mark(db, mark)
+            return {"ok": True, "mode": "recent", "pushed": len(moved), "reindexed_plugins": 0,
+                    "errors": [], "seconds": round(time.time() - started, 1)}
+        summary = sync(db, repos=relevant)
+    if summary["ok"]:
+        _set_mark(db, mark)
+    return {**summary, "mode": "recent" if moved is not None else "full"}
+
+
+def sync(db: store.Db, only: str | None = None, force: bool = False, repos: set[str] | None = None) -> dict:
+    """One pass. `ok` in the summary is False if anything at all failed. `repos` limits the head
+    checks to those repos, plus plugins that are new or changed in a marketplace. Pruning still covers everything."""
     started = time.time()
     plugins, errors, healthy = read_manifests()
     try:
@@ -585,6 +645,9 @@ def sync(db: store.Db, only: str | None = None, force: bool = False) -> dict:
 
     known = {r["name"]: dict(r) for r in db.execute("SELECT * FROM plugins")}
     targets = {only: plugins[only]} if only and only in plugins else ({} if only else plugins)
+    if repos is not None:
+        targets = {n: p for n, p in targets.items() if p["repo"].lower() in repos or n not in known
+                   or (known[n].get("description") or "") != (p.get("description") or "")}
     if only and not targets:
         errors.append(f"{only}: not in any marketplace manifest")
 

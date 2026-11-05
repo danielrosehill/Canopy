@@ -223,7 +223,7 @@ def main() -> None:
     storage.prepare()
     control.extra_checks["storage"] = storage.check
     jobs = sched.CatalogueJobs(db, control._tool_text)
-    scheduler = sched.Scheduler(db, {"sync": jobs.sync, "embed": jobs.embed, "health": control.health_job,
+    scheduler = sched.Scheduler(db, {"sync": jobs.sync, "sync-recent": jobs.sync_recent, "embed": jobs.embed, "health": control.health_job,
                                      **Backups(db).actions(), **storage.actions()})
     threading.Thread(target=scheduler.loop, daemon=True).start()
     app = create_app(control, load_token(), Embedder(provider_model=model_lookup(db)), scheduler, storage)

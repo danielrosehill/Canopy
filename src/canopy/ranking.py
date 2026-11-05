@@ -89,12 +89,19 @@ class KeywordIndex:
         return [self.ids[i] for i in order]
 
 
-def fuse(keywords: list[str], vectors: list[str], vector_weight: float = VECTOR_WEIGHT) -> dict[str, float]:
-    """Reciprocal rank fusion, with vectors counted `vector_weight` times."""
+def fuse(keywords: list[str], vectors: list[str], vector_weight: float = VECTOR_WEIGHT,
+         unembedded: Iterable[str] = ()) -> dict[str, float]:
+    """Reciprocal rank fusion, with vectors counted `vector_weight` times. A record with no vector yet
+    cannot appear in `vectors`, so its keyword rank stands in. Otherwise a first-place keyword match
+    falls behind about 120 vector hits, and a skill vanishes from the moment it is edited until it is embedded."""
     scores: Counter = Counter()
     for weight, ranking in ((1.0, keywords), (vector_weight, vectors)):
         for rank, rid in enumerate(ranking):
             scores[rid] += weight / (RRF_K + rank)
+    missing = set(unembedded)
+    for rank, rid in enumerate(keywords):
+        if rid in missing:
+            scores[rid] += vector_weight / (RRF_K + rank)
     return dict(scores.most_common())
 
 

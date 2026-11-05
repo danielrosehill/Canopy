@@ -76,3 +76,9 @@ def test_keyword_regression_on_the_labelled_set():
 
 
 FLOOR_FIRST, FLOOR_TOP3 = 27, 28
+
+
+def test_a_record_with_no_vector_is_not_buried_by_the_vector_weight():
+    vectors = [f"v{i}" for i in range(200)]
+    assert list(ranking.fuse(["new"], vectors, vector_weight=3, unembedded={"new"}))[0] == "new"
+    assert list(ranking.fuse(["new"], vectors, vector_weight=3)).index("new") > 100

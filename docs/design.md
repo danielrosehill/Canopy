@@ -115,7 +115,8 @@ git clone -> parse -> Postgres row: id, kind, name, description, full text, hash
 transaction. Postgres with pgvector is the only store: no SQLite and no Qdrant. Memory uses the same
 database. Only a record whose hash changed is embedded again.
 
-**Search** fuses two rankings, with vectors weighted 3:1 over keywords:
+**Search** fuses two rankings, with vectors weighted 3:1 over keywords. A record with no vector yet ranks on
+its keyword position at full weight, so 3:1 cannot bury it:
 
 - Vectors: exact pgvector search. At this size no approximate index is needed.
 - Keywords: a small BM25 index the catalogue holds in memory, rebuilt from Postgres after a sync that
@@ -355,12 +356,13 @@ result and output, which is what the dashboard shows.
 
 A job takes a lock, so two runs never overlap. A missed run starts on the next boot.
 
-Built so far: `sync`, `embed`, `health`, `storage-expiry`, `backup-data`, `backup-config`, and `restore-test`, which runs after
+Built so far: `sync`, `sync-recent`, `embed`, `health`, `storage-expiry`, `backup-data`, `backup-config`, and `restore-test`, which runs after
 `backup-data`. The backup jobs start once `backup.json` exists. The rest of the table arrives with what each one does, and a job
 named in `jobs.json` with nothing behind it is listed as not `runnable` and left alone. `every` takes a
-number and m, h or d, and `after` chains a job to another's success. `embed` follows `EMBED_ON_SYNC`, off by
-default, so a schedule never spends money by surprise. A sync no longer embeds, and the catalogue no longer
-syncs by itself: without `api` nothing is scheduled. Read `canopy jobs`, or `GET /v1/jobs`.
+number and m, h or d, and `after` chains a job to another's success. `EMBED_ON_SYNC` is off by
+default, so a schedule never spends money by surprise. When on, every sync embeds what it wrote, so a change
+is not half-indexed (measured 2026-11-05: 23 edited records with no vector dropped two of 28 test queries
+out of the top 6). The catalogue does not sync by itself: without `api` nothing is scheduled. Read `canopy jobs`, or `GET /v1/jobs`.
 
 ## Cache
 

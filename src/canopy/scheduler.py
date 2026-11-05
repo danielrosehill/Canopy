@@ -30,7 +30,7 @@ EMBED_ON_SYNC = os.environ.get("EMBED_ON_SYNC", "false").lower() == "true"
 def defaults(config: Path) -> list[dict]:
     """Backups start once `backup.json` names a target. `backup-config` pushes only what changed."""
     target = (config / "backup.json").is_file()
-    return [{"name": "sync", "every": "1h"}, {"name": "embed", "after": "sync", "enabled": EMBED_ON_SYNC},
+    return [{"name": "sync", "every": "1h"}, {"name": "sync-recent", "every": "5m"}, {"name": "embed", "after": "sync", "enabled": EMBED_ON_SYNC},
             {"name": "health", "every": "5m"}, {"name": "backup-data", "every": "1d", "enabled": target},
             {"name": "backup-config", "every": "1h", "enabled": target},
             {"name": "restore-test", "after": "backup-data", "enabled": target},
@@ -179,7 +179,7 @@ class CatalogueJobs:
         # A new row in `runs` is written only when a pass ends. The `running` flag is set inside the
         # catalogue's thread, so reading it straight after asking can look like a finished sync.
         before = self.db.execute("SELECT coalesce(max(id), 0) AS id FROM catalogue.runs").fetchone()["id"]
-        self.call("catalogue__sync", {})
+        self.call("catalogue__sync", {"full": True})
         deadline = time.time() + self.wait
         while time.time() < deadline:
             row = self.db.execute("SELECT ok, summary FROM catalogue.runs WHERE id > %s ORDER BY id LIMIT 1",
@@ -190,6 +190,10 @@ class CatalogueJobs:
                 return row["summary"]
             time.sleep(self.poll)
         raise TimeoutError(f"no sync finished within {self.wait} s")
+
+    def sync_recent(self) -> str:
+        """Fire and forget. With nothing pushed a quick pass writes no `runs` row to wait for."""
+        return self.call("catalogue__sync", {})
 
     def embed(self) -> str:
         state = json.loads(self.call("catalogue__embed", {"dry_run": True}))

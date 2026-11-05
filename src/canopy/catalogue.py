@@ -43,6 +43,7 @@ QUERY_EMBED_TIMEOUT = float(os.environ.get("QUERY_EMBED_TIMEOUT_SEC", "8"))
 CONFIDENCE_MIN = float(os.environ.get("SEARCH_CONFIDENCE_MIN", "0.6"))
 KINDS = ("plugin", "skill", "command", "agent", "mcp", "tool")
 TOOL_HITS = int(os.environ.get("SEARCH_TOOL_HITS", "3"))
+EMBED_ON_SYNC = os.environ.get("EMBED_ON_SYNC", "false").lower() == "true"
 SEARCH_DESC_CHARS = 300   # search is a shortlist; `read` has the full text
 
 db = ix.connect()
@@ -56,26 +57,28 @@ _keyword_lock = threading.Lock()
 
 # --- sync scheduling -------------------------------------------------------------
 
-def _run_sync(only: str | None = None, force: bool = False) -> None:
+def _run_sync(only: str | None = None, force: bool = False, recent: bool = False) -> None:
     if not _sync_lock.acquire(blocking=False):
-        _job["queued"] = {"only": only, "force": force}   # run once the current pass ends
+        _job["queued"] = {"only": only, "force": force, "recent": recent}   # run once the current pass ends
         return
     try:
         while True:
             _job.update(running=True, started=time.time())
             try:
-                _job["last"] = ix.sync(db, only=only, force=force)
+                _job["last"] = ix.sync_recent(db) if recent else ix.sync(db, only=only, force=force)
             except Exception as e:  # noqa: BLE001 — a crashed pass must show in health
                 _job["last"] = {"ok": False, "errors": [f"sync crashed: {e!r}"]}
                 with ix.write_lock, db:
                     db.execute("INSERT INTO runs (started, finished, ok, summary) VALUES (%s,%s,FALSE,%s)",
                                (_job["started"], time.time(), json.dumps(_job["last"])))
                 ix.log(f"sync crashed: {e!r}")
-            refresh_keywords()
+            refresh_keywords()   # first: a new record is findable by keyword before it has a vector
+            if EMBED_ON_SYNC and ix.EMBED_URL:
+                _run_embed()
             nxt, _job["queued"] = _job["queued"], None
             if not nxt:
                 break
-            only, force = nxt["only"], nxt["force"]
+            only, force, recent = nxt["only"], nxt["force"], nxt["recent"]
     finally:
         _job["running"] = False
         _sync_lock.release()
@@ -147,6 +150,7 @@ def search(query: str, kind: str | None = None, plugin: str | None = None,
 
     vector_ids: list[str] = []
     cosine: dict[str, float] = {}
+    unembedded: set[str] = set()
     try:
         if not ix.EMBED_URL:
             raise RuntimeError("no embedding provider configured")
@@ -159,12 +163,14 @@ def search(query: str, kind: str | None = None, plugin: str | None = None,
             "ORDER BY r.embedding <=> %s LIMIT 200", [qv, *args, ix.EMBED_MODEL, qv]))
         vector_ids = [r["id"] for r in hits]
         cosine = {r["id"]: float(r["cosine"]) for r in hits}
+        unembedded = {r["id"] for r in db.execute(
+            "SELECT id FROM records WHERE embedding IS NULL OR embed_model IS DISTINCT FROM %s", (ix.EMBED_MODEL,))}
         if not vector_ids and allowed:
             raise RuntimeError("no embeddings stored")
     except Exception as e:  # noqa: BLE001
         degraded.append(f"semantic search unavailable, keyword only: {e}")
 
-    ranks = ranking.fuse(keyword_ids, vector_ids)
+    ranks = ranking.fuse(keyword_ids, vector_ids, unembedded=unembedded)
 
     limit = max(1, min(limit, 50))
     ordered = list(ranks)
@@ -510,8 +516,11 @@ def health() -> str:
     pending = db.execute("SELECT COUNT(*) FROM records WHERE embedding IS NULL "
                          "OR embed_model IS DISTINCT FROM %s", (ix.EMBED_MODEL,)).fetchone()[0]
     if pending and ix.EMBED_URL:
-        warnings.append(f"{pending} records have no embedding (semantic search misses them); "
-                        "run embed to see the cost, then embed(dry_run=false)")
+        if EMBED_ON_SYNC and not _job["running"] and not _embed_job["running"]:
+            problems.append(f"{pending} records have no embedding, though every sync should embed them")
+        else:
+            warnings.append(f"{pending} records have no embedding (semantic search misses them); "
+                            "run embed to see the cost, then embed(dry_run=false)")
     if not ix.EMBED_URL:
         warnings.append("no embedding provider configured: keyword search only")
     gw_at = db.execute("SELECT value FROM meta WHERE key = 'gateway_fetched_at'").fetchone()
@@ -563,13 +572,15 @@ def usage(kind: str | None = "skill", plugin: str | None = None, since_days: flo
 
 
 @mcp.tool()
-def sync(plugin: str | None = None, force: bool = False) -> str:
+def sync(plugin: str | None = None, force: bool = False, full: bool = False) -> str:
     """Run a sync now in the background instead of waiting for the next pass.
-    plugin: just that one. force: reindex even if the commit has not moved. If a sync
-    is running, this one is queued behind it. Poll `health` for the result."""
+    No arguments: a quick pass over what was pushed since the last one. full: check every
+    plugin. plugin: just that one. force: reindex even if the commit has not moved. If a
+    sync is running, this one is queued behind it. Poll `health` for the result."""
     queued = _job["running"]
-    threading.Thread(target=_run_sync, args=(plugin, force), daemon=True).start()
-    return _out({"started": not queued, "queued": queued, "plugin": plugin, "force": force,
+    recent = not (plugin or force or full)
+    threading.Thread(target=_run_sync, args=(plugin, force, recent), daemon=True).start()
+    return _out({"started": not queued, "queued": queued, "plugin": plugin, "force": force, "recent": recent,
                  "last": _job["last"]})
 
 

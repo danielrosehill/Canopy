@@ -104,3 +104,31 @@ def test_a_missing_clone_is_stale_even_at_the_same_head(tmp_path, monkeypatch):
     assert ix.stale(row, "p", {}, "abc") is False
     assert ix.stale(row, "p", {}, "def") is True
     assert ix.stale({**row, "status": "error"}, "p", {}, "abc") is True
+
+
+def test_a_description_changed_in_the_marketplace_is_stale(tmp_path, monkeypatch):
+    monkeypatch.setattr(ix, "plugin_root", lambda n, m: tmp_path)
+    row = {"head": "h", "status": "ok", "description": "old"}
+    assert ix.stale(row, "p", {"description": "new"}, "h")
+    assert not ix.stale(row, "p", {"description": "old"}, "h")
+
+
+def test_moved_since_returns_what_was_pushed_from_the_mark():
+    pushes = [("o/a", "2026-11-05T12:00:00Z"), ("o/b", "2026-11-05T11:00:00Z"), ("o/c", "2026-11-05T10:00:00Z")]
+    assert ix.moved_since(pushes, "2026-11-05T11:00:00Z") == {"o/a", "o/b"}
+
+
+def test_moved_since_refuses_to_vouch_without_a_mark_or_past_a_full_page(monkeypatch):
+    monkeypatch.setattr(ix, "RECENT_LIMIT", 2)
+    pushes = [("o/a", "2026-11-05T12:00:00Z"), ("o/b", "2026-11-05T11:00:00Z")]
+    assert ix.moved_since(pushes, None) is None
+    assert ix.moved_since(pushes, "2026-11-05T10:00:00Z") is None
+    assert ix.moved_since(pushes, "2026-11-05T11:30:00Z") == {"o/a"}
+
+
+def test_a_failed_push_list_becomes_a_full_pass(monkeypatch):
+    def down():
+        raise RuntimeError("no token")
+    monkeypatch.setattr(ix, "pushed_repos", down)
+    monkeypatch.setattr(ix, "sync", lambda db: {"ok": True})
+    assert ix.sync_recent(None) == {"ok": True, "mode": "full"}
