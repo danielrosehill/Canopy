@@ -20,6 +20,8 @@ the MCP gateway. On top of that, one `docker compose up` will bring up:
 
 - a catalogue that indexes the Claude Code plugin marketplaces you point it at
 - a toolbox for calling long-tail tools without listing them all
+- a skill picker for people: fuzzy search across the skills and tools on your server, in the
+  terminal and in the web UI
 - a management MCP and a web UI
 - agent skills for common operations, such as adding a marketplace or triggering embeddings
 
