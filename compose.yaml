@@ -86,7 +86,7 @@ services:
     environment:
       <<: *canopy-env
     env_file:
-      - path: .env        # upstream configs may use any ${VAR} from here
+      - path: ${CANOPY_ENV_FILE:-.env}   # upstream configs may use any ${VAR} from here
         required: false
     volumes:
       - admin:/admin
