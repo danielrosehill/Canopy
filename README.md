@@ -31,7 +31,7 @@ your tools. Run it on a home server if you orchestrate a lot at home (Home Canop
 ## Deployment architectures
 
 Every component and connection for each way of deploying Canopy. Click an image for the PDF. They are designed
-as a pair of A1 posters: [print notes](docs/diagrams/README.md).
+as a pair of posters: [print notes](docs/diagrams/README.md).
 
 ### Architecture 1: Home Canopy
 
@@ -39,7 +39,7 @@ The gateway on a home server.
 
 [![Home Canopy network diagram](docs/diagrams/home-canopy.png)](docs/diagrams/home-canopy.pdf)
 
-[PDF](docs/diagrams/home-canopy.pdf) | [Print-ready PDF](docs/diagrams/home-canopy-print.pdf)
+[PDF](docs/diagrams/home-canopy.pdf) | Print-ready: [A1](docs/diagrams/home-canopy-print.pdf), [A0](docs/diagrams/home-canopy-print-a0.pdf)
 
 ### Architecture 2: Cloud Canopy
 
@@ -47,7 +47,7 @@ The gateway on a VPS, with a local proxy at home.
 
 [![Cloud Canopy network diagram](docs/diagrams/cloud-canopy.png)](docs/diagrams/cloud-canopy.pdf)
 
-[PDF](docs/diagrams/cloud-canopy.pdf) | [Print-ready PDF](docs/diagrams/cloud-canopy-print.pdf)
+[PDF](docs/diagrams/cloud-canopy.pdf) | Print-ready: [A1](docs/diagrams/cloud-canopy-print.pdf), [A0](docs/diagrams/cloud-canopy-print-a0.pdf)
 
 ## What you get
 

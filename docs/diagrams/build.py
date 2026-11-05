@@ -6,7 +6,7 @@
 
 Run: uv run docs/diagrams/build.py. Needs Graphviz, Typst and pdftoppm. Fonts are in fonts/, so nothing is installed.
 Per poster it writes <name>.dot, <name>.pdf (A1, for screens), <name>.png and <name>-print.pdf
-(A1 with 3 mm bleed, crop marks, and TrimBox and BleedBox set). Layout is in poster.typ.
+(A1 with 3 mm bleed, crop marks, and TrimBox and BleedBox set) and <name>-print-a0.pdf (the same at A0). Layout is in poster.typ.
 Keep the Canopy stack in stack() in step with compose.yaml.
 """
 import json
@@ -18,7 +18,7 @@ from pypdf import PdfReader, PdfWriter
 from pypdf.generic import RectangleObject
 
 HERE = Path(__file__).parent
-FONT = "Nunito"
+FONT = "Atkinson Hyperlegible"
 BUILD = HERE / ".build"
 MM = 72 / 25.4
 DATE = "2026-11-05"
@@ -31,7 +31,7 @@ LINK = {  # class: (colour, style, width, legend)
     "oai":    ("#6a1b9a", "dashed", 1.5, "OpenAI tunnel"),
     "lan":    ("#7cb342", "bold", 2.6, "Local network: API or SSH"),
     "out":    ("#37474f", "solid", 1.2, "Outbound HTTPS"),
-    "ctl":    ("#757575", "solid", 1.0, "Internal: control API, database"),
+    "ctl":    ("#607d8b", "solid", 1.1, "Internal: control API, database"),
     "file":   ("#00838f", "solid", 1.6, "Files: S3 and presigned URLs"),
     "idea":   ("#c62828", "dashed", 1.8, "Not built: the anti-hairpin route"),
 }
@@ -39,8 +39,13 @@ ZONE = {"internet": "#f5f5f5", "cf": "#fff3e0", "ts": "#e3f2fd", "site": "#e8f5e
         "stack": "#dcedc8", "cloud": "#e1f5fe", "oai": "#f3e5f5", "client": "#fafafa"}
 
 
+KEY = {"gateway", "catalogue", "toolbox", "storage", "proxy", "mesh", "portal"}
+TITLE_PT, KEY_PT, SUB_PT, EDGE_PT = 20, 26, 16, 16
+
+
 def n(id, title, sub="", fill="white", dashed=False):
-    sub = f'<BR/><FONT POINT-SIZE="13" COLOR="#455a64">{sub}</FONT>' if sub else ""
+    sub = f'<BR/><FONT POINT-SIZE="{SUB_PT}" COLOR="#1c2b33">{sub}</FONT>' if sub else ""
+    title = f'<FONT POINT-SIZE="{KEY_PT}">{title}</FONT>' if id in KEY else title
     style = "rounded,filled,dashed" if dashed else "rounded,filled"
     return f'{id} [label=<<B>{title}</B>{sub}>, style="{style}", fillcolor="{fill}"];'
 
@@ -49,12 +54,13 @@ def zone(id, label, fill, *body, dashed=False):
     style = "rounded,filled,dashed" if dashed else "rounded,filled"
     inner = "\n".join(body)
     return (f'subgraph cluster_{id} {{ label=<<B>{label}</B>>; labeljust=l; style="{style}"; '
-            f'fillcolor="{ZONE[fill]}"; color="#90a4ae"; fontsize=18;\n{inner}\n}}')
+            f'fillcolor="{ZONE[fill]}"; color="#78909c"; fontsize=23;\n{inner}\n}}')
 
 
 def e(a, b, kind, label="", **kw):
     colour, style, width, _ = LINK[kind]
-    attrs = {"color": colour, "style": style, "penwidth": width, "fontcolor": colour, **kw}
+    label_colour = {"ctl": "#37474f", "lan": "#33691e"}.get(kind, colour)
+    attrs = {"color": colour, "style": style, "penwidth": width, "fontcolor": label_colour, **kw}
     if label:
         attrs["label"] = label
     return f"{a} -> {b} [" + ", ".join(f'{k}="{v}"' for k, v in attrs.items()) + "];"
@@ -150,17 +156,17 @@ def legend(used):
         return f'<TD ALIGN="LEFT"><FONT COLOR="{c}"><B>———</B></FONT></TD>'
 
     rows = "".join(f'<TR>{sample(c, s)}<TD ALIGN="LEFT">{t}</TD></TR>' for k, (c, s, _, t) in LINK.items() if k in used)
-    return ('legend [shape=plaintext, fontsize=15, label=<<TABLE BORDER="1" COLOR="#90a4ae" CELLBORDER="0" CELLSPACING="3" CELLPADDING="3">'
+    return ('legend [shape=plaintext, fontsize=18, label=<<TABLE BORDER="1" COLOR="#90a4ae" CELLBORDER="0" CELLSPACING="3" CELLPADDING="3">'
             f'<TR><TD COLSPAN="2" ALIGN="LEFT"><B>Key</B></TD></TR>{rows}'
             '<TR><TD ALIGN="LEFT">Dashed box</TD><TD ALIGN="LEFT">Opt-in compose profile, or optional</TD></TR></TABLE>>];')
 
 
 def graph(nodesep, body):
     head = f'''digraph G {{
-rankdir=LR; compound=true; newrank=true; nodesep={nodesep}; ranksep=0.7; splines=true; pad=0.1; bgcolor=transparent;
+rankdir=LR; compound=true; newrank=true; nodesep={nodesep}; ranksep=0.6; splines=true; pad=0.1; bgcolor=transparent;
 fontname="{FONT}";
-node [shape=box, fontname="{FONT}", fontsize=17, color="#546e7a", margin="0.12,0.07"];
-edge [fontname="{FONT}", fontsize=14, arrowsize=0.7];
+node [shape=box, fontname="{FONT}", fontsize={TITLE_PT}, color="#37474f", margin="0.12,0.07"];
+edge [fontname="{FONT}", fontsize={EDGE_PT}, arrowsize=0.8];
 '''
     used = {k for k, v in LINK.items() if any(f'color="{v[0]}"' in b for b in body)}
     return head + legend(used) + "\n" + "\n".join(body) + "\n{rank=source; legend}\n}\n"
@@ -232,7 +238,7 @@ POSTERS = [
      "notes": [("Thin clients", "one connector each, no credentials for your tools"),
                ("Progressive discovery", "agents search, then load only what they need"),
                ("Local stays local", "the gateway is on the same network as your tools"),
-               ("Secure remote access", "Cloudflare for hosted clients, Tailscale for your own devices"),
+               ("Secure remote access", "Cloudflare for hosted clients, Tailscale for your devices"),
                ("File transport", "an S3 bucket with an expiry moves files to the server"),
                ("Offsite remotes", "a VPS is one more upstream, over the tailnet")]},
     {"name": "cloud-canopy", "number": "2", "title": "Cloud Canopy", "dot": cloud,
@@ -244,7 +250,7 @@ POSTERS = [
      "notes": [("Thin clients", "one connector each, no credentials for your tools"),
                ("Progressive discovery", "agents search, then load only what they need"),
                ("Local proxy", "home reaches the cloud through one upstream, with no open ports"),
-               ("Secure remote access", "Cloudflare for hosted clients, Tailscale for your own devices"),
+               ("Secure remote access", "Cloudflare for hosted clients, Tailscale for your devices"),
                ("File transport", "an S3 bucket with an expiry moves files to the server"),
                ("Anti-hairpin", "at home, local tools could skip the cloud: an idea, not built")]},
 ]
@@ -300,6 +306,23 @@ def set_boxes(path, bleed=3, slug=9):
     writer.write(path)
 
 
+def scale_to_a0(src, out):
+    """A0 is A1 at root 2. Everything scales, so the bleed becomes 4.2 mm."""
+    writer = PdfWriter(clone_from=PdfReader(src))
+    writer.pages[0].scale_by(2 ** 0.5)
+    writer.write(out)
+
+
+def report(name):
+    """Print the size the type comes out at, since that decides whether a poster reads on a wall."""
+    data = json.loads((BUILD / f"{name}.json").read_text())
+    page = PdfReader(BUILD / f"{name}.pdf").pages[0].mediabox
+    box_w, box_h = (841 - 52 - 10) * MM, (594 - 158 - 9 - 22 - 6) * MM
+    scale = min(box_w / float(page.width), box_h / float(page.height))
+    line = lambda k: f"key {KEY_PT * scale * k:.1f}, box {TITLE_PT * scale * k:.1f}, label {EDGE_PT * scale * k:.1f}, small {SUB_PT * scale * k:.1f}"
+    print(f"{name}: A1 {line(1)} | A0 {line(2 ** 0.5)}")
+
+
 def main():
     BUILD.mkdir(exist_ok=True)
     conf = BUILD / "fonts.conf"
@@ -314,9 +337,10 @@ def main():
         typst(poster, other, diagram, HERE / f"{name}.pdf", False)
         typst(poster, other, diagram, HERE / f"{name}-print.pdf", True)
         set_boxes(HERE / f"{name}-print.pdf")
+        scale_to_a0(HERE / f"{name}-print.pdf", HERE / f"{name}-print-a0.pdf")
         subprocess.run(["pdftoppm", "-png", "-scale-to", "3200", "-singlefile", str(HERE / f"{name}.pdf"), str(HERE / name)],
                        check=True)
-        print(name)
+        report(name)
 
 
 main()

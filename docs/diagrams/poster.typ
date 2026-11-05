@@ -13,7 +13,7 @@
 #let cream = rgb("#fbf3e0")
 
 #set page(width: trim-w + 2 * off, height: trim-h + 2 * off, margin: 0mm)
-#set text(font: "Nunito", fill: deep)
+#set text(font: "Atkinson Hyperlegible", fill: deep)
 
 // Art runs to the bleed edge.
 #place(top + left, dx: slug, dy: slug,
@@ -26,12 +26,12 @@
     grid(columns: (auto, auto), column-gutter: 9mm, align: horizon,
       image(i.badge, width: 84mm),
       stack(spacing: 4mm,
-        text(size: 28pt, weight: 800, fill: lime, tracking: 1.5pt)[IMPLEMENTATION #i.number OF 2],
+        text(size: 28pt, weight: 700, fill: lime, tracking: 1.5pt)[IMPLEMENTATION #i.number OF 2],
         text(font: "Fredoka", size: 118pt, weight: 600, fill: cream, i.title),
         v(8mm),
         text(font: "Fredoka", size: 42pt, weight: 600, fill: lime, i.tagline),
         v(5mm),
-        block(width: 300mm, text(size: 23pt, fill: cream, i.summary)),
+        block(width: 300mm, text(size: 25pt, fill: cream, i.summary)),
       ))))
 
 // Diagram panel.
@@ -70,11 +70,11 @@
 
 // What to look at, in the corner the layout leaves empty.
 #place(top + left, dx: box-x + 3mm, dy: box-y + 2mm,
-  block(width: 262mm, stack(spacing: 3.2mm,
-    text(font: "Fredoka", size: 30pt, weight: 600)[What to look at],
+  block(width: 292mm, stack(spacing: 3.6mm,
+    text(font: "Fredoka", size: 36pt, weight: 600)[What to look at],
     ..hl.notes.enumerate().map(((k, note)) => grid(columns: (11mm, 1fr), column-gutter: 3mm, align: horizon,
-      badge(k + 1, size: 9mm),
-      text(size: 17pt)[#text(weight: 800, note.at(0)): #note.at(1)])))))
+      badge(k + 1, size: 10mm),
+      text(size: 22pt)[#text(weight: 700, note.at(0)): #note.at(1)])))))
 
 // Footer: the URL, and the way to the other poster.
 #place(top + left, dx: off + panel-x + 8mm, dy: off + panel-y + panel-h - foot,
@@ -82,10 +82,10 @@
     grid(columns: (1fr, auto), align: horizon,
       stack(spacing: 2.5mm,
         text(font: "Fredoka", size: 30pt, weight: 600)[github.com/danielrosehill/Canopy],
-        text(size: 17pt)[#i.credit #sym.dot.c CC BY 4.0 #sym.dot.c #i.date]),
+        text(size: 20pt)[#i.credit #sym.dot.c CC BY 4.0 #sym.dot.c #i.date]),
       block(fill: deep, radius: 5mm, inset: (x: 8mm, y: 3.5mm),
         stack(spacing: 2mm,
-          text(size: 15pt, weight: 800, fill: lime, tracking: 1pt)[ALTERNATIVE: IMPLEMENTATION #i.at("other-number")],
+          text(size: 16pt, weight: 700, fill: lime, tracking: 1pt)[ALTERNATIVE: IMPLEMENTATION #i.at("other-number")],
           text(size: 21pt, fill: cream)[#text(font: "Fredoka", weight: 600, i.at("other-title")): #i.at("other-summary")])))))
 
 // Crop marks sit in the slug, outside the bleed.

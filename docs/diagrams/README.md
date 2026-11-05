@@ -8,16 +8,32 @@ its alternative.
 | `<name>.pdf` | Screens. A1 at trim size |
 | `<name>.png` | The README, 3200 px wide |
 | `<name>-print.pdf` | Printing. A1, 3 mm bleed, crop marks |
+| `<name>-print-a0.pdf` | Printing. The same poster at A0 |
 | `<name>.dot` | Generated Graphviz source of the diagram |
 
 ## Printing
 
-- **Size:** A1 landscape, 841 x 594 mm. It fits a 610 mm roll. Type in the diagram prints at about 9 to 11 pt.
-- **Larger:** the diagram and type are vector, so A0 is a straight 141% scale. The background art is 150 dpi at
-  A1 and about 106 dpi at A0, which suits viewing from a distance.
-- **Smaller:** avoid going below A2. At A3 the smallest type is under 5 pt.
-- **Print file:** `TrimBox` and `BleedBox` are set, fonts are embedded and the bleed is 3 mm. Colour is RGB, so
-  ask the shop to convert it, or to print RGB directly, which most large-format printers do.
+Both sizes are ready to print. Choose by how far away people will stand.
+
+| Printed type, in points | Home, A1 | Cloud, A1 | Home, A0 | Cloud, A0 |
+| --- | --- | --- | --- | --- |
+| Key components, such as the gateway | 18 | 16 | 26 | 23 |
+| Other box names | 14 | 12 | 20 | 18 |
+| Connection labels and small print | 11 | 10 | 16 | 14 |
+| "What to look at" list | 22 | 22 | 31 | 31 |
+
+`build.py` prints the diagram rows on every build.
+
+- **A0, 1189 x 841 mm:** for a wall. Estimated comfortable reading distance is about 1 m for small print, and 1.5 m
+  for key components. It fits a 914 mm roll. Use `<name>-print-a0.pdf`.
+- **A1, 841 x 594 mm:** for reading up close, at about 0.7 m for small print. It fits a 610 mm roll. Use
+  `<name>-print.pdf`.
+- **Distances are estimates,** from a rule of thumb of 4 mm of capital height per metre, not a test print. To check
+  before paying for a poster, print part of the PDF at 100% on a sheet of A4, tape it up and step back.
+- **Background art:** 150 dpi at A1 and about 106 dpi at A0, which suits viewing from a distance. Diagram and type are
+  vector, so stay sharp at any size.
+- **Print files:** `TrimBox` and `BleedBox` are set and fonts are embedded. Bleed is 3 mm at A1 and 4.2 mm at A0.
+  Colour is RGB, so ask the shop to convert it, or to print RGB directly, which most large-format printers do.
 - **Paper:** matte or satin poster paper. Print at 100%, not "fit to page", or the crop marks will shift.
 
 ## Highlights
@@ -38,7 +54,7 @@ of the repo.
 uv run docs/diagrams/build.py
 ```
 
-Needs Graphviz, Typst and `pdftoppm`. Fonts are in `fonts/`, under the SIL Open Font License, and are used without
+Needs Graphviz, Typst and `pdftoppm`. Fonts are in `fonts/` (Atkinson Hyperlegible for reading, Fredoka for titles), under the SIL Open Font License, and are used without
 installing them. `build.py` holds the components and connections, and `poster.typ` holds the layout.
 
 The Canopy stack in `build.py` was checked against `compose.yaml` and the source on 2026-11-05. Change one
