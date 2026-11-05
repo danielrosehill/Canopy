@@ -309,6 +309,7 @@ result and output, which is what the dashboard shows.
 | `backup-config` | Weekly, and on change | Push config only |
 | `storage-expiry` | Daily | Confirm expiry ran on transient buckets |
 | `update-check` | Daily | Report newer versions. Never applies them |
+| `cli-update` | Weekly | Update added CLIs, after a smoke test |
 
 A job takes a lock, so two runs never overlap. A missed run starts on the next boot.
 
@@ -361,11 +362,29 @@ holding them, so nothing has to be installed on the host, and every deployment g
 `canopy run gh repo list` runs a command inside it. Its home directory is `agent-data/cli`, so logins
 survive an update and are backed up with the config tier.
 
-Holds: `canopy`, `gh`, `aws`, `rclone`, `restic`, `jq`, `curl`, `pg_dump`, `git`, `uv` and `node`, with
-`uvx` and `npx` for anything else. Tested on Alpine 3.22 on 2026-11-05: those all started, as did `vercel`,
-`wrangler`, `hf` and `modal`, about 475 MB in all. That proves they start, not that each works: `wrangler`
-needs a real command tried, because its runtime has had trouble on Alpine, and `uvx markitdown` resolved to
-a very old version.
+**Three tiers,** chosen by how often skills actually use each one. The counts are records mentioning the
+CLI, out of 3,571 skills, commands and agents in a real catalogue on 2026-11-05.
+
+| Tier | CLIs | How it gets there |
+| --- | --- | --- |
+| Baked into the image | `canopy`, `git`, `gh` (269), `curl` (202), `uv` (146), `jq` (101), `rclone` (87), `node` (82), `python3`, `aws`, `restic`, `pg_dump`, `ssh` | Image build |
+| Media set, opt-in | `ffmpeg` (82), `ffprobe`, `imagemagick` (92), `exiftool` (29), `pdftotext`, `pandoc` | A second image tag, because these are large |
+| Added per user | `hf` (37), `modal` (56), `wrangler`, `vercel`, `gcloud`, `op`, `infisical`, anything else | `canopy cli add <name>`, recorded in `agent-data/config/cli.json` |
+
+Added CLIs install into `agent-data/cli` with `uv tool`, `npm` or a release download, so they survive an
+image update. `uvx` and `npx` cover anything run only once.
+
+**Updating them.** A `cli-update` job runs weekly. It compares each added CLI with its latest release,
+installs the new version beside the old one, runs a smoke test (`--version`, and a read-only command if
+`cli.json` names one), and switches only if that passes. Otherwise it keeps the old version and reports
+it. `canopy cli status` and the dashboard show installed and latest versions, and `canopy cli update` runs
+it on demand. A CLI can be pinned in `cli.json`. The baked tier updates with the image, through the normal
+update path.
+
+Tested on Alpine 3.22 on 2026-11-05: the baked CLIs, `vercel`, `wrangler`, `hf` and `modal` all started,
+about 475 MB in all. That proves they start, not that each works. `wrangler` needs a real command tried,
+because its runtime has had trouble on Alpine, and `uvx markitdown` resolved to a very old version.
+`gcloud` is untested, and a large install. `infisical` needs a release download, not an Alpine package.
 
 It has no Docker socket. Commands that manage the stack itself run on the host.
 
