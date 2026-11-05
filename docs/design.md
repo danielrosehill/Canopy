@@ -151,14 +151,41 @@ ranking is what lets the default shrink. Next to test: 4 results instead of 6, a
 **One embedder.** Every embedding goes through `POST /v1/embeddings`, which catalogue and memory
 use as a normal OpenAI-compatible endpoint.
 
-- **Primary and fallback.** Local Ollama first, with an optional hosted fallback for the same
-  model. If the primary does not answer inside a budget, the fallback serves that request.
+- **Provider is a setting.** `EMBED_PROVIDER` is `local` or `openrouter`, with `OPENROUTER_API_KEY` for
+  the second. A hosted provider is the sensible default for bulk and incremental runs, since a full
+  index of this size costs cents. Ollama then matters for offline use and as a fallback.
+- **Primary and fallback.** If the primary does not answer inside a budget, the fallback serves that
+  request. This needs a model that both routes can serve, such as `bge-m3`.
 - **One model label.** Vectors are stored under a canonical name (`bge-m3`) whichever route produced
   them, with a table mapping that name to each provider's own (`baai/bge-m3`). Today, changing provider
   marks every vector stale, because the label is the provider's name.
+- **Model choice is open.** A comparison of hosted models and rerankers has not run yet. The current
+  model leaves little room in the top 6, but more in first place.
 
-If the embedder is down, search falls back to keyword and says so, as it does today. If it is
-needed later, Qdrant can come back behind the same interface. Nothing else would change.
+If the embedder is down, search falls back to keyword and says so, as it does today.
+
+**Reranking** is an optional step after fusion, off by default until measured. On the labelled queries
+(42 here, skills and plugins only, full index) the right skill was first 28 times, in the top 3 35 times
+and in the top 6 39 times. So a reranker could only help ordering inside a list the agent already reads,
+and the agent is itself a good reranker of six short descriptions. It would have to earn its added
+latency and dependency.
+
+## What the agent sees
+
+The goal is the fewest tokens between a task and the right skill. In order of expected effect:
+
+1. **Search has to happen at all.** An agent told to search first still often does not. So the plugin
+   adds a `UserPromptSubmit` hook: it searches on the user's prompt and, only above a score threshold,
+   injects up to 3 ids and one line each. Roughly 60 tokens when it fires and none when it does not.
+   Untested, and the threshold needs tuning against the labelled queries.
+2. **Descriptions are the real interface.** The agent picks from them, so a linter flags skills with
+   weak ones, and the near-duplicates that split a query.
+3. **An honest miss.** Replies carry a confidence signal, so a weak match reads as "nothing strong
+   here" and the agent stops looking.
+4. **A skill loads in layers.** `read` returns the skill. Long reference files are fetched only if the
+   skill asks for them.
+5. **Learning from use.** `system.search_log` records each query and what was then read. A search
+   followed by no read is a likely miss, which tunes the labelled queries and shows up on the dashboard.
 
 ## Storage
 
@@ -185,6 +212,32 @@ touch Canopy's MIT.
 A general memory with namespaces, as an opt-in service, in the same Postgres with pgvector. It exposes an MCP server for agents and routes on the
 API for operators. Tools: `remember`, `recall`, `list_memories`, `list_namespaces`, `update_memory`,
 `forget`.
+
+## Database
+
+One Postgres instance, two databases, separate roles, created by the first start and upgraded by
+numbered migrations. Agents never connect directly: they use the API.
+
+| Database | Role | Holds |
+| --- | --- | --- |
+| `mcpjungle` | `mcpjungle` | The gateway's own tables |
+| `canopy` | `canopy` | Everything below |
+
+| Schema | Owner of the content | Tables |
+| --- | --- | --- |
+| `system` | Canopy, shipped and migrated | `sources` (repo URLs that ship with Canopy), `schema_version`, `jobs`, `job_runs`, `search_log`, `model_map` |
+| `catalogue` | Canopy, rebuildable | `records` (text and vector), `plugins`, `reads` |
+| `workspace` | The user | `sources` (their marketplaces), `namespaces`, `memories` |
+
+A system source can be disabled but not edited, so an update can change it safely, and nothing the
+user adds is touched by a migration. Marketplaces and namespaces are managed through the API, and the
+`backup-config` job exports them to `agent-data/config` as JSON, so config stays readable and portable.
+
+## Secrets
+
+Canopy reads secrets from the environment. `secrets.env` is the default, and a provider setting lets
+`canopy run` and the stack fetch them from an external secrets manager at start, so that nothing is
+written to disk. CLIs in the `cli` container are logged in on the server, so clients hold no credentials.
 
 ## Scheduler
 
@@ -264,20 +317,25 @@ It has no Docker socket. Commands that manage the stack itself run on the host.
 
 ## Connecting a client
 
-Two plugins with different audiences, in the marketplace published from this repo:
-
-| Plugin | Installed on | Holds |
-| --- | --- | --- |
-| `canopy-connector` | Every device, at user level, and the only connector needed | MCP connection, skills to search, load and validate |
-| `canopy` | The server where the agent runs | Management skills, using the `canopy` CLI |
+**One official plugin, `canopy`, and it is the only one a user installs,** at user level on every device.
 
 ```
 /plugin marketplace add danielrosehill/Canopy
-/plugin install canopy-connector@canopy
+/plugin install canopy@canopy
 ```
 
-The connector also ships a short instruction snippet for the user's `CLAUDE.md`, because agents have to
-be told to search before they conclude that a skill does not exist.
+It holds the MCP connection to the user's own instance and three skills, because each skill description
+costs context in every session:
+
+| Skill | For |
+| --- | --- |
+| `find` | Search, read and load skills, and call tools. The everyday one |
+| `validate-connection` | Check the connection, and set it up on a new device |
+| `manage` | Points to the API and `canopy` CLI. Marketplaces, upstreams, namespaces, jobs, backups and updates are reference files it loads only when needed |
+
+It also carries the prompt hook, and a short snippet for the user's `CLAUDE.md`. Management needs the API
+token, so it works where the agent runs on the server, or where a token has been given to that device.
+`clients/canopy-pick`, the terminal picker for people, stays a separate add-on.
 
 ## Documentation
 
@@ -294,11 +352,11 @@ Each step ends with a clean install on an empty machine, and the contract suite 
 1. Folder layout, the `api` service, `/v1/status`, `canopy` CLI, `cli` image, gateway writes moved behind
    the API.
 2. Contract suite in CI, with `compat.json`. Early, because every later step changes what it protects.
-3. Postgres with pgvector, records and vectors moved there, embedder route, Ollama in `search`,
-   weighted search, and the labelled queries as a regression check.
+3. Postgres with pgvector, roles, schemas and migrations, records and vectors moved there, embedder
+   route, Ollama in `search`, weighted search, and a labelled query set as a regression check.
 4. Scheduler, then backup and restore as jobs.
 5. Storage profile, stage route and skill.
-6. Connector plugin, manual and API reference.
+6. The `canopy` plugin with its hook, manual and API reference.
 7. Dashboard.
 8. Memory.
 9. Cache, if measurement still supports it.
