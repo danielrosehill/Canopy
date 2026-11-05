@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 from canopy import catalogue as cat
+from canopy import import_vectors as iv
 from canopy import index as ix
 from canopy import ranking
 
@@ -220,3 +222,92 @@ def test_gateway_snapshot_and_mcp_records(g, uid):
     assert ix.rebuild_mcp_records(cat.db) >= 3
     assert stored(f"mcp:s{uid}") and stored(f"tool:s{uid}__s{uid}_a")
     assert stored(f"tool:s{uid}__s{uid}_a")["kind"] == "tool"
+
+
+# --- import from an older SQLite index ------------------------------------------
+
+def key_of(r: dict) -> str:
+    return hashlib.sha256(ix.embed_text(r).encode()).hexdigest()
+
+
+def old_index(path, *rows: tuple[str, str, bytes]) -> Path:
+    db = sqlite3.connect(path)
+    db.execute("CREATE TABLE embeddings (key TEXT PRIMARY KEY, model TEXT, vec BLOB)")
+    db.executemany("INSERT INTO embeddings VALUES (?,?,?)", rows)
+    db.commit()
+    db.close()
+    return path
+
+
+def blob(text: str, scale: float = 1.0) -> bytes:
+    return (np.asarray(fake_vector(text), dtype=np.float32) * scale).tobytes()
+
+
+def test_import_lands_a_vector_on_every_record_sharing_its_text(tmp_path):
+    a = rec("skill:p/a")
+    twin = rec("skill:p/b", name="a")
+    store(a, twin)
+    assert key_of(a) == stored("skill:p/a")["embed_key"] == stored("skill:p/b")["embed_key"]
+    report = iv.import_vectors(cat.db, old_index(tmp_path / "old.db", (key_of(a), "bge-m3", blob("a", 7.0))))
+    assert report["records_filled"] == 2 and report["still_pending"] == 0
+    got = np.asarray(stored("skill:p/a")["embedding"].to_list())
+    want = np.frombuffer(blob("a"), dtype=np.float32)
+    assert np.allclose(got, want / np.linalg.norm(want), atol=1e-5)   # stored as a unit vector
+    assert stored("skill:p/a")["embed_model"] == "bge-m3"
+    assert ix.pending_estimate(cat.db)["records"] == 0
+
+
+def test_import_accepts_a_providers_name_for_the_model_and_stores_the_canonical_one(tmp_path):
+    a = rec("skill:p/a")
+    store(a)
+    report = iv.import_vectors(cat.db, old_index(tmp_path / "old.db", (key_of(a), "baai/bge-m3", blob("a"))))
+    assert report["records_filled"] == 1
+    assert stored("skill:p/a")["embed_model"] == "bge-m3"
+
+
+def test_import_skips_what_it_cannot_use_and_leaves_those_records_pending(tmp_path):
+    a, b, c = rec("skill:p/a"), rec("skill:p/b", description="B"), rec("skill:p/c", description="C")
+    store(a, b, c)
+    report = iv.import_vectors(cat.db, old_index(
+        tmp_path / "old.db",
+        (key_of(a), "text-embedding-3-small", blob("a")),
+        (key_of(b), "bge-m3", b"short"),
+        (key_of(c), "bge-m3", bytes(1024 * 4)),   # all zeros: no direction to keep
+        ("gone", "bge-m3", blob("gone"))))
+    assert report == {"source_vectors": 4, "other_model": 1, "unusable": 2, "no_record": 1, "kept": 0,
+                      "records_filled": 0, "still_pending": 3}
+    assert stored("skill:p/a")["embedding"] is None
+
+
+def test_import_does_not_overwrite_a_current_vector_and_can_be_run_again(tmp_path, embedder):
+    a = rec("skill:p/a")
+    store(a)
+    ix.embed_pending(cat.db)
+    before = stored("skill:p/a")["embedding"].to_list()
+    old = old_index(tmp_path / "old.db", (key_of(a), "bge-m3", blob("different")))
+    assert iv.import_vectors(cat.db, old)["kept"] == 1
+    assert iv.import_vectors(cat.db, old)["records_filled"] == 0
+    assert stored("skill:p/a")["embedding"].to_list() == before
+
+
+def test_import_replaces_a_vector_from_another_model(tmp_path, embedder, monkeypatch):
+    a = rec("skill:p/a")
+    store(a)
+    monkeypatch.setattr(ix, "EMBED_MODEL", "other")
+    ix.embed_pending(cat.db)
+    report = iv.import_vectors(cat.db, old_index(tmp_path / "old.db", (key_of(a), "bge-m3", blob("a"))))
+    assert report["records_filled"] == 1
+    assert stored("skill:p/a")["embed_model"] == "bge-m3"
+
+
+def test_import_before_a_sync_is_refused(tmp_path):
+    old = old_index(tmp_path / "old.db", ("k", "bge-m3", blob("a")))
+    with pytest.raises(ValueError, match="full sync"):
+        iv.import_vectors(cat.db, old)
+
+
+def test_import_of_a_missing_file_is_refused_and_creates_nothing(tmp_path):
+    store(rec("skill:p/a"))
+    with pytest.raises(ValueError, match="no such file"):
+        iv.import_vectors(cat.db, tmp_path / "typo.db")
+    assert not (tmp_path / "typo.db").exists()

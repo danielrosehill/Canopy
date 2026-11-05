@@ -436,8 +436,9 @@ Each step ends with a clean install on an empty machine, and the contract suite 
    route, Ollama in `search`, weighted search, and a labelled query set as a regression check.
    Still open: the `search` profile has not been run (Ollama loads a model, so not on a small test
    machine), cloud and local vectors are unconfirmed, the in-memory BM25 is a new implementation whose
-   quality on a real index is unmeasured (the table above came from a prototype that was not kept), and
-   there is no import of vectors from an older SQLite index.
+   quality on a real index is unmeasured (the table above came from a prototype that was not kept).
+   `python -m canopy.import_vectors <file>` brings vectors over from an older SQLite index, after a first
+   full sync, so a move needs no full re-embed. Tested on fixtures; not yet run on a real index.
 4. Scheduler, then backup and restore as jobs.
 5. Storage profile, stage route and skill.
 6. The `canopy` plugin with its hook, MCP Skills extension, manual and API reference.
