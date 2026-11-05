@@ -13,6 +13,9 @@ import httpx
 
 PRIMARY = os.environ.get("EMBED_PROVIDER", "")
 FALLBACK = os.environ.get("EMBED_FALLBACK", "")
+# Optional: answers single-text requests first, so bulk can run on a hosted route while a person waits on
+# a local one. Measured 2026-11-05: 60-100 ms local, against 1.3 s median hosted, for one query.
+QUERY_FIRST = os.environ.get("EMBED_QUERY_PROVIDER", "")
 QUERY_BUDGET = float(os.environ.get("EMBED_QUERY_BUDGET_SEC", "6"))   # a person is waiting
 BULK_TIMEOUT = float(os.environ.get("EMBED_BULK_TIMEOUT_SEC", "120"))
 
@@ -29,11 +32,12 @@ class EmbedError(Exception):
 
 
 class Embedder:
-    def __init__(self, primary: str = PRIMARY, fallback: str = FALLBACK,
+    def __init__(self, primary: str = PRIMARY, fallback: str = FALLBACK, query_first: str = QUERY_FIRST,
                  provider_model: Callable[[str, str], str] = lambda model, provider: model,
                  post=httpx.post):
         self.chain = [p for p in (primary, fallback) if p]
-        unknown = set(self.chain) - set(routes())
+        self.query_chain = [query_first, *(p for p in self.chain if p != query_first)] if query_first else self.chain
+        unknown = set(self.query_chain) - set(routes())
         if unknown:
             raise ValueError(f"unknown embedding provider: {sorted(unknown)}")
         self.provider_model, self.post = provider_model, post
@@ -42,9 +46,11 @@ class Embedder:
         """An OpenAI-style reply, plus `route`: the provider that answered."""
         if not self.chain:
             raise EmbedError(503, "no embedding provider: set EMBED_PROVIDER")
-        timeout = QUERY_BUDGET if len(texts) == 1 else BULK_TIMEOUT
+        query = len(texts) == 1
+        chain = self.query_chain if query else self.chain
+        timeout = QUERY_BUDGET / len(chain) if query else BULK_TIMEOUT   # leave the next route time to answer
         failures = []
-        for provider in self.chain:
+        for provider in chain:
             url, key = routes()[provider]
             try:
                 r = self.post(f"{url.rstrip('/')}/embeddings", timeout=timeout,

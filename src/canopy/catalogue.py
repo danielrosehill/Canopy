@@ -43,8 +43,11 @@ QUERY_EMBED_TIMEOUT = float(os.environ.get("QUERY_EMBED_TIMEOUT_SEC", "8"))
 CONFIDENCE_MIN = float(os.environ.get("SEARCH_CONFIDENCE_MIN", "0.6"))
 KINDS = ("plugin", "skill", "command", "agent", "mcp", "tool")
 TOOL_HITS = int(os.environ.get("SEARCH_TOOL_HITS", "3"))
+# Every result costs the agent context, so these are the levers on the size of a reply.
+SEARCH_LIMIT = int(os.environ.get("SEARCH_LIMIT", "6"))
+TOOL_MIN_COSINE = float(os.environ.get("SEARCH_TOOL_MIN_COSINE", "0"))   # drop unrelated tools; 0 keeps all
 EMBED_ON_SYNC = os.environ.get("EMBED_ON_SYNC", "false").lower() == "true"
-SEARCH_DESC_CHARS = 300   # search is a shortlist; `read` has the full text
+SEARCH_DESC_CHARS = int(os.environ.get("SEARCH_DESC_CHARS", "300"))   # a shortlist; `read` has the full text
 
 db = ix.connect()
 _sync_lock = threading.Lock()
@@ -124,7 +127,7 @@ def _summary(r) -> dict:
 
 @mcp.tool()
 def search(query: str, kind: str | None = None, plugin: str | None = None,
-           marketplace: str | None = None, limit: int = 6, full: bool = False) -> str:
+           marketplace: str | None = None, limit: int = SEARCH_LIMIT, full: bool = False) -> str:
     """Find the skill AND the gateway tool for a task: is there a skill for this, which tool does it, what is it called.
 
     Describe the task in plain words. `results` holds skills, commands, agents,
@@ -181,7 +184,8 @@ def search(query: str, kind: str | None = None, plugin: str | None = None,
     else:
         # Tools rank in their own list so a large tool set cannot crowd skills out.
         top = [r for r in ordered if not r.startswith("tool:")][:limit]
-        tool_ids = [r for r in ordered if r.startswith("tool:")][:TOOL_HITS]
+        tool_ids = [r for r in ordered if r.startswith("tool:")
+                    and (not cosine or cosine.get(r, 0) >= TOOL_MIN_COSINE)][:TOOL_HITS]
     want = top + tool_ids
     rows = {r["id"]: r for r in db.execute(
         "SELECT * FROM records WHERE id = ANY(%s)", (want,))} if want else {}

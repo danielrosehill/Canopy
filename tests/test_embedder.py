@@ -75,3 +75,29 @@ def test_the_route_answers_with_vectors():
     client = TestClient(api.create_app(Stub(), "right", Embedder("local", "", post=post)))
     r = client.post("/v1/embeddings", json={"model": "m", "input": "x"}, headers=AUTH)
     assert r.status_code == 200 and len(r.json()["data"]) == 1
+
+
+def _reply(calls):
+    def post(url, json, **_):
+        calls.append(url)
+        class R:
+            def raise_for_status(self): pass
+            def json(self): return {"data": [{"embedding": [0.0]} for _ in json["input"]]}
+        return R()
+    return post
+
+
+def test_a_query_takes_its_own_route_and_bulk_keeps_the_primary():
+    calls = []
+    e = Embedder("openrouter", "local", query_first="local", post=_reply(calls))
+    assert e.embed("m", ["one query"])["route"] == "local"
+    assert e.embed("m", ["a", "b"])["route"] == "openrouter"
+
+
+def test_a_query_route_that_fails_falls_through_to_the_other():
+    def post(url, json, **_):
+        if "openrouter" not in url:
+            raise httpx.ConnectError("down")
+        return _reply([])(url, json)
+    e = Embedder("openrouter", "local", query_first="local", post=post)
+    assert e.embed("m", ["one query"])["route"] == "openrouter"

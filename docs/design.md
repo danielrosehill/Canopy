@@ -156,6 +156,9 @@ use as a normal OpenAI-compatible endpoint.
 - **Provider is a setting.** `EMBED_PROVIDER` is `local` or `openrouter`, with `OPENROUTER_API_KEY` for
   the second. Unset means keyword search. A hosted provider is the sensible default for bulk and incremental runs, since a full
   index of this size costs cents. Ollama then matters for offline use and as a fallback.
+- **Queries can take their own route.** `EMBED_QUERY_PROVIDER` answers single-text requests first. Measured on
+  2026-11-05 on one modest server: 60-100 ms local, against a 1.3 s median and 4.1 s worst case hosted. Local is
+  only slow when a bulk run is queued ahead of a query, so run bulk hosted and queries local, each falling back to the other.
 - **Primary and fallback.** If the primary does not answer inside a budget, the fallback serves that
   request. This needs a model that both routes can serve, such as `bge-m3`.
 - **One model label.** Vectors are stored under a canonical name (`bge-m3`) whichever route produced
