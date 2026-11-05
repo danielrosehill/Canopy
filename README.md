@@ -20,10 +20,11 @@ I looked for something off the shelf that did this and did not find it. There ar
 I found no real progressive discovery for skills, so Canopy joins existing pieces together. It is not offered
 as the best way to do this, just one way that works.
 
-![Sources feed a skills library and an MCP aggregator on a home server, which serves Claude Code, claude.ai, ChatGPT and your own agents](docs/brand/canopy-at-a-glance.png)
+![Sources feed a skills library and an MCP aggregator in Canopy, which serves thin clients: Claude Code, claude.ai, ChatGPT and your own agents](docs/brand/canopy-at-a-glance.png)
 
-It normally lives on a home server, so local tools stay local and the cloud is still reachable. Clients hold
-one connector and no credentials for your tools. The [overview](docs/overview.md) explains why, with diagrams.
+The aim is bundling, thin clients and context efficiency: clients hold one connector and no credentials for
+your tools. Run it on a home server if you orchestrate a lot at home (Home Canopy), or on a VPS if you don't
+(Cloud Canopy). The [overview](docs/overview.md) explains both, with diagrams.
 
 ## What you get
 

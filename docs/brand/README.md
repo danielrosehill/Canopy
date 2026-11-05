@@ -8,13 +8,14 @@ on [fal](https://fal.ai) on 2026-11-05.
 | `avatar.png` | Avatar, 512x512, transparent corners | `google/nano-banana-2.1/edit` | 11 |
 | `banner.jpg` | README banner | `google/nano-banana-2.1/edit`, 21:9, 2K, with the avatar as reference | 21 |
 | `social-preview.jpg` | GitHub social preview, 1280x640, a centre crop of the banner | As above | 21 |
-| `canopy-at-a-glance.png` | Overview diagram | `openai/gpt-image-2.5/flare/text-to-image`, `quality: medium` | None |
-| `why-at-home.png` | Cloud against home diagram | As above | None |
+| `canopy-at-a-glance.png` | Overview diagram | `google/nano-banana-2.1/edit`, 16:9, 1K, with the avatar as reference | 31 |
+| `home-canopy.png` | Home Canopy diagram | As above | 31 |
+| `cloud-canopy.png` | Cloud Canopy diagram | As above | 31 |
 
 The avatar's input was the photo with its background removed (`fal-ai/birefnet/v2`), flattened onto white.
 Nano Banana kept the onesie and FLUX.3 Klein lost it, on the same prompt.
 
-The two diagrams hold only short labels. The accurate, editable versions are the Mermaid diagrams in
+The three diagrams hold only short labels. The accurate, editable versions are the Mermaid diagrams in
 [overview.md](../overview.md), so change those first.
 
 ## Prompts
@@ -33,23 +34,42 @@ Overview diagram:
 
 ```text
 A 16:9 architecture diagram for a technical README, flat illustrated style with a soft rainforest palette: cream background, deep green and lime cards, rounded corners, dark green text, thin dark arrows.
+Title, top left, plain text, no box and no arrow: "One place for every agent".
 Layout: three columns read left to right.
 Left column, heading plain text with no box: "Sources". Two stacked cards: "Skills and plugins" and "MCP servers".
-Centre column: one large rounded panel shaped like a house under a leafy tree canopy, with panel title "Canopy on your home server". Inside it two stacked cards: "Skills library" with small subtitle "progressive discovery", and "MCP aggregation" with small subtitle "MCPJungle, progressive".
-Right column, heading plain text with no box: "Clients". Four stacked cards: "Claude Code", "claude.ai", "ChatGPT", "Your own agents".
-Arrows: "Skills and plugins" points right to "Skills library". "MCP servers" points right to "MCP aggregation". The centre panel has one arrow to each of the four client cards, pointing right.
-Title, top left, plain text, no box and no arrow: "One place for every agent".
-Each card contains only its label and subtitle: no sample content, mini-diagrams, screenshots or example text inside it.
+Centre column: one large rounded panel under a leafy tree canopy, with panel title "Canopy". Inside it two stacked cards: "Skills library" with small subtitle "progressive discovery", and "MCP aggregation" with small subtitle "MCPJungle, progressive".
+Right column, heading plain text with no box: "Thin clients". Four stacked cards: "Claude Code", "claude.ai", "ChatGPT", "Your own agents".
+Arrows: "Skills and plugins" points right to "Skills library". "MCP servers" points right to "MCP aggregation". Exactly four arrows leave the right edge of the outer panel from one shared trunk line, one to each client card, pointing right. No arrow starts from an inner card.
+Each card contains only its label and any subtitle given: no sample content, mini-diagrams, screenshots or example text inside it.
 No other text, logos or watermarks anywhere.
+Include this exact sloth character small, in the bottom right corner, not covering any label or arrow.
 ```
 
-Cloud against home diagram:
+Home Canopy diagram:
 
 ```text
-A 16:9 comparison diagram for a technical README, flat illustrated style with a soft rainforest palette: cream background, deep green and lime cards, rounded corners, dark green text, thin dark arrows. Two side-by-side panels.
-Title, top left, plain text, no box and no arrow: "Why it lives at home".
-Left panel, heading plain text: "Gateway in the cloud". Three cards in a row left to right: "Agent", "Cloud gateway", "Light bulb". Arrow from "Agent" to "Cloud gateway". A long, drooping, awkward dashed red arrow from "Cloud gateway" down to "Light bulb", labelled "tunnel back into the home".
-Right panel, heading plain text: "Gateway at home". Three cards: "Agent", "Canopy", "Light bulb". Arrow from "Agent" to "Canopy". A short solid green arrow from "Canopy" to "Light bulb", labelled "local network". A second card above, "Cloud services", with an arrow from "Canopy" up to it, labelled "still reachable".
-Each card contains only its label: no sample content, mini-diagrams, screenshots or example text inside it.
+A 16:9 architecture diagram for a technical README, flat illustrated style with a soft rainforest palette: cream background, deep green and lime cards, rounded corners, dark green text, thin dark arrows.
+Title, top left, plain text, no box and no arrow: "Home Canopy".
+Layout: three columns read left to right.
+Left column, one card: "Clients" with small subtitle "one connector each".
+Centre: one large panel shaped like a house under a leafy tree canopy, with panel title "Home network". Inside it two stacked cards: "Canopy" on top, and "Local tools" below with small subtitle "Home Assistant, OPNsense, NAS, printers".
+Right column, two stacked cards: "Cloud APIs" and "Cloud VPS".
+Arrows: "Clients" to "Canopy", edge label "Tailscale or Cloudflare". "Canopy" down to "Local tools", a short thick green arrow, edge label "local network". "Canopy" right to "Cloud APIs", edge label "outbound". "Canopy" right to "Cloud VPS", edge label "Tailscale". Exactly four arrows.
+Each card contains only its label and any subtitle given: no sample content, mini-diagrams, screenshots or example text inside it.
 No other text, logos or watermarks anywhere.
+Include this exact sloth character small, in the bottom right corner, not covering any label or arrow.
+```
+
+Cloud Canopy diagram:
+
+```text
+A 16:9 architecture diagram for a technical README, flat illustrated style with a soft rainforest palette: cream background, deep green and lime cards, rounded corners, dark green text, thin dark arrows.
+Title, top left, plain text, no box and no arrow: "Cloud Canopy".
+Layout: an upper row and a lower row.
+Upper row: on the left a card "Clients" with small subtitle "one connector each". In the centre a large panel shaped like a soft cloud, with one card inside: "Canopy" with small subtitle "on a VPS". On the right a card "Cloud APIs".
+Lower row: under the centre and right, one panel shaped like a house under a leafy tree canopy, with panel title "Home network". Inside it two side-by-side cards: "Local proxy" and "Local tools".
+Arrows: "Clients" to "Canopy". "Canopy" to "Cloud APIs". "Canopy" down to "Local proxy", edge label "tunnel, dials out from home". "Local proxy" to "Local tools". A dashed green arrow from "Clients" down and right to "Local proxy", edge label "at home: no hairpin". Exactly five arrows.
+Each card contains only its label and any subtitle given: no sample content, mini-diagrams, screenshots or example text inside it.
+No other text, logos or watermarks anywhere.
+Include this exact sloth character small, in the bottom right corner, not covering any label or arrow.
 ```

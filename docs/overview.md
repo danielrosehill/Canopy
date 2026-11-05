@@ -3,7 +3,7 @@
 The short version, with the reasoning. For the services and their behaviour see
 [Architecture](architecture.md), and for where the design is heading see the [target design](design.md).
 
-![Sources feed a skills library and an MCP aggregator on a home server, which serves Claude Code, claude.ai, ChatGPT and your own agents](brand/canopy-at-a-glance.png)
+![Sources feed a skills library and an MCP aggregator in Canopy, which serves thin clients: Claude Code, claude.ai, ChatGPT and your own agents](brand/canopy-at-a-glance.png)
 
 ## The idea
 
@@ -11,7 +11,14 @@ A rainforest canopy is one roof over everything beneath it. Canopy is that for A
 plugins, MCP servers and CLIs live in one place, and every agent you use reaches them through one
 connection.
 
-It is mission control for your AI setup, and it normally sits on a home server.
+The central objective has three parts:
+
+- **Bundling.** Every component sits together, as mission control for your AI setup.
+- **Thin clients.** A client holds one connector, and nothing else.
+- **Context efficiency.** Agents load what they need, when they need it.
+
+Where it runs is a separate choice: at home or in the cloud. See
+[Home Canopy and Cloud Canopy](#home-canopy-and-cloud-canopy).
 
 ## How it came about
 
@@ -32,15 +39,12 @@ flowchart LR
         ups["MCP servers"]
     end
 
-    subgraph home["Home server"]
-        subgraph canopy["Canopy"]
-            cat["Skills library<br/>hybrid search, read on demand"]
-            gw["MCP aggregation<br/>MCPJungle"]
-            tb["Toolbox<br/>long-tail tools on demand"]
-            cli["CLI container<br/>logins stay here"]
-            s3["File transport<br/>S3 with expiry"]
-        end
-        local["Local services<br/>such as Home Assistant"]
+    subgraph canopy["Canopy"]
+        cat["Skills library<br/>hybrid search, read on demand"]
+        gw["MCP aggregation<br/>MCPJungle"]
+        tb["Toolbox<br/>long-tail tools on demand"]
+        cli["CLI container<br/>logins stay here"]
+        s3["File transport<br/>S3 with expiry"]
     end
 
     cloud["Cloud APIs"]
@@ -50,7 +54,6 @@ flowchart LR
     ups -- registered --> gw
     gw --> tb
     gw --> cat
-    gw -- local network --> local
     gw -- outbound --> cloud
     cli -- outbound --> cloud
     s3 -- URL for an API to fetch --> cloud
@@ -87,19 +90,94 @@ sequenceDiagram
 
 The [manual](manual.md#how-finding-skills-works) covers this from the user's side.
 
-## Why it lives at home
+## Home Canopy and Cloud Canopy
 
-![With a cloud gateway, reaching a light bulb needs a tunnel back into the home. With Canopy at home, the bulb is on the local network and cloud services are still reachable](brand/why-at-home.png)
+Bundling, thin clients and context efficiency are the point of Canopy, and none of them depends on where it
+runs. So there are two templates, and both are valid. The question is where your orchestrator should sit,
+and that comes down to how much of what you automate is at home.
 
-Some tools are local by nature. Home Assistant is the plain example, though not an important one in itself.
+| | Home Canopy | Cloud Canopy |
+| --- | --- | --- |
+| Gateway runs on | A home server | A cloud VPS |
+| Local tools | On the same network | Through a proxy at home |
+| Cloud tools | Ordinary outbound calls | Ordinary outbound calls |
+| Reaching it from outside | Needs a route in: Tailscale or a Cloudflare tunnel | Already outside, though it still needs a login in front |
+| If home goes offline | Everything stops | Cloud tools keep working |
+| Best when | You orchestrate a lot at home | You do little at home, or want it always up |
 
-Deploy the gateway in the cloud, and turning on a light bulb means an awkward tunnel from the cloud back
-down into your house, with its latency, just to reach something on your own network. Deploy it at home, and
-local tools are local while the cloud is still an ordinary outbound connection away. Direction matters:
-going out from home is easy, and getting in is the hard part.
+### Home Canopy
 
-The cost is that the gateway depends on your home connection and power, so anything that must always be
-up belongs elsewhere. Canopy itself only needs a Docker host, so a VPS works if you have no local tools.
+![Home Canopy: clients reach Canopy on the home network over Tailscale or Cloudflare. Local tools are on the local network, and cloud APIs and a cloud VPS are reached outbound](brand/home-canopy.png)
+
+The gateway lives on a home server, and this is the deployment Canopy came from. There is something elegant
+about it when a lot of your orchestration happens at home, because the tools are right there:
+
+- SSH into local machines
+- OPNsense for the firewall and router
+- Synology for the NAS
+- Home Assistant
+- Printers on the home network through CUPS
+- Music Assistant
+
+Canopy ships none of these. They are examples of what you can add as plugins and MCP servers, and the source
+deployment has each of them.
+
+Put the gateway in the cloud with nothing at home, and turning on a light bulb means an awkward tunnel back
+into your house. At home, local tools are local and the cloud is still an outbound connection away.
+
+**A VPS is just another offsite remote.** It joins the tailnet, runs a small MCP server for operating the box,
+and registers on the gateway as one more upstream. If it hosts public services of its own, it has its own
+Cloudflare tunnel for those, separate from the tunnel into the home.
+
+### Cloud Canopy
+
+![Cloud Canopy: clients reach Canopy on a VPS, which reaches cloud APIs directly and local tools through a local proxy that dials out from home. A dashed route lets a client at home go straight to the proxy](brand/cloud-canopy.png)
+
+The inverse. If you don't do much at home, run the orchestrator on a VPS. It is always up, it does not depend
+on your home connection, and you lose nothing unless you have local tools.
+
+If you do have some, add a **local proxy**: a small gateway on a home machine that holds the local MCP
+servers and connects out to the cloud, so that the home still has no open ports. Canopy registers the proxy as
+one upstream, and all of its tools arrive through that one connection. The cost is that every local action now
+makes a round trip through the cloud.
+
+**Status:** Cloud Canopy has not been deployed as a whole. Its main building block has: the source deployment
+runs a small gateway at a remote site, registered on the primary gateway as a single upstream, and it stays
+usable on its own network. See [federated site gateways](https://github.com/danielrosehill/MCP-Deployment-Architecture#federated-remote-site-gateways).
+
+#### Advanced: an anti-hairpin rule
+
+A client that is at home, calling a tool that is at home, should not go out to the cloud and back. That is a
+hairpin. The rule: **when a client is on the home network, local tools go straight to the proxy.**
+
+```mermaid
+flowchart LR
+    client["Client on the home network"]
+    cloud["Canopy on a VPS<br/>search, skills, cloud tools"]
+    proxy["Local proxy"]
+    tools["Local tools"]
+    client -- "discovery and cloud tools" --> cloud
+    client -- "local tools, direct" --> proxy
+    cloud -. "away from home" .-> proxy
+    proxy --> tools
+```
+
+Discovery can stay in the cloud, since only the tool call needs the shortcut. One way to do it is for the connector
+to add a second connection to the proxy when it can see the proxy on the local network, and drop it
+when it can't. That bends "one connector" a little, so it is worth doing only if local calls are frequent.
+This is an idea, and it is not built.
+
+### How many gateways?
+
+One is enough for most setups, in either template. A second is worth it when a place has to keep working on
+its own, as with the local proxy or a remote site. It is not needed just to reach a box you already own.
+
+The source deployment learned this the hard way. It ran a second gateway on a VPS for its cloud boxes,
+and removed it in July 2026. It was one more public MCP endpoint to secure, and its upstreams had drifted
+out of date unnoticed. Registering the box directly over the tailnet did the same job.
+
+Separate from gateways, you can run more than one Cloudflare portal in front of a single gateway, for example
+one for shared tools and one that is private to you, each with its own gateway group.
 
 ## Thin clients
 
@@ -133,7 +211,8 @@ toolbox, so narrow it as described under [Security](../README.md#security).
 ## Secure remote access
 
 The key requirement: your tools have to work when you are away from home, without opening the home server
-to the internet.
+to the internet. This diagram is Home Canopy, as that is the one that runs today. Cloud Canopy needs the same
+logins in front of it, and the tunnel runs the other way, out from the home proxy.
 
 ```mermaid
 flowchart LR
@@ -165,9 +244,8 @@ flowchart LR
 ```
 
 - **Tailscale** is the general-purpose route: your own devices, and cloud resources too. A VPS on the tailnet
-  can be managed from Canopy, by adding an MCP server for the box and skills for running it. That is what
-  makes this the control point for a small fleet. Canopy ships no VPS plugin, so you bring your own. The
-  deployment Canopy came from runs one.
+  can be managed from Canopy, which makes it the control point for a small fleet. Canopy ships no VPS plugin,
+  so you bring your own. The deployment Canopy came from runs one.
 - **Cloudflare's MCP server portal** is the security layer for clients outside the tailnet. Hosted clients
   sign in with OAuth, each person as themselves, and the portal reaches the gateway over a private route.
 - **The claude.ai connector** is a custom connector pointed at that portal.
