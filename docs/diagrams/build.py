@@ -9,6 +9,7 @@ Per poster it writes <name>.dot, <name>.pdf (A1, for screens), <name>.png and <n
 (A1 with 3 mm bleed, crop marks, and TrimBox and BleedBox set). Layout is in poster.typ.
 Keep the Canopy stack in stack() in step with compose.yaml.
 """
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -21,6 +22,8 @@ FONT = "Nunito"
 BUILD = HERE / ".build"
 MM = 72 / 25.4
 DATE = "2026-11-05"
+TAGLINE = "Your AI universe under one roof"
+CREDIT = "By Daniel Rosehill with Claude Opus 5.5"
 LINK = {  # class: (colour, style, width, legend)
     "mcp":    ("#1b5e20", "solid", 1.8, "MCP over HTTP, with a token"),
     "ts":     ("#1565c0", "solid", 1.8, "Tailscale (WireGuard)"),
@@ -223,18 +226,65 @@ POSTERS = [
     {"name": "home-canopy", "number": "1", "title": "Home Canopy", "dot": home,
      "summary": "The gateway lives on the home network. Runs in the source deployment, except where marked. "
                 "Canopy ships the stack only: local tools and VPS plugins are yours to add.",
-     "short": "the gateway on a home server"},
+     "short": "the gateway on a home server", "badge": "../brand/badge-home.png",
+     "rings": [(1, ["cluster_own"]), (2, ["gateway", "toolbox", "catalogue"]), (3, ["cluster_lan"]),
+               (4, ["cluster_cf"]), (4, ["cluster_tailnet"]), (5, ["storage"]), (6, ["cluster_vps"])],
+     "notes": [("Thin clients", "one connector each, no credentials for your tools"),
+               ("Progressive discovery", "agents search, then load only what they need"),
+               ("Local stays local", "the gateway is on the same network as your tools"),
+               ("Secure remote access", "Cloudflare for hosted clients, Tailscale for your own devices"),
+               ("File transport", "an S3 bucket with an expiry moves files to the server"),
+               ("Offsite remotes", "a VPS is one more upstream, over the tailnet")]},
     {"name": "cloud-canopy", "number": "2", "title": "Cloud Canopy", "dot": cloud,
      "summary": "The gateway lives on a VPS, and a small proxy reaches home. A proposed template, not deployed as a whole. "
                 "The proxy is the site gateway pattern, which runs in the source deployment.",
-     "short": "the gateway on a VPS, with a local proxy at home"},
+     "short": "the gateway on a VPS, with a local proxy at home", "badge": "../brand/badge-cloud.png",
+     "rings": [(1, ["cluster_own"]), (2, ["gateway", "toolbox", "catalogue"]), (3, ["cluster_homehost"]),
+               (4, ["cluster_cf"]), (4, ["cluster_tailnet"]), (5, ["storage"]), (6, ["athome"])],
+     "notes": [("Thin clients", "one connector each, no credentials for your tools"),
+               ("Progressive discovery", "agents search, then load only what they need"),
+               ("Local proxy", "home reaches the cloud through one upstream, with no open ports"),
+               ("Secure remote access", "Cloudflare for hosted clients, Tailscale for your own devices"),
+               ("File transport", "an S3 bucket with an expiry moves files to the server"),
+               ("Anti-hairpin", "at home, local tools could skip the cloud: an idea, not built")]},
 ]
+
+
+def highlights(poster, dot, env):
+    """Find the rings in the laid-out graph, as fractions of the diagram, for poster.typ to draw."""
+    # One run for both files, so the coordinates describe the PDF.
+    pdf, coords = BUILD / f"{poster['name']}.pdf", BUILD / f"{poster['name']}.layout.json"
+    subprocess.run(["dot", "-Tpdf", "-o", str(pdf), "-Tjson", "-o", str(coords), str(dot)], check=True, env=env)
+    layout = json.loads(coords.read_text())
+    # Measure the page, not the layout: Graphviz adds margins to a PDF.
+    x0, y0, x1, y1 = map(float, layout["bb"].split(","))
+    page = PdfReader(pdf).pages[0].mediabox
+    width, height = float(page.width), float(page.height)
+    pad = (width - (x1 - x0)) / 2
+    pad_y = (height - (y1 - y0)) / 2
+    boxes = {}
+    for o in layout["objects"]:
+        if "bb" in o:
+            boxes[o["name"]] = tuple(map(float, o["bb"].split(",")))
+        elif "pos" in o:
+            x, y = map(float, o["pos"].split(","))
+            w, h = float(o["width"]) * 36, float(o["height"]) * 36
+            boxes[o["name"]] = (x - w, y - h, x + w, y + h)
+    rings = []
+    for number, names in poster["rings"]:
+        b = [boxes[k] for k in names]
+        left, right = min(v[0] for v in b), max(v[2] for v in b)
+        low, high = min(v[1] for v in b), max(v[3] for v in b)
+        rings.append({"n": number, "x": ((left + right) / 2 + pad) / width, "y": 1 - ((low + high) / 2 + pad_y) / height,
+                      "w": (right - left) / width, "h": (high - low) / height})
+    return {"aspect": width / height, "rings": rings, "notes": poster["notes"]}
 
 
 def typst(poster, other, diagram, out, print_):
     inputs = {"title": poster["title"], "number": poster["number"], "summary": poster["summary"], "date": DATE,
               "other-number": other["number"], "other-title": other["title"], "other-summary": other["short"],
-              "diagram": diagram, "print": "1" if print_ else "0"}
+              "diagram": diagram, "print": "1" if print_ else "0", "badge": poster["badge"],
+              "highlights": f".build/{poster['name']}.json", "tagline": TAGLINE, "credit": CREDIT}
     args = [x for k, v in inputs.items() for x in ("--input", f"{k}={v}")]
     subprocess.run(["typst", "compile", "--root", str(HERE.parent), "--font-path", str(HERE / "fonts"), *args,
                     str(HERE / "poster.typ"), str(out)], check=True)
@@ -259,7 +309,7 @@ def main():
         name = poster["name"]
         dot = HERE / f"{name}.dot"
         dot.write_text(poster["dot"]())
-        subprocess.run(["dot", "-Tpdf", str(dot), "-o", str(BUILD / f"{name}.pdf")], check=True, env=env)
+        (BUILD / f"{name}.json").write_text(json.dumps(highlights(poster, dot, env)))
         diagram = f".build/{name}.pdf"
         typst(poster, other, diagram, HERE / f"{name}.pdf", False)
         typst(poster, other, diagram, HERE / f"{name}-print.pdf", True)

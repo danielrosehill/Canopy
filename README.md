@@ -2,6 +2,8 @@
 
 # Canopy
 
+**Your AI universe under one roof.**
+
 Self-hosted progressive discovery for AI agents, across skills and plugins as well as tools.
 
 **Status: early. The core stack, control API, CLI, both pickers and the operations skills work. The
@@ -192,3 +194,6 @@ follow, so add only sources you trust.
 ## Licence
 
 MIT. MCPJungle is MPL-2.0 and runs as its unmodified upstream image.
+
+The graphics in `docs/brand` and `docs/diagrams` are [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), by Daniel
+Rosehill with Claude Opus 5.5. The fonts in `docs/diagrams/fonts` are under the SIL Open Font License.

@@ -20,6 +20,18 @@ its alternative.
   ask the shop to convert it, or to print RGB directly, which most large-format printers do.
 - **Paper:** matte or satin poster paper. Print at 100%, not "fit to page", or the crop marks will shift.
 
+## Highlights
+
+The numbered capsules and the "What to look at" list come from `rings` and `notes` in `POSTERS` in `build.py`. A ring
+names nodes or clusters, and its position comes from Graphviz, so it follows the layout. The coordinates and the PDF
+must come from one `dot` run, and the offset is measured from the PDF page, because Graphviz adds a margin there.
+Do not set `margin=0` on the graph to avoid that: clusters inherit it, and the zones then overlap.
+
+## Licence
+
+The posters are CC BY 4.0, by Daniel Rosehill with Claude Opus 5.5. The code that builds them is MIT, like the rest
+of the repo.
+
 ## Rebuilding
 
 ```bash
