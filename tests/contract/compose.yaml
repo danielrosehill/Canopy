@@ -2,7 +2,10 @@
 # with a fixture upstream. The gateway's image and settings stay those of compose.yaml.
 services:
   db:
-    volumes: !reset []
+    volumes: !override
+      - ./scripts/db-init.sh:/docker-entrypoint-initdb.d/10-canopy.sh:ro
+    ports:
+      - "127.0.0.1:${CONTRACT_DB_PORT:-18082}:5432"
     tmpfs:
       - /var/lib/postgresql/data
 

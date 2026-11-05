@@ -10,7 +10,7 @@ One image, `ghcr.io/danielrosehill/canopy`, runs each Python service with a diff
 | Service | Module | Reachable from | State |
 | --- | --- | --- | --- |
 | `gateway` | MCPJungle `0.4.7-stdio` | `127.0.0.1:8080` | Postgres |
-| `db` | `postgres:17-alpine` | Stack network | `data/postgres` |
+| `db` | `pgvector/pgvector:0.8.1-pg17` | Stack network | `data/postgres` |
 | `catalogue` | `canopy.catalogue`, `canopy.index` | Stack network | `data/catalogue` (a cache) |
 | `toolbox` | `canopy.toolbox` | Stack network | None |
 | `api` | `canopy.api`, `canopy.control` | `127.0.0.1:8090` | `data/api`, `data/admin`, `data/tokens` |
@@ -84,6 +84,14 @@ Bearer token, JSON, on `127.0.0.1:8090`.
 Writes run one at a time. Each is believed only once a read agrees, and only then saved to `servers.json`,
 so a failed change leaves the config as it was. `${VAR}` stays in the file, and is expanded on the way
 to the gateway. Built-in servers and the core group cannot be removed.
+
+## Database
+
+`scripts/db-init.sh` runs once, on an empty `data/postgres`: databases `mcpjungle` and `canopy`, each with
+its own role, and neither role can connect to the other's. `canopy` has the `vector` extension. Tables
+come from `src/canopy/migrations/NNN_name.sql`, applied by `canopy.store.migrate` and recorded in
+`system.schema_version`. A data folder from before this layout has no such roles: start from an empty
+folder. The catalogue itself still uses SQLite until the rest of design step 3 lands.
 
 ## Gateway behaviour the seed depends on
 

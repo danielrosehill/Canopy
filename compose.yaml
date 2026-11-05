@@ -23,15 +23,17 @@ x-canopy-env: &canopy-env
 
 services:
   db:
-    image: postgres:17-alpine
+    image: pgvector/pgvector:0.8.1-pg17
     environment:
-      POSTGRES_USER: canopy
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-canopy}   # no published port
-      POSTGRES_DB: canopy
+      GATEWAY_DB_PASSWORD: ${GATEWAY_DB_PASSWORD:-canopy}
+      CANOPY_DB_PASSWORD: ${CANOPY_DB_PASSWORD:-canopy}
     volumes:
       - ${CANOPY_DATA:-${HOME}/canopy/data}/postgres:/var/lib/postgresql/data
+      - ./scripts/db-init.sh:/docker-entrypoint-initdb.d/10-canopy.sh:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U canopy"]
+      # Over TCP, and into `canopy`: during first-start setup only the socket answers.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d canopy"]
       interval: 5s
       timeout: 5s
       retries: 12
@@ -41,7 +43,7 @@ services:
   gateway:
     image: ghcr.io/mcpjungle/mcpjungle:${MCPJUNGLE_TAG:-0.4.7-stdio}
     environment:
-      DATABASE_URL: postgres://canopy:${POSTGRES_PASSWORD:-canopy}@db:5432/canopy
+      DATABASE_URL: postgres://mcpjungle:${GATEWAY_DB_PASSWORD:-canopy}@db:5432/mcpjungle
       SERVER_MODE: ${SERVER_MODE:-enterprise}
       MCP_SERVER_INIT_REQ_TIMEOUT_SEC: ${MCP_SERVER_INIT_REQ_TIMEOUT_SEC:-20}
     ports:
@@ -191,7 +193,7 @@ services:
     networks: [canopy]
 
   backup:
-    image: postgres:17-alpine
+    image: pgvector/pgvector:0.8.1-pg17
     profiles: [backup]
     environment:
       PGPASSWORD: ${POSTGRES_PASSWORD:-canopy}

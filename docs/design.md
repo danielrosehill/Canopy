@@ -432,7 +432,8 @@ Each step ends with a clean install on an empty machine, and the contract suite 
    behind the API. `/admin` is still mounted read-only in the `backup` profile, until step 4.
 2. **Done.** Contract suite in CI, with `compat.json`, and the `MCPJungle watch` workflow. Early, because
    every later step changes what it protects.
-3. Postgres with pgvector, reranking step, roles, schemas and migrations, records and vectors moved there, embedder
+3. **Started:** image, databases, roles, schemas and migrations are in; nothing uses `canopy` yet.
+   Postgres with pgvector, reranking step, roles, schemas and migrations, records and vectors moved there, embedder
    route, Ollama in `search`, weighted search, and a labelled query set as a regression check.
 4. Scheduler, then backup and restore as jobs.
 5. Storage profile, stage route and skill.
