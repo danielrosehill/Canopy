@@ -26,8 +26,7 @@ config folder alone proves nothing: it can exist with no login in it. Don't read
     { "name": "gh", "via": "image", "check": "gh api user --jq .login" },
     { "name": "vercel", "via": "npm", "package": "vercel", "check": "vercel --version" },
     { "name": "hf", "via": "uv", "package": "huggingface_hub[cli]", "check": "hf auth whoami" },
-    { "name": "hcloud", "via": "host", "env": { "HCLOUD_CONFIG": "$HOME/.config/hcloud/cli.toml" },
-      "check": "hcloud server list" },
+    { "name": "hcloud", "via": "host", "check": "hcloud server list" },
     { "name": "gcloud", "via": "tar", "bin": "google-cloud-sdk/bin/gcloud",
       "url": "https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-linux-x86_64.tar.gz",
       "check": "gcloud projects list --limit=1" }
@@ -39,8 +38,7 @@ config folder alone proves nothing: it can exist with no login in it. Don't read
 - `via`: `image` is already in the image, `npm` and `uv` install from a package, `tar` unpacks a release
   into the home folder, and `host` copies the host's binary. Use `host` for static binaries only: anything
   linked against glibc will not run on Alpine.
-- `env`: variables to set for a `host` CLI. The container's user has no passwd entry, so a tool that finds
-  its config that way needs telling where it is.
+- `env`: variables to set for a `host` CLI, such as a token read from a file in the home folder.
 - `check`: a read-only command that needs the login, not `--version`, wherever a login is involved.
 
 ## 3. Apply and check
