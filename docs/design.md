@@ -431,7 +431,8 @@ CLI, out of 3,571 skills, commands and agents in a real catalogue on 2026-11-05.
 | Added per user | `hf` (37), `modal` (56), `wrangler`, `vercel`, `gcloud`, `op`, `infisical`, anything else | `canopy cli add <name>`, recorded in `agent-data/config/cli.json` |
 
 Added CLIs install into `agent-data/cli` with `uv tool`, `npm` or a release download, so they survive an
-image update. `uvx` and `npx` cover anything run only once.
+image update. `canopy cli add` is not built yet: the `manage-clis` skill in `canopy-manager` does this today
+from `cli.json`, and copies logins from the host. `uvx` and `npx` cover anything run only once.
 
 **Updating them.** A `cli-update` job runs weekly. It compares each added CLI with its latest release,
 installs the new version beside the old one, runs a smoke test (`--version`, and a read-only command if
@@ -460,7 +461,7 @@ puts maintenance skills in front of an agent doing something else.
 - **`canopy-connector`** is the only one a user installs, at user level on every device. It holds the MCP
   connection to the user's own instance, one skill (`find`), the `/skill` command and the prompt hook.
 - **`canopy-manager`** is for running the infrastructure: setup, diagnosis, upstreams, marketplaces, sync,
-  backup, staging. It is deployed on the server. While setting up, a user can add it at user level for
+  backup, staging, CLIs. It is deployed on the server. While setting up, a user can add it at user level for
   a while. Its skills stay findable from any client, because the server indexes them.
 
 Management needs the API token, so it works where the agent runs on the server, or where a token has been

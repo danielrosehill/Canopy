@@ -8,6 +8,7 @@ skeleton, and everything specific to you is in `CANOPY_AGENT_DATA`, which you ke
 | `compose.yaml`, images, skills | `secrets.env` with secrets and settings |
 | Defaults in `config/` | `config/marketplaces.json`, `config/servers.json` |
 | | `compose.override.yaml`, for extra services such as your own MCP servers |
+| | `config/cli.json`, your CLIs and which host logins to copy (skill `manage-clis`) |
 
 ```
 ~/canopy/agent-data/

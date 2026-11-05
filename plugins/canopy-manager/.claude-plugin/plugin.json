@@ -1,6 +1,6 @@
 {
   "name": "canopy-manager",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Set up, run and diagnose a Canopy server. Deploy it on the server; add it at user level only while setting up.",
   "author": {
     "name": "Daniel Rosehill"
