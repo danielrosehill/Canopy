@@ -23,6 +23,10 @@ the MCP gateway. On top of that, one `docker compose up` will bring up:
 - a skill picker for people: fuzzy search across the skills and tools on your server, in the
   terminal and in the web UI
 - a management MCP and a web UI
-- agent skills for common operations, such as adding a marketplace or triggering embeddings
 
-Canopy ships with no content of its own. You bring your own marketplaces and MCP servers.
+Setting up and running Canopy has its own public Claude Code marketplace, published from this
+repo. Its agent skills cover installing the stack and common operations, such as adding a
+marketplace or triggering embeddings.
+
+Apart from those operations skills, Canopy ships with no content of its own. You bring your own
+marketplaces and MCP servers.
