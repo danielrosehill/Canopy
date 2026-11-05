@@ -37,6 +37,9 @@ marketplace or triggering embeddings.
 Apart from those operations skills, Canopy ships with no content of its own. You bring your own
 marketplaces and MCP servers.
 
+Where this is heading, including a control API, one scheduler and backups, is in the
+[target design](docs/design.md).
+
 ## Quick start
 
 Needs Docker with Compose v2.
