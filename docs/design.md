@@ -160,16 +160,43 @@ use as a normal OpenAI-compatible endpoint.
 - **One model label.** Vectors are stored under a canonical name (`bge-m3`) whichever route produced
   them, with a table mapping that name to each provider's own (`baai/bge-m3`). Today, changing provider
   marks every vector stale, because the label is the provider's name.
-- **Model choice is open.** A comparison of hosted models and rerankers has not run yet. The current
-  model leaves little room in the top 6, but more in first place.
+- **Model: `bge-m3`.** See the comparison below. Cloud and local vectors have not yet been confirmed
+  interchangeable: the one attempt hit an overloaded provider, so check before relying on the fallback.
 
 If the embedder is down, search falls back to keyword and says so, as it does today.
 
-**Reranking** is an optional step after fusion, off by default until measured. On the labelled queries
-(42 here, skills and plugins only, full index) the right skill was first 28 times, in the top 3 35 times
-and in the top 6 39 times. So a reranker could only help ordering inside a list the agent already reads,
-and the agent is itself a good reranker of six short descriptions. It would have to earn its added
-latency and dependency.
+**Embedding models,** compared on 2026-11-05: 50 labelled queries against 1,050 records (the relevant ones
+plus random distractors, so scores run higher than on the full index). One query is 2 points.
+
+| Model | Dimensions | Cost per million tokens | First | Top 3 | Top 6 | MRR |
+| --- | --- | --- | --- | --- | --- | --- |
+| `bge-m3`, local | 1024 | Free locally, $0.01 hosted | 41 | 46 | 48 | 0.876 |
+| `qwen3-embedding-8b` | 4096 | $0.01 | 43 | 46 | 46 | 0.889 |
+| `voyage-4` | 1024 | $0.06 | 41 | 48 | 48 | 0.887 |
+| `pplx-embed-v1-4b` | 2560 | $0.03 | 40 | 47 | 49 | 0.877 |
+| `voyage-4-lite` | 1024 | $0.02 | 39 | 46 | 46 | 0.849 |
+| `text-embedding-3-small` | 1536 | $0.02 | 34 | 43 | 45 | 0.786 |
+| `cohere/embed-5-fast` | 2048 | $0.08 | 23 | 37 | 42 | 0.613 |
+
+These are vector-only scores. The top four are within noise of each other, so `bge-m3` stays: it runs both
+locally and hosted, is the smallest, and existing vectors carry over with no re-embedding. pgvector also
+cannot index more than 2,000 dimensions of `vector`, which larger models would run into at scale.
+
+**Reranking** is the step that pays. After fusion, the top 20 candidates go to a reranker with their
+names and descriptions, and it returns the final order. Measured on the full index (50 queries):
+
+| Step | First | Top 3 | Top 6 | MRR | Added time | Cost per search |
+| --- | --- | --- | --- | --- | --- | --- |
+| Fusion only | 34 | 43 | 47 | 0.782 | None | None |
+| **`cohere/rerank-5-fast`, descriptions** | 43 | 46 | 48 | 0.896 | About 480 ms | $0.00004 |
+| `cohere/rerank-5-fast`, with skill text | 39 | 47 | 48 | 0.864 | About 590 ms | $0.00016 |
+| `qwen3-reranker-8b`, descriptions | 40 | 46 | 47 | 0.863 | About 550 ms | $0.0007 |
+| `qwen3-reranker-8b`, with skill text | 38 | 47 | 47 | 0.850 | About 810 ms | $0.0018 |
+
+A far bigger gain than any embedding change, for about 4 cents per 1,000 searches. More text made it
+worse: descriptions are the right input. It is a setting (`RERANK_MODEL`), off by default so a fresh install
+needs no cloud account, and if it fails or times out, search returns the fused order. It sends the query
+and candidate descriptions to the provider, so a user who wants nothing to leave the host leaves it off.
 
 ## What the agent sees
 
@@ -236,9 +263,35 @@ user adds is touched by a migration. Marketplaces and namespaces are managed thr
 
 ## Secrets
 
-Canopy reads secrets from the environment. `secrets.env` is the default, and a provider setting lets
-`canopy run` and the stack fetch them from an external secrets manager at start, so that nothing is
-written to disk. CLIs in the `cli` container are logged in on the server, so clients hold no credentials.
+Canopy reads secrets from the environment, and `CANOPY_SECRETS` chooses how they get there: `env`, the
+default, reads `secrets.env`. `infisical` fetches them at start, so nothing is written to disk. `op`
+(1Password) works the same way. A provider is a small script that prints variables, so adding one
+needs no change to Canopy. CLIs in the `cli` container are logged in on the server, so clients hold no credentials.
+
+An optional `OPENROUTER_MANAGEMENT_KEY` lets the `manage` skill create and revoke scoped keys, so each
+purpose (embeddings, reranking) has its own key and spending limit.
+
+## Prior art
+
+Checked on 2026-11-05, so that we adopt what exists. No project combines a private, self-hosted,
+git-synced library at this scale with hybrid search, tools and a gateway.
+
+| Project | What it is | Why it does not replace Canopy |
+| --- | --- | --- |
+| [claude-skills-mcp](https://github.com/K-Dense-AI/claude-skills-mcp) | Vector search over skills, staged loading | No longer maintained |
+| [SkillsGate](https://github.com/skillsgate/skillsgate) | Public skill marketplace with semantic search | Installs public skills. Self-hosting not confirmed |
+| agentskills search server | Queries the public skills.sh registry | Public registry, and installs by hand |
+| Google ADK skill registry | `search_skills` and `load_skill` | Tied to ADK |
+| Obot, LiteLLM, Archestra | Gateways with a skill registry | No skill search at this scale |
+
+**Standards to adopt, not replace:**
+
+- The Agent Skills format, unchanged.
+- The MCP Skills extension ([SEP-2640](https://modelcontextprotocol.io/seps/2640-skills-extension)):
+  `skills/list`, `skills/get` and `skill://` resources. The catalogue should serve these, so any host that
+  supports the extension can read Canopy's skills. The extension has no search, which is what Canopy adds.
+- Tool discovery is increasingly handled by clients: Claude Code defers tool definitions behind its own
+  search. So the toolbox stays small and is not where effort goes. Skills are.
 
 ## Scheduler
 
@@ -353,11 +406,11 @@ Each step ends with a clean install on an empty machine, and the contract suite 
 1. **Done.** Folder layout, the `api` service, `/v1/status`, `canopy` CLI, `cli` image, gateway writes moved
    behind the API. `/admin` is still mounted read-only in the `backup` profile, until step 4.
 2. Contract suite in CI, with `compat.json`. Early, because every later step changes what it protects.
-3. Postgres with pgvector, roles, schemas and migrations, records and vectors moved there, embedder
+3. Postgres with pgvector, reranking step, roles, schemas and migrations, records and vectors moved there, embedder
    route, Ollama in `search`, weighted search, and a labelled query set as a regression check.
 4. Scheduler, then backup and restore as jobs.
 5. Storage profile, stage route and skill.
-6. The `canopy` plugin with its hook, manual and API reference.
+6. The `canopy` plugin with its hook, MCP Skills extension, manual and API reference.
 7. Dashboard.
 8. Memory.
 9. Cache, if measurement still supports it.
