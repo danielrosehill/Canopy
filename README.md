@@ -4,23 +4,32 @@
 
 **Your AI universe under one roof.**
 
-Self-hosted progressive discovery for AI agents, across skills and plugins as well as tools.
+Unified progressive discovery for tools, plugins and skills. Self-hosted, for AI agents.
 
 **Status: early. The core stack, control API, CLI, both pickers and the operations skills work. The
 rest of the [target design](docs/design.md) is not built yet.**
 
 ## Why
 
-Progressive discovery has been a thing for tools: an agent searches for a tool and loads only
-what it needs. Skills and plugins have become the more useful surface, and they are where the
-context problem has moved. Thousands of skills cannot all be installed or listed in a session.
+I create plugins and skills every day, a lot of them, and on purpose. Defining a repeatable workflow is
+immensely valuable, and it compounds: the more of them you have, the more you can do. Claude is very good at
+writing them, so the library grows fast.
 
-Canopy targets that. Skills stay out of the agent's context until needed: the agent searches a
-hybrid index and reads only what matches.
+That only works if discovery stays lean. Everything an agent can use has to be described to it, so a big library
+floods its context before any work starts. I hit this first with MCP tools, then again with skills.
 
-I looked for something off the shelf that did this and did not find it. There are good tools for MCP, but
-I found no real progressive discovery for skills, so Canopy joins existing pieces together. It is not offered
-as the best way to do this, just one way that works.
+The usual answer is project scope: decide that this repo needs tools A, B and C, and load only those. For a solo
+developer that is the wrong trade. I don't want to curate a list per repo. I might need any tool, anywhere.
+
+So the agent should start with almost nothing, search when it needs something, and load only what matches. That
+is progressive discovery. For MCP, aggregation layers already do much of this, and they are good. But as I moved
+from MCP towards skills, I found the blind spot: all the clever work in a tool like
+[MCPJungle](https://github.com/mcpjungle/MCPJungle) doesn't help when the thing you have thousands of is skills.
+
+I looked for something off the shelf that did this for skills and did not find it, so Canopy joins existing pieces
+together: MCPJungle for tools, and a hybrid search index over your plugin marketplaces for skills, behind one search.
+Tools, plugins and skills all stay out of the agent's context until it asks. It is not offered as the best way to do
+this, just one way that works.
 
 ![Sources feed a skills library and an MCP aggregator in Canopy, which serves thin clients: Claude Code, claude.ai, ChatGPT and your own agents](docs/brand/canopy-at-a-glance.png)
 
