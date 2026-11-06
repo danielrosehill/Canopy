@@ -126,7 +126,7 @@ GREEN: all tests OK, connection and retrieval working
 ```
 
 Validating and benchmarking are one skill, because a connection only counts when an agent can retrieve through
-it. Run it on each device you connect, and use it to measure any change to search: see
+it. Setup then offers a short CLAUDE.md snippet that reinforces searching first. Run validate on each device you connect, and use it to measure any change to search: see
 [the manual](docs/manual.md#validate-and-benchmark). A fresh server indexes only the Canopy plugins.
 
 ## Your own content

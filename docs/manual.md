@@ -21,7 +21,7 @@ in development mode). Then [validate it](#validate-and-benchmark), on every devi
 | Plugin | Where | Holds |
 | --- | --- | --- |
 | `canopy-connector` | User level, every device | The connection, the `find` and `validate` skills, `/skill` and the prompt hook |
-| `canopy-manager` | On the server | Setup, diagnosis, upstreams, marketplaces, sync, backup, staging, CLIs |
+| `canopy-manager` | On the server | Setup, diagnosis, upstreams, marketplaces, sync, backup, staging, CLIs, the CLAUDE.md snippet |
 
 On a client, add `canopy-manager` only while setting up, then remove it. Its skills stay findable by
 search, because the server indexes them like any others.
@@ -53,6 +53,12 @@ python3 plugins/canopy-connector/skills/validate/scripts/validate.py --queries q
 `queries.json` is a list of `{"q": "plain words", "relevant": ["skill:plugin/name"]}`. Tokens are characters / 4, an
 estimate that compares between runs. The tool list is reported as full schemas and as names only, because a client
 that defers schemas, as Claude Code does, loads little more than the names at the start of a session. The script needs only Python, so it also checks a server for other clients.
+
+## Reinforce it in CLAUDE.md
+
+The connector already tells an agent how to search. If you want that in `CLAUDE.md` too, which an agent reads first,
+the `claude-md-snippet` skill in `canopy-manager` shows a short recommended block and adds it if you agree. It costs
+about 140 tokens per session, sits between markers, and can be updated or removed. Setup offers it.
 
 ## How finding skills works
 

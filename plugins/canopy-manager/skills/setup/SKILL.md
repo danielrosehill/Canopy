@@ -39,6 +39,8 @@ Needs Docker with Compose v2.
    skill. It checks the connection and `catalogue__health`, finds and loads a real tool and skill, and reports the
    latency and tokens. Expect `GREEN`. Give the user that report. On `RED`, use the `diagnose` skill.
 
+5. Offer the CLAUDE.md snippet with the `claude-md-snippet` skill. It is optional, so write nothing without a yes.
+
 The user's own content goes in `~/canopy/agent-data`, through the `manage-marketplaces` and
 `manage-upstreams` skills. Settings and secrets go in `secrets.env` there.
 
