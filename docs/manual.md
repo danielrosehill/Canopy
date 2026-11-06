@@ -51,7 +51,8 @@ python3 plugins/canopy-connector/skills/validate/scripts/validate.py --queries q
 ```
 
 `queries.json` is a list of `{"q": "plain words", "relevant": ["skill:plugin/name"]}`. Tokens are characters / 4, an
-estimate that compares between runs. The script needs only Python, so it also checks a server for other clients.
+estimate that compares between runs. The tool list is reported as full schemas and as names only, because a client
+that defers schemas, as Claude Code does, loads little more than the names at the start of a session. The script needs only Python, so it also checks a server for other clients.
 
 ## How finding skills works
 

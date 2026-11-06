@@ -13,7 +13,9 @@ Skills to find are sampled from the server's own catalogue, so this works on any
 skill's description, which makes it an easy test: it proves retrieval works, not that real phrasings find the right
 skill. For that, pass --queries with a JSON list of {"q": "plain words", "relevant": ["skill:plugin/name", ...]}.
 
-Tokens are characters / 4: an estimate, the same on every run, so runs compare with each other.
+Tokens are characters / 4: an estimate, the same on every run, so runs compare with each other. The tool list is
+reported twice, because what a session pays depends on the client: one that defers schemas loads the names, and one
+that does not loads every schema.
 """
 from __future__ import annotations
 
@@ -122,7 +124,7 @@ def probe(client: Client, case: dict, limit: int | None) -> dict:
     return row
 
 
-def summarise(rows: list[dict], listing_tokens: int) -> dict:
+def summarise(rows: list[dict], listing_tokens: int, names_tokens: int = 0) -> dict:
     found = [row for row in rows if row["rank"]]
     return {"probes": len(rows), "found": len(found), "first": sum(row["rank"] == 1 for row in rows),
             "mrr": round(sum(1 / row["rank"] for row in found) / len(rows), 3) if rows else None,
@@ -132,7 +134,7 @@ def summarise(rows: list[dict], listing_tokens: int) -> dict:
             "reply_tokens_p50": statistics.median(row["reply_tokens"] for row in rows) if rows else None,
             "search_plus_read_tokens_p50":
                 statistics.median(row["reply_tokens"] + row["read_tokens"] for row in found) if found else None,
-            "tool_list_tokens": listing_tokens}
+            "tool_list_tokens": listing_tokens, "tool_names_tokens": names_tokens}
 
 
 def compare(before: dict, after: dict) -> list[str]:
@@ -172,7 +174,7 @@ def main() -> int:
     failures: list[str] = []
     times: list[int] = []
     rows: list[dict] = []
-    listing_tokens = 0
+    listing_tokens = names_tokens = 0
     try:
         _, ms = timed(connect, client)
         times.append(ms)
@@ -181,9 +183,10 @@ def main() -> int:
         times.append(ms)
         names = {tool["name"] for tool in listing["tools"]}
         listing_tokens = tokens(json.dumps(listing["tools"]))
+        names_tokens = tokens(" ".join(names))
         missing = [name for name in ALWAYS if name not in names]
         failures += missing
-        print(f'{"FAIL" if missing else "ok  "}  list tools ({len(names)}, ~{listing_tokens} tokens)  {ms} ms'
+        print(f'{"FAIL" if missing else "ok  "}  list tools ({len(names)}, schemas ~{listing_tokens} tokens, names ~{names_tokens})  {ms} ms'
               + (f'  missing: {", ".join(missing)}' if missing else ""))
         for tool in filter(None, args.expect.split(",")):
             hit, ms = timed(found_by_search, client, tool)
@@ -205,7 +208,7 @@ def main() -> int:
         failures.append(str(e))
         print(f"FAIL  {type(e).__name__}: {e}")
 
-    summary = summarise(rows, listing_tokens)
+    summary = summarise(rows, listing_tokens, names_tokens)
     if rows:
         print(f'retrieval  {summary["found"]}/{summary["probes"]} found, {summary["first"]} first, '
               f'median search {summary["search_ms_p50"]} ms, median find and load ~{summary["search_plus_read_tokens_p50"]} tokens')

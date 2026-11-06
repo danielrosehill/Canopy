@@ -118,7 +118,7 @@ An example, shortened, with illustrative timings:
 
 ```
 ok    reach the gateway  36 ms
-ok    list tools (12, ~2000 tokens)  25 ms
+ok    list tools (12, schemas ~2000 tokens, names ~60)  25 ms
 ok    tool:catalogue__health  rank 1  886 ms  ~368 + ~143 tokens
 ok    skill:canopy-manager/setup  rank 1  548 ms  ~283 + ~400 tokens
 retrieval  6/6 found, 6 first, median search 686 ms, median find and load ~700 tokens

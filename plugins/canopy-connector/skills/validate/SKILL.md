@@ -18,7 +18,7 @@ retrieval works and you can say what it cost.
 4. Report in a few lines, leading with the script's last line: `GREEN`, `AMBER` or `RED`. Then what you searched
    for, what you found and at what rank, the latency, and the tokens for the search and the load. For example:
    "GREEN. Searched 'resize a batch of photos', found `skill:images/resize` first, 240 ms, about 180 tokens to find
-   and 420 to load. The tool list costs about 2,000 per session."
+   and 420 to load. The tool list costs about 2,000 per session with full schemas, far less on a client that defers them."
 
 On `RED`, say which step failed. If the script passes and this session has no tools, reconnect the server with `/mcp`.
 `AMBER` on a missed probe means search is working but ranked that skill low or not at all: name the skill.
