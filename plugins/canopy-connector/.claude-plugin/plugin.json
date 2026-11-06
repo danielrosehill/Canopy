@@ -1,6 +1,6 @@
 {
   "name": "canopy-connector",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Connect to your Canopy server, find skills on it, and validate and benchmark the connection. The only Canopy plugin to install at user level.",
   "author": { "name": "Daniel Rosehill" },
   "license": "MIT",
