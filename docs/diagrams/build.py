@@ -98,7 +98,7 @@ def stack_links():
 
 
 def clients(with_home_device=False):
-    own = [n("cc", "Claude Code", "canopy-connector plugin:<br/>one connection, find, test, /skill"),
+    own = [n("cc", "Claude Code", "canopy-connector plugin:<br/>one connection, find, validate, /skill"),
            n("pick", "canopy-pick", "terminal skill picker"),
            n("webui", "Open WebUI, LibreChat", "self-run clients, bearer token")]
     if with_home_device:

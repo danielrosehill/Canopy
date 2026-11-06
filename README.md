@@ -89,15 +89,36 @@ clients/canopy status
 
 Link `clients/canopy` into your `PATH` to drop the prefix.
 
-Connect Claude Code:
+Connect Claude Code with the connector plugin. Set these before you start the session:
 
 ```bash
-TOKEN=$(clients/canopy token)
-claude mcp add --transport http canopy http://127.0.0.1:8080/v0/groups/core/mcp \
-  --header "Authorization: Bearer $TOKEN"
+export CANOPY_MCP_URL=http://127.0.0.1:8080/v0/groups/core/mcp
+export CANOPY_TOKEN=$(clients/canopy token)
 ```
 
-Then ask your agent to search for a skill. A fresh server indexes only the Canopy plugins.
+```
+/plugin marketplace add danielrosehill/Canopy
+/plugin install canopy-connector@canopy
+```
+
+### Validate it
+
+**Don't skip this step.** In a new session, ask your agent to validate Canopy, or run `/canopy-connector:validate`.
+The agent checks the connection, then finds and loads a real tool and real skills, and reports what it cost.
+An example, shortened, with illustrative timings:
+
+```
+ok    reach the gateway  36 ms
+ok    list tools (12, ~2000 tokens)  25 ms
+ok    tool:catalogue__health  rank 1  886 ms  ~368 + ~143 tokens
+ok    skill:canopy-manager/setup  rank 1  548 ms  ~283 + ~400 tokens
+retrieval  6/6 found, 6 first, median search 686 ms, median find and load ~700 tokens
+GREEN: all tests OK, connection and retrieval working
+```
+
+Validating and benchmarking are one skill, because a connection only counts when an agent can retrieve through
+it. Run it on each device you connect, and use it to measure any change to search: see
+[the manual](docs/manual.md#validate-and-benchmark). A fresh server indexes only the Canopy plugins.
 
 ## Your own content
 

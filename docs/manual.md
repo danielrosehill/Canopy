@@ -14,17 +14,44 @@ device:
 ```
 
 Set `CANOPY_MCP_URL` to your server's MCP address, and `CANOPY_TOKEN` to your client token (not needed
-in development mode). Start a session and ask for a skill to check it works.
+in development mode). Then [validate it](#validate-and-benchmark), on every device you connect.
 
 **Two plugins, on purpose.** Whatever is installed at user level costs context in every session.
 
 | Plugin | Where | Holds |
 | --- | --- | --- |
-| `canopy-connector` | User level, every device | The connection, the `find` and `test` skills, `/skill` and the prompt hook |
+| `canopy-connector` | User level, every device | The connection, the `find` and `validate` skills, `/skill` and the prompt hook |
 | `canopy-manager` | On the server | Setup, diagnosis, upstreams, marketplaces, sync, backup, staging, CLIs |
 
 On a client, add `canopy-manager` only while setting up, then remove it. Its skills stay findable by
 search, because the server indexes them like any others.
+
+## Validate and benchmark
+
+Ask your agent to validate Canopy, or run `/canopy-connector:validate`. It is one skill because the two questions
+are one: a connection only counts if an agent can retrieve through it, and retrieving tells you what it costs.
+
+It reaches the gateway, lists its tools, then searches for and loads one tool and five skills sampled from your
+own catalogue. The agent then does the same from its session, in its own words. You get the verdict, what it found,
+how fast, and how many tokens.
+
+| Verdict | Meaning |
+| --- | --- |
+| `GREEN` | Connected, and every probe was found |
+| `AMBER` | Connected, but a probe missed, search fell back to keywords, or a step took over 2 seconds |
+| `RED` | Unreachable, a core tool is missing, or the catalogue holds no skills |
+
+The sampled probes take their words from each skill's description, so they prove retrieval works, not that it copes
+with how you phrase things. To measure that, or to judge a change to search, ranking or descriptions, keep a file of
+real phrasings and compare runs:
+
+```bash
+python3 plugins/canopy-connector/skills/validate/scripts/validate.py --queries queries.json --save before.json
+python3 plugins/canopy-connector/skills/validate/scripts/validate.py --queries queries.json --compare before.json
+```
+
+`queries.json` is a list of `{"q": "plain words", "relevant": ["skill:plugin/name"]}`. Tokens are characters / 4, an
+estimate that compares between runs. The script needs only Python, so it also checks a server for other clients.
 
 ## How finding skills works
 

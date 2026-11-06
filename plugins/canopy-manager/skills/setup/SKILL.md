@@ -21,15 +21,23 @@ Needs Docker with Compose v2.
    clients/canopy status
    ```
 
-3. Get the agent token, and connect Claude Code:
+3. Connect Claude Code. Have the user set these where their shell will keep them:
 
    ```bash
-   TOKEN=$(clients/canopy token)
-   claude mcp add --transport http canopy http://127.0.0.1:8080/v0/groups/core/mcp \
-     --header "Authorization: Bearer $TOKEN"
+   export CANOPY_MCP_URL=http://127.0.0.1:8080/v0/groups/core/mcp
+   export CANOPY_TOKEN=$(clients/canopy token)
    ```
 
-4. In a new session, call `catalogue__health`. Expect `ok: true` and a `skill` count above zero.
+   Then install the connector:
+
+   ```
+   /plugin marketplace add danielrosehill/Canopy
+   /plugin install canopy-connector@canopy
+   ```
+
+4. **Validate, always.** Setup is not finished until this passes. In a new session, run the connector's `validate`
+   skill. It checks the connection and `catalogue__health`, finds and loads a real tool and skill, and reports the
+   latency and tokens. Expect `GREEN`. Give the user that report. On `RED`, use the `diagnose` skill.
 
 The user's own content goes in `~/canopy/agent-data`, through the `manage-marketplaces` and
 `manage-upstreams` skills. Settings and secrets go in `secrets.env` there.
