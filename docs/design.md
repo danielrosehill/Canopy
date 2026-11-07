@@ -462,6 +462,10 @@ MCPJungle is the piece we do not control. Canopy depends on specific behaviour o
    comparison, and restore on failure. MCPJungle migrates its database on start, so rollback means
    restoring the dump, not only changing the tag.
 
+As built, a backup runs only when there is a new version to move to, and only `backup-data`, since the restart
+would cut off a `restore-test`. A failed update goes back to the old images and prints the restore command rather
+than running it, because that would discard whatever was written since. The search comparison is not built.
+
 Canopy ships no Watchtower: the original is archived, and an auto-updater would skip step 3.
 
 ## CLI container

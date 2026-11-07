@@ -195,6 +195,38 @@ class Backups:
                                *map(str, paths))
         return done.stdout.strip()[-400:]
 
+    # --- what the API shows ----------------------------------------------------------
+
+    def describe(self) -> dict:
+        """The target, which holds no secrets. Raises if there is none."""
+        t = target(self.config)
+        return {"repository": t["repository"], "region": t.get("region"),
+                "keep": {"daily": 14, "weekly": 8, **t.get("keep", {})},
+                "password_set": bool(os.environ.get("RESTIC_PASSWORD"))}
+
+    def snapshots(self) -> list[dict]:
+        """Newest first. A target nothing has been written to yet has no repository, and no snapshots."""
+        done = self.restic("snapshots", "--json", ok=(0, NO_REPOSITORY))
+        if done.returncode == NO_REPOSITORY:
+            return []
+        found = [{"id": s.get("short_id"), "time": s["time"], "tags": s.get("tags", []), "paths": s.get("paths", []),
+                  "bytes": (s.get("summary") or {}).get("total_bytes_processed")}
+                 for s in json.loads(done.stdout or "[]")]
+        return sorted(found, key=lambda s: s["time"], reverse=True)
+
+    def plan(self) -> dict:
+        """What `canopy restore` would bring back, and what it would overwrite. It changes nothing:
+        a restore stops the stack, so the API cannot run one."""
+        found = self.snapshots()
+        data = next((s for s in found if "data" in s["tags"]), None)
+        if data is None:
+            raise BackupError("no `data` snapshot to restore")
+        return {"data": data, "config": next((s for s in found if "config" in s["tags"]), None),
+                "replaces": [*(f"database {n}" for n in OWNERS), *map(str, self.state),
+                             str(self.agent_data / "secrets.env"), str(self.config)],
+                "rebuilds": ["catalogue clones", "Ollama models"],
+                "command": "canopy restore --replace", "stops_the_stack": True}
+
     def snapshot_exists(self, tag: str) -> bool:
         return bool(json.loads(self.restic("snapshots", "--tag", tag, "--latest", "1", "--json").stdout or "[]"))
 

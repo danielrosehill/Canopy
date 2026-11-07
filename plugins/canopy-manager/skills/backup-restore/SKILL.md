@@ -22,6 +22,11 @@ canopy jobs run backup-data       # restore-test follows it
 canopy jobs runs restore-test     # a backup is not trusted until this passed
 ```
 
+`canopy backups` lists the snapshots, and `canopy backup` starts one and waits for it, with no `restore-test` after.
+`canopy status` reports the age of the last backup under `jobs`.
+
+Before a restore, run `canopy backup-plan` and show the user what it would overwrite. It changes nothing.
+
 To restore, confirm with the user first, because this stops the stack. On a clean install, run `canopy init`,
 then put `backup.json` and the three secrets in place.
 

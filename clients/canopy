@@ -4,7 +4,7 @@
     canopy init                     make the folders and default config
     canopy up [compose args]        start the stack and wait for the seed
     canopy down [compose args]      stop it. Data stays in the folders
-    canopy update                   move to the newest release of CANOPY_TAG, and go back if unhealthy
+    canopy update [--no-backup]     back up, move to the newest release of CANOPY_TAG, and go back if unhealthy
     canopy status                   health of every component
     canopy servers | groups | tools list what the gateway has
     canopy add-server FILE [--replace]    FILE is JSON, or - for stdin
@@ -34,6 +34,9 @@
     canopy run CMD [ARGS...]        run a command in the cli container
     canopy clis ACTION [NAME...]    tools in the cli container: list, choose, add, remove, install, logins, check, all
     canopy compose [ARGS...]        docker compose, with Canopy's files
+    canopy backup                   start a backup now, and wait for it
+    canopy backups                  the snapshots at the target
+    canopy backup-plan              what a restore would bring back and overwrite
     canopy restore [--replace]      bring back the latest backup, stopping the stack to do it
 
     CANOPY_AGENT_DATA   default ~/canopy/agent-data
@@ -58,6 +61,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 IN_CLI = os.environ.get("CANOPY_IN_CLI") == "1"
 AGENT_FOLDERS = ("config", "skills", "notes", "cli")
+BACKUP_WAIT = 4 * 3600   # as BACKUP_TIMEOUT_SEC
 DATA_FOLDERS = ("api", "admin", "tokens", "postgres", "catalogue", "backups", "storage", "storage-secrets")
 
 
@@ -178,9 +182,40 @@ def healthy(tries: int = 60, wait: float = 5) -> bool:
     return False
 
 
-def update() -> int:
+def backup_now(wait: float = BACKUP_WAIT, poll: float = 5) -> bool | None:
+    """True once a backup has finished, None with no target to back up to, False if it failed."""
+    code, reply = call("GET", "/v1/backup/config", timeout=10)
+    if code == 409:
+        return None
+    if code >= 400:
+        print(f"cannot read the backup target: {reply.get('error', code)}", file=sys.stderr)
+        return False
+
+    def runs() -> list[dict]:
+        code, reply = call("GET", "/v1/jobs/backup-data/runs", timeout=10)
+        return reply if code < 400 else []
+
+    seen = max((r["id"] for r in runs() if r["finished"]), default=0)   # a run in progress counts as new
+    code, reply = call("POST", "/v1/backup", timeout=10)
+    if code >= 400:
+        print(f"cannot start a backup: {reply.get('error', code)}", file=sys.stderr)
+        return False
+    deadline = time.time() + wait
+    while time.time() < deadline:
+        done = [r for r in runs() if r["id"] > seen and r["finished"]]
+        if done:
+            if not done[0]["ok"]:
+                print(f"the backup failed: {done[0]['output'][:500]}", file=sys.stderr)
+            return bool(done[0]["ok"])
+        time.sleep(poll)
+    print(f"no backup finished within {wait:.0f} s", file=sys.stderr)
+    return False
+
+
+def update(args: list[str] | tuple = ()) -> int:
     """Pull first, so the only downtime is the swap, and go back if the new version is unhealthy.
-    Going back restores the images and compose.yaml. It cannot undo a database migration."""
+    Going back restores the images and compose.yaml. It cannot undo a database migration, so a backup
+    runs first, once there is a new version to move to. The backup of a stack that is down is skipped."""
     if IN_CLI:
         sys.exit("run `canopy update` on the host, not in the cli container")
     before = canopy_images()
@@ -205,6 +240,15 @@ def update() -> int:
     if canopy_images() == before and new_head == head:
         print(f"already up to date on {tag}")
         return 0
+    backed_up = None
+    if "--no-backup" not in args and was_healthy:
+        backed_up = backup_now()
+        if backed_up is False:
+            if head:
+                git("checkout", "-q", "--detach", head)
+            print("the stack was not touched. `canopy update --no-backup` goes ahead without one", file=sys.stderr)
+            return 1
+        print("backed up" if backed_up else "no backup target, so going ahead without a backup")
     if up([]) == 0 and healthy():
         print(f"updated on {tag}" + (f" at {new_head[:12]}" if new_head else ""))
         return 0
@@ -220,6 +264,9 @@ def update() -> int:
     up([])
     print("went back to the previous version" if healthy() else "STILL NOT HEALTHY: see `canopy status`",
           file=sys.stderr)
+    if backed_up:
+        print("if the new version migrated the database, `canopy restore --replace` brings back the backup "
+              "taken just now", file=sys.stderr)
     return 1
 
 
@@ -317,7 +364,7 @@ def main() -> int:
     if cmd == "up":
         return up(args)
     if cmd == "update":
-        return update()
+        return update(args)
     if cmd == "down":
         return compose("down", *args)
     if cmd == "compose":
@@ -349,6 +396,15 @@ def main() -> int:
             return show("POST", f"/v1/jobs/{args[1]}/run")
         if args[0] == "runs" and len(args) == 2:
             return show("GET", f"/v1/jobs/{args[1]}/runs")
+    if cmd == "backup":
+        done = backup_now()
+        if done is None:
+            sys.exit("no backup target: see the backup-restore skill")
+        return 0 if done else 1
+    if cmd == "backups":
+        return show("GET", "/v1/backup")
+    if cmd == "backup-plan":
+        return show("GET", "/v1/backup/plan")
     if cmd == "restore":
         return restore(args)
     if cmd == "stage" and args:

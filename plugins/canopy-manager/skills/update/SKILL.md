@@ -22,8 +22,9 @@ Run these on the host, from the Canopy checkout.
    | --- | --- |
    | `updated on v1 at <commit>` | Done. Run the connector's `validate` skill. |
    | `already up to date` | Nothing changed. |
-   | `went back to the previous version` | The new version was unhealthy, and the old one is running. Use `diagnose`, with `canopy compose logs --tail 50`. |
-   | `not touched` | A pull or fetch failed: check the network and retry. |
+   | `went back to the previous version` | The new version was unhealthy, and the old one is running. Use `diagnose`, with `canopy compose logs --tail 50`. If it says the database may have migrated and the old version misbehaves, offer `canopy restore --replace`, which loses anything written since the backup. |
+   | `not touched` | A pull, fetch or the backup before the update failed. The lines above say which. Fix it and retry. Going ahead with `--no-backup` needs the user's yes: nothing could then undo a database migration. |
+   | `no backup target` | It went ahead without a backup, and continues below. |
    | `has local changes` | Someone edited the checkout. Move that work to agent-data (`docs/customising.md`), then run it again. |
    | `STILL NOT HEALTHY` | Going back did not help. Use `diagnose`, and read `canopy status`. |
 

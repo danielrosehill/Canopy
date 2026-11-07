@@ -114,8 +114,9 @@ class Scheduler:
                     out.append(j.name)
         return out
 
-    def run(self, name: str) -> dict:
-        """Run one job now, then what follows it. `started` is False if it was already running."""
+    def run(self, name: str, follow: bool = True) -> dict:
+        """Run one job now, then what follows it unless `follow` is off. `started` is False if it was
+        already running."""
         job = self.jobs().get(name)
         if job is None or name not in self.actions:
             raise KeyError(name)
@@ -132,7 +133,7 @@ class Scheduler:
         self.db.execute("UPDATE system.job_runs SET finished = now(), ok = %s, output = %s WHERE id = %s",
                         (ok, output[:OUTPUT_CAP], row["id"]))
         result = {"job": name, "started": True, "ok": ok, "output": output[:OUTPUT_CAP]}
-        if ok:
+        if ok and follow:
             followers = [j.name for j in self.jobs().values()
                          if j.after == name and j.enabled and j.name in self.actions]
             if followers:

@@ -41,3 +41,7 @@ Every route except `/health` needs `Authorization: Bearer <token>`, from
 | `GET` | `/v1/jobs` | Scheduled jobs and their last runs. |
 | `GET` | `/v1/jobs/{name}/runs` | Recent runs of a job. |
 | `POST` | `/v1/jobs/{name}/run` | Start a job in the background. Poll its runs for the result. |
+| `GET` | `/v1/backup` | Snapshots at the backup target, newest first. |
+| `POST` | `/v1/backup` | Start `backup-data` alone, with no `restore-test` after it. Poll `/v1/jobs/backup-data/runs`. A 409 if no target is set. |
+| `GET` | `/v1/backup/config` | The backup target, which holds no secrets, and whether `RESTIC_PASSWORD` is set. A 409 if no target is set. |
+| `GET` | `/v1/backup/plan` | What `canopy restore` would bring back and overwrite. Changes nothing: a restore stops the stack, so it runs from the host. |

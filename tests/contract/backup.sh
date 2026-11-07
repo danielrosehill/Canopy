@@ -119,6 +119,36 @@ job_ok backup-data "$mark"
 job_ok restore-test "$mark"
 
 say "The test can fail: wrong row counts on a real restore"
+say "the management routes on the real stack"
+canopy validate >/dev/null
+canopy diff | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+assert d['ok'] and not d['register'] and not d['remove'] and not d['rebuild_groups'], d"
+canopy marketplaces >/dev/null
+canopy embed >/dev/null
+canopy sync >/dev/null
+canopy refresh toolbox | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+assert d['refreshed'] == 'toolbox' and d['tools'] > 0 and not d['removed'], d"
+canopy backups | python3 -c "
+import json, sys
+assert any('data' in s['tags'] for s in json.load(sys.stdin))"
+canopy backup-plan | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+assert d['data'] and d['command'] == 'canopy restore --replace', d"
+canopy compose exec -T api python - <<'PY'
+from canopy import gateway as gw
+names = {t["name"] for t in gw.McpClient(f"{gw.GATEWAY_URL}/v0/groups/core/mcp", timeout=20).tools()}
+assert len(names) == 10 and not names & set(gw.ADMIN_TOOLS), sorted(names)
+PY
+canopy status | python3 -c "
+import json, sys
+d = json.load(sys.stdin)['components']['jobs']
+assert d['ok'] and d['backup']['state'] == 'on' and d['backup']['last_ok_hours'] is not None, d"
+
 canopy compose exec -T api python - <<'PY'
 from pathlib import Path
 from canopy.backup import Backups, BackupError

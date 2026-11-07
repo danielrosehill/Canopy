@@ -122,3 +122,17 @@ def test_sync_takes_an_empty_body(client, monkeypatch):
     r = client.post("/v1/catalogue/sync", headers=AUTH)
     assert r.status_code == 202 and r.json() == {"doc": {}}
 
+
+def test_backup_with_no_target_is_a_409_and_starts_nothing(tmp_path):
+    from canopy.backup import Backups
+    from canopy.scheduler import Scheduler
+    c = TestClient(api.create_app(Stub(), "right", scheduler=Scheduler(None, {}, tmp_path),
+                                  backups=Backups(None, config=tmp_path)), raise_server_exceptions=False)
+    r = c.post("/v1/backup", headers=AUTH)
+    assert r.status_code == 409 and "no backup target" in r.json()["error"]
+    assert c.get("/v1/backup/config", headers=AUTH).status_code == 409
+
+
+def test_backup_says_so_when_it_is_not_set_up(client):
+    assert client.get("/v1/backup", headers=AUTH).status_code == 503
+

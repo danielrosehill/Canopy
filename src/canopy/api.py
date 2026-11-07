@@ -22,7 +22,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from . import scheduler as sched
-from .backup import Backups
+from .backup import BackupError, Backups
 from . import store
 from .control import Control, ControlError, write_secret
 from .embedder import Embedder, EmbedError
@@ -60,7 +60,8 @@ class RequireToken(BaseHTTPMiddleware):
 
 
 def create_app(control: Control, token: str, embedder: Embedder | None = None,
-               scheduler: sched.Scheduler | None = None, storage: Storage | None = None) -> Starlette:
+               scheduler: sched.Scheduler | None = None, storage: Storage | None = None,
+               backups: Backups | None = None) -> Starlette:
     embedder = embedder or Embedder(primary="", fallback="")
 
     def need_storage() -> Storage:
@@ -100,13 +101,35 @@ def create_app(control: Control, token: str, embedder: Embedder | None = None,
     async def job_runs(request: Request) -> JSONResponse:
         return await run(request, need_scheduler().runs, request.path_params["name"])
 
-    async def run_job(request: Request) -> JSONResponse:
-        """Starts the job and returns: a sync can take minutes. Poll /v1/jobs/{name}/runs."""
-        name, s = request.path_params["name"], need_scheduler()
+    def start_job(name: str, follow: bool = True) -> JSONResponse:
+        s = need_scheduler()
         if name not in s.actions or name not in s.jobs():
             raise ControlError(404, f"no such job: {name}")
-        threading.Thread(target=s.run, args=(name,), daemon=True).start()
+        threading.Thread(target=s.run, args=(name, follow), daemon=True).start()
         return JSONResponse({"job": name, "requested": True}, status_code=202)
+
+    async def run_job(request: Request) -> JSONResponse:
+        """Starts the job and returns: a sync can take minutes. Poll /v1/jobs/{name}/runs."""
+        return start_job(request.path_params["name"])
+
+    def need_backups() -> Backups:
+        if backups is None:
+            raise ControlError(503, "backups are not set up")
+        return backups
+
+    async def list_backups(request: Request) -> JSONResponse:
+        return await run(request, need_backups().snapshots)
+
+    async def backup_config(request: Request) -> JSONResponse:
+        return await run(request, need_backups().describe)
+
+    async def backup_plan(request: Request) -> JSONResponse:
+        return await run(request, need_backups().plan)
+
+    async def run_backup(request: Request) -> JSONResponse:
+        """`backup-data` alone. `canopy update` restarts the stack next, which would cut off a restore-test."""
+        need_backups().describe()
+        return start_job("backup-data", follow=False)
 
     async def body(request: Request) -> dict:
         try:
@@ -232,6 +255,9 @@ def create_app(control: Control, token: str, embedder: Embedder | None = None,
     async def control_error(_: Request, e: ControlError) -> JSONResponse:
         return JSONResponse({"error": str(e)}, status_code=e.status)
 
+    async def backup_error(_: Request, e: BackupError) -> JSONResponse:
+        return JSONResponse({"error": str(e)}, status_code=409)
+
     async def gateway_error(_: Request, e: httpx.HTTPError) -> JSONResponse:
         return JSONResponse({"error": f"gateway: {e}"}, status_code=502)
 
@@ -270,7 +296,11 @@ def create_app(control: Control, token: str, embedder: Embedder | None = None,
         Route("/v1/jobs", list_jobs),
         Route("/v1/jobs/{name}/runs", job_runs),
         Route("/v1/jobs/{name}/run", run_job, methods=["POST"]),
-    ], exception_handlers={ControlError: control_error, httpx.HTTPError: gateway_error},
+        Route("/v1/backup", list_backups),
+        Route("/v1/backup", run_backup, methods=["POST"]),
+        Route("/v1/backup/config", backup_config),
+        Route("/v1/backup/plan", backup_plan),
+    ], exception_handlers={ControlError: control_error, BackupError: backup_error, httpx.HTTPError: gateway_error},
        middleware=[Middleware(RequireToken, token=token)])
 
 
@@ -285,15 +315,16 @@ def model_lookup(db: store.Db):
 def main() -> None:
     store.migrate()
     db, control, storage = store.Db(), Control(), Storage()
+    backups = Backups(db)
     storage.prepare()
     control.extra_checks["storage"] = storage.check
     jobs = sched.CatalogueJobs(db, control._tool_text)
     scheduler = sched.Scheduler(db, {"sync": jobs.sync, "sync-recent": jobs.sync_recent, "embed": jobs.embed, "health": control.health_job,
                                      "tool-refresh": control.refresh_job,
-                                     **Backups(db).actions(), **storage.actions()})
+                                     **backups.actions(), **storage.actions()})
     control.extra_checks["jobs"] = scheduler.check
     threading.Thread(target=scheduler.loop, daemon=True).start()
-    app = create_app(control, load_token(), Embedder(provider_model=model_lookup(db)), scheduler, storage)
+    app = create_app(control, load_token(), Embedder(provider_model=model_lookup(db)), scheduler, storage, backups)
     uvicorn.run(app, host=os.environ.get("CANOPY_API_HOST", "0.0.0.0"), port=PORT, log_level="warning")
 
 

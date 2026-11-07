@@ -33,7 +33,9 @@ canopy update
 ```
 
 This moves to the newest release your `CANOPY_TAG` allows, and goes back to the previous images if the new
-ones come up unhealthy. Your folder and data are not touched. Tags and how it works:
+ones come up unhealthy. If a backup target is set and there is something new, it backs up first, and stops if that
+fails: going back cannot undo a database migration, but `canopy restore --replace` can, from that backup.
+`--no-backup` skips it. Your folder and data are not touched. Tags and how it works:
 [Updating](customising.md#updating). Keep your own changes in the agent-data folder, because `update` stops if
 the checkout has local edits.
 

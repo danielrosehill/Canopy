@@ -86,3 +86,49 @@ def test_backups_wait_for_a_target(tmp_path):
     jobs = {j.name: j for j in s.load(tmp_path)}
     assert jobs["backup-data"].every == 86400 and jobs["backup-config"].every == 3600
     assert jobs["restore-test"].after == "backup-data" and jobs["restore-test"].enabled
+
+
+# --- what the API shows ------------------------------------------------------------------
+
+def shown(tmp_path, stdout, code=0):
+    (tmp_path / "backup.json").write_text(json.dumps({"repository": "s3:x", "keep": {"daily": 3}}))
+    return b.Backups(None, config=tmp_path, backups=tmp_path, agent_data=tmp_path,
+                     run=lambda cmd, **kw: subprocess.CompletedProcess(cmd, code, stdout, ""))
+
+
+SNAPSHOTS = json.dumps([
+    {"short_id": "a", "time": "2026-11-01T00:00:00Z", "tags": ["data"], "paths": ["/api"]},
+    {"short_id": "b", "time": "2026-11-02T00:00:00Z", "tags": ["config"], "paths": ["/c"],
+     "summary": {"total_bytes_processed": 5}}])
+
+
+def test_snapshots_are_newest_first(tmp_path, monkeypatch):
+    monkeypatch.setenv("RESTIC_PASSWORD", "x")
+    found = shown(tmp_path, SNAPSHOTS).snapshots()
+    assert [s["id"] for s in found] == ["b", "a"] and found[0]["bytes"] == 5
+
+
+def test_a_target_never_written_to_has_no_snapshots(tmp_path, monkeypatch):
+    monkeypatch.setenv("RESTIC_PASSWORD", "x")
+    assert shown(tmp_path, "", code=10).snapshots() == []
+
+
+def test_the_plan_names_what_a_restore_overwrites(tmp_path, monkeypatch):
+    monkeypatch.setenv("RESTIC_PASSWORD", "x")
+    plan = shown(tmp_path, SNAPSHOTS).plan()
+    assert plan["data"]["id"] == "a" and plan["config"]["id"] == "b"
+    assert "database canopy" in plan["replaces"] and plan["command"] == "canopy restore --replace"
+
+
+def test_a_plan_with_nothing_to_restore_says_so(tmp_path, monkeypatch):
+    monkeypatch.setenv("RESTIC_PASSWORD", "x")
+    with pytest.raises(b.BackupError, match="no `data` snapshot"):
+        shown(tmp_path, "[]").plan()
+
+
+def test_the_target_is_described_with_no_secrets(tmp_path, monkeypatch):
+    monkeypatch.setenv("RESTIC_PASSWORD", "topsecret")
+    out = shown(tmp_path, "").describe()
+    assert out["password_set"] is True and out["keep"] == {"daily": 3, "weekly": 8}
+    assert "topsecret" not in json.dumps(out)
+

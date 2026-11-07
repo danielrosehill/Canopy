@@ -227,3 +227,11 @@ def test_backup_age_is_reported(tmp_path):
 def test_a_stack_with_no_backup_target_says_so(tmp_path):
     assert make(tmp_path, {"a": lambda: "ok"}).check()["backup"] == {"state": "off"}
 
+
+def test_a_job_can_run_without_what_follows_it(tmp_path):
+    ran = []
+    sch = make(tmp_path, {"a": lambda: "ok", "b": lambda: ran.append("b")},
+               [{"name": "a", "every": "1h"}, {"name": "b", "after": "a"}])
+    sch.run("a", follow=False)
+    assert ran == []
+
