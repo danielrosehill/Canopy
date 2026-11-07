@@ -143,7 +143,8 @@ from canopy import gateway as gw
 names = {t["name"] for t in gw.McpClient(f"{gw.GATEWAY_URL}/v0/groups/core/mcp", timeout=20).tools()}
 assert len(names) == 10 and not names & set(gw.ADMIN_TOOLS), sorted(names)
 PY
-canopy status | python3 -c "
+for _ in $(seq 60); do canopy status >/dev/null 2>&1 && break; sleep 2; done   # the sync above is settling
+canopy status | tee /dev/stderr | python3 -c "
 import json, sys
 d = json.load(sys.stdin)['components']['jobs']
 assert d['ok'] and d['backup']['state'] == 'on' and d['backup']['last_ok_hours'] is not None, d"
