@@ -63,8 +63,8 @@ The gateway on a VPS, with a local proxy at home.
 Canopy extends [MCPJungle](https://github.com/mcpjungle/MCPJungle), which it uses unmodified as the
 MCP gateway. On top of that, `docker compose up -d` brings up:
 
-- a **catalogue** that indexes the Claude Code plugin marketplaces you point it at, with keyword
-  search out of the box and hybrid search if you add an embeddings endpoint
+- a **catalogue** that indexes the Claude Code plugin marketplaces you point it at, with hybrid search
+  by default, on local embeddings from the `search` profile, and keyword search without them
 - a **toolbox** for calling long-tail tools without listing them all
 - a **control API** and a `canopy` command for managing all of it, the only place that holds the
   gateway's admin token
@@ -95,6 +95,9 @@ clients/canopy init             # makes ~/canopy/agent-data and ~/canopy/data
 clients/canopy up               # ends with "seed finished with 0 problem(s)"
 clients/canopy status
 ```
+
+The first sync is still running when `up` returns, so `status` can report catalogue problems such as
+`index is empty` for a moment. Run it again once `sync_running` is false.
 
 Link `clients/canopy` into your `PATH` to drop the prefix. Images are on
 [Docker Hub](https://hub.docker.com/r/danielrosehill/canopy): `v1` follows every v1 release.
@@ -189,14 +192,19 @@ Then hand the id to your agent with `/skill <id>` from the Canopy connector:
 
 ## Profiles
 
-| Profile | Adds | Tested |
-| --- | --- | --- |
-| (none) | gateway, Postgres, catalogue, toolbox, API, seed, cli | Yes |
-| `ui` | Web UI | Yes |
-| `search` | Ollama with bge-m3, with `EMBED_PROVIDER=local` | Not yet |
-| `storage` | Garage: S3-compatible staging, `canopy stage FILE` | Yes |
-| `tunnel` | Cloudflare Tunnel | Not yet |
-| `tailnet` | Tailscale sidecar | Not yet |
+| Profile | Adds | On by default | Tested |
+| --- | --- | --- | --- |
+| (none) | gateway, Postgres, catalogue, toolbox, API, seed, cli | Always | Yes |
+| `search` | Ollama with bge-m3, with `EMBED_PROVIDER=local` | Yes | Not yet |
+| `storage` | Garage: S3-compatible staging, `canopy stage FILE` | Yes | Yes |
+| `ui` | Web UI | No | Yes |
+| `tunnel` | Cloudflare Tunnel | No | Not yet |
+| `tailnet` | Tailscale sidecar | No | Not yet |
+
+`clients/canopy init` writes `COMPOSE_PROFILES=search,storage` to `secrets.env`, so a default install starts
+Ollama, downloads bge-m3 and runs it on the host, which takes about 2 GB of RAM. On a small machine, edit
+`secrets.env` before `clients/canopy up`: remove `search` from `COMPOSE_PROFILES`, and either remove
+`EMBED_PROVIDER` for keyword search or point it at a hosted provider, as `.env.example` shows.
 
 ## Security
 
