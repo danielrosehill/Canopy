@@ -49,6 +49,15 @@ _keyword_lock = threading.Lock()
 searcher = Search(db, lambda: _keywords["index"])
 
 
+def tool(name: str | None = None):
+    """Register a tool to run off the event loop. Measured on a live index on 2026-11-07: a `list` that
+    takes 10 ms took 1,555 ms behind a `health`. The function itself stays plain, for tests and callers."""
+    def add(fn):
+        mcp.tool(name=name)(gw.offload(fn))
+        return fn
+    return add
+
+
 # --- sync scheduling -------------------------------------------------------------
 
 def _run_sync(only: str | None = None, force: bool = False, recent: bool = False) -> None:
@@ -104,7 +113,7 @@ def refresh_keywords() -> None:
 
 # --- tools ------------------------------------------------------------------------
 
-@mcp.tool()
+@tool()
 def search(query: str, kind: str | None = None, plugin: str | None = None,
            marketplace: str | None = None, limit: int = SEARCH_LIMIT, full: bool = False) -> str:
     """Find the skill AND the gateway tool for a task: is there a skill for this, which tool does it, what is it called.
@@ -222,7 +231,7 @@ def _side_file(rid: str) -> dict | None:
         f"\n[cut at {SIDE_FILE_CHARS} of {len(text)} chars]" if len(text) > SIDE_FILE_CHARS else "")}
 
 
-@mcp.tool()
+@tool()
 def read(ids: list[str], full_readme: bool = False) -> str:
     """Full content of one or more records by id.
 
@@ -308,7 +317,7 @@ def _read(ids: list[str], full_readme: bool = False) -> dict:
     return out
 
 
-@mcp.tool(name="list")
+@tool(name="list")
 def list_records(kind: str | None = None, plugin: str | None = None,
                  marketplace: str | None = None, offset: int = 0, limit: int = 500) -> str:
     """Enumerate records without searching. Use it to browse a plugin
@@ -321,7 +330,7 @@ def list_records(kind: str | None = None, plugin: str | None = None,
     return _out({"total": total, "offset": offset, "records": [_summary(r) for r in rows]})
 
 
-@mcp.tool()
+@tool()
 def mcp_servers(name: str | None = None, problems_only: bool = False) -> str:
     """The MCP side of the catalogue: every server that is registered on the
     gateway, declared in a plugin's .mcp.json, or called by name in a record.
@@ -361,7 +370,7 @@ def _mcp_servers(name: str | None = None, problems_only: bool = False) -> dict:
     return {"count": len(out), "servers": out}
 
 
-@mcp.tool()
+@tool()
 def health() -> str:
     """Is the catalogue complete and current? `ok` is false on any of: an empty
     index, a failed or overdue sync, a plugin whose record count differs from what
@@ -392,6 +401,7 @@ def health() -> str:
     for n in manifest:
         if n not in plugins:
             problems.append(f"{n}: in manifest, not indexed")
+    indexed = {r["plugin"]: r["count"] for r in db.execute("SELECT plugin, COUNT(*) FROM records GROUP BY plugin")}
     for n, p in plugins.items():
         if p["status"] != "ok":
             problems.append(f"{n}: {p['status']} - {p['error']}")
@@ -400,10 +410,9 @@ def health() -> str:
         if not root.exists():
             problems.append(f"{n}: clone missing on disk")
             continue
-        on_disk = len(ix.extract(n, root)) + 1
-        indexed = db.execute("SELECT COUNT(*) FROM records WHERE plugin = %s", (n,)).fetchone()[0]
-        if on_disk != indexed:
-            problems.append(f"{n}: {indexed} records indexed, {on_disk} in clone")
+        on_disk = ix.records_on_disk(n, root)
+        if on_disk != indexed.get(n, 0):
+            problems.append(f"{n}: {indexed.get(n, 0)} records indexed, {on_disk} in clone")
 
     pending = db.execute("SELECT COUNT(*) FROM records WHERE embedding IS NULL "
                          "OR embed_model IS DISTINCT FROM %s", (ix.EMBED_MODEL,)).fetchone()[0]
@@ -429,7 +438,7 @@ def health() -> str:
     })
 
 
-@mcp.tool()
+@tool()
 def usage(kind: str | None = "skill", plugin: str | None = None, since_days: float = 90,
           sort: str = "cost", limit: int = 50) -> str:
     """How often each record is read: `read` calls per id.
@@ -463,7 +472,7 @@ def usage(kind: str | None = "skill", plugin: str | None = None, since_days: flo
                  "since_days": since_days, "total": len(items), "records": items[:limit]})
 
 
-@mcp.tool()
+@tool()
 def sync(plugin: str | None = None, force: bool = False, full: bool = False) -> str:
     """Run a sync now in the background instead of waiting for the next pass.
     No arguments: a quick pass over what was pushed since the last one. full: check every
@@ -488,7 +497,7 @@ def _run_embed() -> None:
         _embed_lock.release()
 
 
-@mcp.tool()
+@tool()
 def embed(dry_run: bool = True) -> str:
     """Embed records that have no vector yet. Incremental: unchanged records are
     skipped. dry_run=true (the default) only reports how many records and roughly how

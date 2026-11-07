@@ -10,17 +10,28 @@ every use, because services start before the seed has created them.
 """
 from __future__ import annotations
 
+import functools
 import json
 import os
 import threading
 from pathlib import Path
 
+import anyio
 import httpx
 
 GATEWAY_URL = os.environ.get("GATEWAY_URL", "http://gateway:8080").rstrip("/")
 TOKEN_DIR = Path(os.environ.get("CANOPY_TOKEN_DIR", "/tokens"))
 SERVICES_TOKEN = "services"   # MCP client identity
 READER_TOKEN = "reader"       # read-only REST identity
+
+
+def offload(fn):
+    """Run a blocking tool body in a worker thread. FastMCP calls a plain function on the event
+    loop, so one slow call would hold up every other, including when the gateway calls back in."""
+    @functools.wraps(fn)
+    async def wrapper(*args, **kwargs):
+        return await anyio.to_thread.run_sync(functools.partial(fn, *args, **kwargs))
+    return wrapper
 
 
 def read_token(name: str) -> str:

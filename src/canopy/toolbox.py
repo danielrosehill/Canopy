@@ -12,13 +12,11 @@ gateway allow-list or group is the way to keep tools out of its reach.
 """
 from __future__ import annotations
 
-import functools
 import json
 import os
 import threading
 import time
 
-import anyio
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import EmbeddedResource, ImageContent, TextContent
@@ -65,15 +63,6 @@ def _server_descriptions() -> dict[str, str]:
         return {}
 
 
-def _offload(fn):
-    """Run a blocking tool body in a worker thread, so a slow proxied call cannot hold
-    the event loop, including when the gateway calls back into this process."""
-    @functools.wraps(fn)
-    async def wrapper(*args, **kwargs):
-        return await anyio.to_thread.run_sync(functools.partial(fn, *args, **kwargs))
-    return wrapper
-
-
 def norm(name: str) -> str:
     return name.removeprefix(CLIENT_PREFIX)
 
@@ -87,7 +76,7 @@ def short(desc: str, limit: int = 140) -> str:
 
 
 @mcp.tool()
-@_offload
+@gw.offload
 def list_servers() -> str:
     """List every MCP server behind the gateway: name, tool count and a one-line
     description. Then use list_tools(server) to drill in."""
@@ -102,7 +91,7 @@ def list_servers() -> str:
 
 
 @mcp.tool()
-@_offload
+@gw.offload
 def list_tools(server: str = "", filter: str = "") -> str:
     """List tools with one-line descriptions. Scope by server name and/or filter by
     keywords, all of which must appear in the name or summary. Full input schemas are
@@ -124,7 +113,7 @@ def list_tools(server: str = "", filter: str = "") -> str:
 
 
 @mcp.tool()
-@_offload
+@gw.offload
 def describe_tools(names: list[str]) -> str:
     """Full definitions (description and JSON input schema) for up to 10 named tools."""
     if len(names) > 10:
@@ -153,7 +142,7 @@ def to_blocks(result: dict) -> list:
 
 
 @mcp.tool(structured_output=False)
-@_offload
+@gw.offload
 def call_tool(name: str, arguments: dict | None = None) -> list:
     """Invoke any gateway tool by name, with a JSON arguments object matching its schema
     (catalogue__read("tool:<name>") or describe_tools)."""

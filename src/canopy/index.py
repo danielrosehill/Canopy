@@ -231,6 +231,25 @@ def extract(plugin: str, root: Path) -> list[dict]:
     return out
 
 
+_disk_counts: dict[str, tuple[bytes, Path, int]] = {}
+
+
+def records_on_disk(plugin: str, root: Path) -> int:
+    """How many records a clone holds, the plugin's own included. Parsing every clone took 1.6 s on
+    293 plugins, and health runs every 5 minutes, so the count is kept until the clone moves.
+    FETCH_HEAD is written by the fetch itself, so this follows the clone, not sync's bookkeeping."""
+    try:
+        fetched = (clones() / plugin / ".git" / "FETCH_HEAD").read_bytes()
+    except OSError:
+        return len(extract(plugin, root)) + 1
+    known = _disk_counts.get(plugin)
+    if known and known[:2] == (fetched, root):
+        return known[2]
+    count = len(extract(plugin, root)) + 1
+    _disk_counts[plugin] = (fetched, root, count)
+    return count
+
+
 def plugin_record(plugin: str, meta: dict, root: Path) -> dict:
     readme = next((root / n for n in ("README.md", "readme.md") if (root / n).exists()), None)
     body = readme.read_text(errors="replace")[:BODY_CAP] if readme else ""

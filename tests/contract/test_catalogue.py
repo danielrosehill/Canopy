@@ -387,3 +387,22 @@ def test_import_of_a_missing_file_is_refused_and_creates_nothing(tmp_path):
     with pytest.raises(ValueError, match="no such file"):
         iv.import_vectors(cat.db, tmp_path / "typo.db")
     assert not (tmp_path / "typo.db").exists()
+
+
+def test_no_tool_runs_on_the_event_loop():
+    """FastMCP calls a plain function inline, so one slow tool held up every other."""
+    assert all(t.is_async for t in cat.mcp._tool_manager.list_tools())
+
+
+def test_the_disk_count_is_kept_until_the_clone_moves(tmp_path, monkeypatch):
+    clone = tmp_path / "clones" / "p"
+    (clone / ".git").mkdir(parents=True)
+    (clone / ".git" / "FETCH_HEAD").write_text("aaa")
+    monkeypatch.setattr(ix, "clones", lambda: tmp_path / "clones")
+    calls = []
+    monkeypatch.setattr(ix, "extract", lambda plugin, root: calls.append(root) or [{}, {}])
+    ix._disk_counts.clear()
+    assert [ix.records_on_disk("p", clone) for _ in range(2)] == [3, 3] and len(calls) == 1
+    (clone / ".git" / "FETCH_HEAD").write_text("bbb")
+    assert ix.records_on_disk("p", clone) == 3 and len(calls) == 2
+

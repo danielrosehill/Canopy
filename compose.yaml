@@ -2,10 +2,18 @@
 # Yours: CANOPY_AGENT_DATA. Canopy's: CANOPY_DATA. Settings: see .env.example.
 name: canopy
 
+# Docker keeps a container's log without limit unless told otherwise.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: ${CANOPY_LOG_MAX_SIZE:-10m}
+    max-file: "${CANOPY_LOG_MAX_FILES:-3}"
+
 x-canopy: &canopy
   image: danielrosehill/canopy:${CANOPY_TAG:-v1}
   build: .
   restart: unless-stopped
+  logging: *logging
   networks: [canopy]
 
 x-mcp-health: &mcp-health
@@ -26,6 +34,7 @@ x-canopy-env: &canopy-env
 
 services:
   db:
+    logging: *logging
     image: pgvector/pgvector:0.8.1-pg17
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-canopy}   # no published port
@@ -44,6 +53,7 @@ services:
     networks: [canopy]
 
   gateway:
+    logging: *logging
     image: ghcr.io/mcpjungle/mcpjungle:${MCPJUNGLE_TAG:-0.4.7-stdio}
     environment:
       DATABASE_URL: postgres://mcpjungle:${GATEWAY_DB_PASSWORD:-canopy}@db:5432/mcpjungle
@@ -149,6 +159,7 @@ services:
 
   # The CLIs that skills use. Run from the host with `canopy run`.
   cli:
+    logging: *logging
     image: danielrosehill/canopy:cli-${CANOPY_TAG:-v1}
     build:
       context: .
@@ -178,6 +189,7 @@ services:
 
   # S3-compatible staging. Unmodified, and it has no shell, so `api` bootstraps it on first use.
   storage:
+    logging: *logging
     image: dxflrs/garage:v2.5.0
     profiles: [storage]
     ports:
@@ -193,6 +205,7 @@ services:
     networks: [canopy]
 
   ollama:
+    logging: *logging
     image: ollama/ollama:0.12.6
     profiles: [search]
     volumes:
@@ -201,6 +214,7 @@ services:
     networks: [canopy]
 
   ollama-pull:
+    logging: *logging
     image: ollama/ollama:0.12.6
     profiles: [search]
     environment:
@@ -211,6 +225,7 @@ services:
     networks: [canopy]
 
   tunnel:
+    logging: *logging
     image: cloudflare/cloudflared:2025.10.0
     profiles: [tunnel]
     command: ["tunnel", "--no-autoupdate", "run"]
@@ -220,6 +235,7 @@ services:
     networks: [canopy]
 
   tailnet:
+    logging: *logging
     image: tailscale/tailscale:v1.88.3
     profiles: [tailnet]
     hostname: ${TS_HOSTNAME:-canopy}
