@@ -118,16 +118,15 @@ canopy jobs run backup-data >/dev/null
 job_ok backup-data "$mark"
 job_ok restore-test "$mark"
 
-say "The test can fail: wrong row counts on a real restore"
 say "the management routes on the real stack"
-canopy validate >/dev/null
+canopy validate
 canopy diff | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
 assert d['ok'] and not d['register'] and not d['remove'] and not d['rebuild_groups'], d"
-canopy marketplaces >/dev/null
-canopy embed >/dev/null
-canopy sync >/dev/null
+canopy marketplaces
+canopy embed
+canopy sync
 canopy refresh toolbox | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
@@ -149,6 +148,7 @@ import json, sys
 d = json.load(sys.stdin)['components']['jobs']
 assert d['ok'] and d['backup']['state'] == 'on' and d['backup']['last_ok_hours'] is not None, d"
 
+say "The test can fail: wrong row counts on a real restore"
 canopy compose exec -T api python - <<'PY'
 from pathlib import Path
 from canopy.backup import Backups, BackupError
