@@ -147,7 +147,8 @@ version. `compat.json` records what has passed. Measured on 0.4.7, 2026-11-05.
 - A group update keeps any list it was not given. The stored definition then disagrees with the live
   group until the gateway restarts, so groups are deleted and created.
 - A group create fails if it names an unregistered server (404), or if it resolves to no tools (400).
-  Membership is checked before the delete, and the old definition is restored if the create still fails.
+  Membership is checked before the delete, and the old definition is restored if the create still fails,
+  times out without landing, or is cut off. If the current group cannot be read, nothing is changed.
 - A group follows server names. A new server joins only a group that names it, and a named server
   that is removed and registered again returns to its groups. Canopy still rebuilds after a
   registration, as a precaution.
@@ -156,7 +157,10 @@ version. `compat.json` records what has passed. Measured on 0.4.7, 2026-11-05.
   tools must arrive too.
 - A second registration of a name fails, so `register` deletes first. Tool lists freeze at registration,
   and registering again is what refreshes them.
-- An upstream that cannot be reached is refused, and is not listed.
+- An upstream that cannot be reached is refused, and is not listed. Since a replacement deletes first,
+  that used to cost the working server: `register` now takes its definition from
+  `GET /api/v0/server_configs` beforehand, and registers it again if the new one fails. That route is the
+  only copy of the expanded credentials, and what it returns registers as it is.
 - Writes use the REST API. The gateway's CLI is in a different image.
 - `GET /api/v0/tools` lists tools for an admin token.
 - `/init` gives the admin token once. A client token works only on MCP endpoints, and a user token only

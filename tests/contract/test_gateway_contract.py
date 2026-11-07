@@ -276,3 +276,26 @@ def test_delete_group_is_verified_by_a_read(g, uid):
     g.rebuild_group({"name": group, "included_servers": [a]}, {a})
     g.delete_group(group)
     assert group not in {x["name"] for x in g.groups()}
+
+
+# --- a failed change keeps what worked --------------------------------------------------
+
+
+def test_server_configs_register_again_as_they_are(g, uid):
+    """Rollback depends on this: it is the only copy of a server's expanded credentials."""
+    name = f"c{uid}"
+    g.register(server(name))
+    saved = g.saved_server(name)
+    g.deregister(name)
+    g.http.post("/api/v0/servers", json=saved).raise_for_status()
+    assert name in g.server_names() and g.saved_server(name)["url"] == server(name)["url"]
+
+
+def test_a_replacement_that_cannot_connect_leaves_the_old_server_working(g, uid):
+    name, group = f"r{uid}", f"g{uid}"
+    g.register(server(name))
+    g.rebuild_group({"name": group, "included_servers": [name]}, {name})
+    with pytest.raises(RuntimeError, match="restored"):
+        g.register({**server(name), "url": "http://127.0.0.1:1/mcp"})
+    assert g.saved_server(name)["url"] == server(name)["url"]
+    assert group_tools(group) == two_tools(name)

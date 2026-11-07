@@ -11,6 +11,10 @@ Group rules, each learned from a failure:
   checked first, and the old definition is restored if the create still fails.
 - A new server does not join an existing group by itself, so groups are rebuilt
   whenever a server was registered.
+
+The gateway has no update for a server or a group, so a change is a delete and a create. If the
+create fails, whatever was there goes back: a bad edit must not cost something that worked. A
+server's old definition comes from the gateway, since only it holds the expanded credentials.
 """
 from __future__ import annotations
 
@@ -150,11 +154,32 @@ class Gateway:
         r.raise_for_status()
         return r.json()
 
+    def saved_server(self, name: str) -> dict | None:
+        """What `name` was registered with, in the form a registration takes."""
+        r = self.http.get("/api/v0/server_configs")
+        r.raise_for_status()
+        return next((c for c in r.json() if c.get("name") == name), None)
+
+    def _put_back(self, previous: dict | None) -> str:
+        """Words for the error, so that it says what state the failure left."""
+        if previous is None:
+            return ""
+        name = previous["name"]
+        try:
+            self.http.delete(f"/api/v0/servers/{name}")
+            self.http.post("/api/v0/servers", json=previous)
+            if name in self.server_names():
+                return "; the previous definition was restored"
+        except httpx.HTTPError as e:
+            return f"; restoring the previous definition failed too: {e}"
+        return "; restoring the previous definition failed too"
+
     def register(self, server: dict) -> None:
         """A registration can time out even though it worked, so the server list decides. The
         gateway lists a server before it has fetched the tools, so after a timeout the tools
         have to arrive too, or a group built next would miss them."""
         name = server["name"]
+        previous = self.saved_server(name)
         self.http.delete(f"/api/v0/servers/{name}")
         err, timed_out = "", False
         try:
@@ -164,9 +189,10 @@ class Gateway:
         except httpx.TimeoutException:
             err, timed_out = "timed out", True
         if name not in self.server_names():
-            raise RuntimeError(err or "the gateway accepted it, but does not list it")
+            raise RuntimeError((err or "the gateway accepted it, but does not list it") + self._put_back(previous))
         if timed_out and not self._tools_arrive(name):
-            raise RuntimeError(f"timed out, and no tools arrived within {REGISTER_SETTLE:.0f}s")
+            raise RuntimeError(f"timed out, and no tools arrived within {REGISTER_SETTLE:.0f}s"
+                               + self._put_back(previous))
 
     def _tools_arrive(self, name: str) -> bool:
         deadline = time.time() + REGISTER_SETTLE
@@ -201,17 +227,33 @@ class Gateway:
         if missing:
             raise RuntimeError(f"names unregistered servers: {sorted(missing)}")
         live = self.http.get(f"/api/v0/tool-groups/{name}")
+        if not live.is_success and live.status_code != 404:   # no copy to go back to, so change nothing
+            raise RuntimeError(f"cannot read the current group: {live.status_code}")
         self.http.delete(f"/api/v0/tool-groups/{name}")
-        r = self.http.post("/api/v0/tool-groups", json=group)
-        if r.is_success:
-            if not self.http.get(f"/api/v0/tool-groups/{name}").is_success:
-                raise RuntimeError("the gateway accepted it, but does not list it")
+        created, timed_out = False, False
+        try:
+            r = self.http.post("/api/v0/tool-groups", json=group)
+            created, why = r.is_success, r.text[:300]
+        except httpx.TimeoutException as e:   # as with a server, it may have worked anyway
+            timed_out, why = True, str(e) or "timed out"
+        except httpx.HTTPError as e:
+            why = str(e)
+        try:
+            listed = self.http.get(f"/api/v0/tool-groups/{name}").is_success
+        except httpx.HTTPError as e:
+            raise RuntimeError(f"cannot tell whether group {name} exists: {e}") from None
+        if listed and (created or timed_out):
             return
-        if live.is_success:
-            old = {k: v for k, v in live.json().items() if not k.endswith("_endpoint")}
-            self.http.post("/api/v0/tool-groups", json=old)
-            raise RuntimeError(f"create failed, previous definition restored: {r.text[:300]}")
-        raise RuntimeError(f"create failed: {r.text[:300]}")
+        if created:
+            raise RuntimeError("the gateway accepted it, but does not list it")
+        if not live.is_success:
+            raise RuntimeError(f"create failed: {why}")
+        old = {k: v for k, v in live.json().items() if not k.endswith("_endpoint")}
+        try:
+            restored = self.http.post("/api/v0/tool-groups", json=old).is_success
+        except httpx.HTTPError:
+            restored = False
+        raise RuntimeError(f"create failed, previous definition {'restored' if restored else 'NOT restored'}: {why}")
 
     def delete_group(self, name: str) -> None:
         self.http.delete(f"/api/v0/tool-groups/{name}")
@@ -278,7 +320,7 @@ class Control:
 
     def write_state(self, state: dict) -> None:
         self.admin_dir.mkdir(parents=True, exist_ok=True)
-        self.state_path.write_text(json.dumps(state, indent=2))
+        write_json(self.state_path, state)
 
     # --- identity ------------------------------------------------------------------
 
@@ -389,7 +431,7 @@ class Control:
                     try:
                         g.rebuild_group(group, registered)
                         log.append(f"built group {group['name']}")
-                    except RuntimeError as e:
+                    except (RuntimeError, httpx.HTTPError) as e:
                         ok = False
                         failures.append(f"group {group['name']}: {e}")
                 if ok:
@@ -435,7 +477,10 @@ class Control:
             rebuilt = []
             for group in merged_groups(doc["groups"]):
                 if name in group_servers(group):
-                    g.rebuild_group(group, registered)
+                    try:
+                        g.rebuild_group(group, registered)
+                    except RuntimeError as e:
+                        raise ControlError(502, f"{name} is registered, but group {group['name']}: {e}") from None
                     rebuilt.append(group["name"])
         return {"registered": name, "rebuilt_groups": rebuilt, "sync_error": self.sync()}
 

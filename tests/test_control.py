@@ -46,13 +46,18 @@ class FakeJungle:
 
     def __init__(self):
         self.servers, self.groups, self.lie = {}, {}, False
+        self.refuse, self.time_out_group = set(), False   # server urls that will not connect
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         path, method = request.url.path, request.method
         if path == "/api/v0/servers" and method == "GET":
             return httpx.Response(200, json=list(self.servers.values()))
+        if path == "/api/v0/server_configs":
+            return httpx.Response(200, json=list(self.servers.values()))
         if path == "/api/v0/servers" and method == "POST":
             doc = json.loads(request.content)
+            if doc.get("url") in self.refuse:
+                return httpx.Response(502, text="cannot connect")
             if not self.lie:
                 self.servers[doc["name"]] = doc
             return httpx.Response(201, json={})
@@ -62,6 +67,9 @@ class FakeJungle:
             return httpx.Response(200, json={})
         if path == "/api/v0/tool-groups" and method == "POST":
             doc = json.loads(request.content)
+            if self.time_out_group:
+                self.time_out_group = False
+                raise httpx.ReadTimeout("timed out")
             self.groups[doc["name"]] = doc
             return httpx.Response(201, json={})
         if path.startswith("/api/v0/tool-groups/"):
@@ -253,3 +261,51 @@ def test_register_fails_if_the_tools_never_arrive(monkeypatch):
     monkeypatch.setattr("canopy.control.REGISTER_SETTLE", 0)
     with pytest.raises(RuntimeError, match="no tools arrived"):
         Gateway("", timing_out([{"name": "xy__a"}])).register({"name": "x"})
+
+
+# --- a failed change keeps what worked ---------------------------------------------------
+
+def test_a_replacement_that_fails_leaves_the_old_server(ctl, jungle):
+    jungle.servers["up"] = {"name": "up", "url": "http://old"}
+    jungle.refuse.add("http://new")
+    with pytest.raises(ControlError) as e:
+        ctl.add_server({"name": "up", "url": "http://new"}, replace=True)
+    assert e.value.status == 502 and "restored" in str(e.value)
+    assert jungle.servers["up"]["url"] == "http://old"
+
+
+def test_apply_with_a_bad_edit_keeps_the_running_server_and_retries(ctl, jungle):
+    jungle.servers["up"] = {"name": "up", "url": "http://old"}
+    jungle.refuse.add("http://new")
+    (ctl.config / "servers.json").write_text(json.dumps({"servers": [{"name": "up", "url": "http://new"}]}))
+    g = ctl.gateway()
+    changed, failures = ctl._register_all(g, ctl.read_config()["servers"], {}, lambda _: None)
+    assert jungle.servers["up"]["url"] == "http://old" and "restored" in failures[0]
+    jungle.refuse.clear()
+    changed, failures = ctl._register_all(g, ctl.read_config()["servers"], {}, lambda _: None)
+    assert changed and not failures and jungle.servers["up"]["url"] == "http://new"
+
+
+def test_a_group_create_that_times_out_and_did_not_land_is_restored(ctl, jungle):
+    jungle.servers["up"] = {"name": "up"}
+    jungle.groups["g"] = {"name": "g", "included_servers": ["up"]}
+    jungle.time_out_group = True
+    with pytest.raises(RuntimeError, match="previous definition restored"):
+        ctl.gateway().rebuild_group({"name": "g", "included_servers": ["catalogue"]}, {"up", "catalogue"})
+    assert jungle.groups["g"]["included_servers"] == ["up"]
+
+
+def test_a_group_failure_in_add_server_is_a_502_that_says_the_server_landed(ctl, jungle):
+    (ctl.config / "servers.json").write_text(json.dumps({"groups": [{"name": "g", "included_servers": ["up"]}]}))
+    jungle.time_out_group = True
+    jungle.groups["g"] = {"name": "g", "included_servers": ["catalogue"]}
+    with pytest.raises(ControlError) as e:
+        ctl.add_server({"name": "up", "url": "http://x"})
+    assert e.value.status == 502 and "is registered" in str(e.value)
+    assert "up" in jungle.servers
+
+
+def test_state_is_written_whole(ctl):
+    ctl.write_state({"a": "1"})
+    assert ctl.read_state() == {"a": "1"}
+    assert [p.name for p in ctl.admin_dir.iterdir()] == ["registered.json"]

@@ -35,7 +35,7 @@ def store(tmp_path):
     s = storage.Storage(secrets_dir=tmp_path / "s", config=tmp_path, admin_url="http://a", s3_url="http://s3",
                         public_url="http://public:9000")
     s.prepare()
-    s.ready = True
+    s.ready = json.dumps(s.buckets_config(), sort_keys=True)
     (s.dir / "s3.json").write_text(json.dumps({"key": "k", "secret": "x"}))
     s.sent = []
 
@@ -71,6 +71,8 @@ def test_stage_refuses(store, kw, status):
 
 
 def test_storage_json_names_the_buckets(store):
+    store._layout = store._key = lambda: None
+    store._bucket = lambda spec: None
     (store.config / "storage.json").write_text(json.dumps({"buckets": [{"name": "keep"}]}))
     assert store.stage(b"", "a", expires=storage.MAX_EXPIRES)["bucket"] == "keep"
 
@@ -114,3 +116,28 @@ def test_stage_route_enforces_the_size_limit(store, monkeypatch):
 def test_storage_off_says_so():
     client = TestClient(api.create_app(Stub(), "t"), raise_server_exceptions=False)
     assert client.get("/v1/storage/buckets", headers=AUTH).status_code == 503
+
+
+def test_a_failed_upload_gives_no_url(store):
+    """A 404 on the PUT used to pass as success, and the reply held a URL to nothing."""
+    store.http = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(404, text="NoSuchBucket")))
+    with pytest.raises(storage.ControlError) as e:
+        store.stage(b"hi", "a.txt")
+    assert e.value.status == 502 and store.ready is None
+
+
+def test_a_bucket_added_while_running_is_made_before_use(store):
+    made = []
+    store._layout = store._key = lambda: None
+    store._bucket = lambda spec: made.append(spec["name"])
+    (store.config / "storage.json").write_text(json.dumps({"buckets": [{"name": "transient", "expire_days": 1},
+                                                                       {"name": "keep"}]}))
+    store.stage(b"hi", "a.txt", bucket="keep")
+    assert made == ["transient", "keep"]
+    store.stage(b"hi", "a.txt", bucket="keep")
+    assert made == ["transient", "keep"]
+
+
+def test_a_bucket_with_no_expiry_rule_still_reads_as_none(store):
+    store.http = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(404, text="none")))
+    assert store._rule("transient") is None

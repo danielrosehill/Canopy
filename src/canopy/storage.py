@@ -95,7 +95,7 @@ class Storage:
         self.admin_url, self.s3_url, self.public_url = admin_url, s3_url, public_url
         self.http = httpx.Client(timeout=60)
         self.lock = threading.Lock()
-        self.ready = False
+        self.ready: str | None = None   # the bucket config `ensure` last set up
 
     def prepare(self) -> None:
         """Before `storage` starts: it reads both of these, and has no way to make them."""
@@ -129,14 +129,19 @@ class Storage:
             raise ControlError(502, f"storage {route}: {r.status_code} {r.text[:200]}")
         return r.json()
 
-    def _s3(self, method: str, path: str, query: dict[str, str] | None = None, **kw) -> httpx.Response:
+    def _s3(self, method: str, path: str, query: dict[str, str] | None = None, missing_ok: bool = False,
+            **kw) -> httpx.Response:
         c = self._credentials()
         url = presign(method, self.s3_url, path, c["key"], c["secret"], 300, query)
         try:
             r = self.http.request(method, url, **kw)
         except httpx.TransportError as e:
             raise ControlError(503, f"storage is not answering: {e}") from None
-        if r.status_code >= 300 and r.status_code != 404:
+        if r.status_code == 404 and missing_ok:
+            return r
+        if r.status_code >= 300:
+            if r.status_code == 404:
+                self.ready = None   # something ensure made has gone, so make it again next time
             raise ControlError(502, f"storage {method} {path}: {r.status_code} {r.text[:200]}")
         return r
 
@@ -169,17 +174,20 @@ class Storage:
                 raise ControlError(502, f"storage: the expiry rule on {name} did not read back")
 
     def _rule(self, bucket: str) -> int | None:
-        r = self._s3("GET", f"/{bucket}", {"lifecycle": ""})
+        r = self._s3("GET", f"/{bucket}", {"lifecycle": ""}, missing_ok=True)   # no rule is a 404
         return lifecycle_days(r.text) if r.status_code == 200 else None
 
     def ensure(self) -> None:
+        """Runs again when `storage.json` changes, so a new bucket needs no restart."""
         with self.lock:
-            if not self.ready:
+            specs = self.buckets_config()
+            wanted = json.dumps(specs, sort_keys=True)
+            if self.ready != wanted:
                 self._layout()
                 self._key()
-                for spec in self.buckets_config():
+                for spec in specs:
                     self._bucket(spec)
-                self.ready = True
+                self.ready = wanted
 
     def stage(self, data: bytes, name: str, bucket: str | None = None, audience: str = "remote",
               expires: int = DEFAULT_EXPIRES, content_type: str | None = None) -> dict:
