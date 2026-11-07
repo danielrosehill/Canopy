@@ -1,7 +1,7 @@
 # Canopy connector
 
 The one Canopy plugin to install at user level. It stays small because it loads in every session:
-the MCP connection, two small skills (`find`, and `validate` to check and benchmark the connection), the `/skill` command and a prompt hook.
+the MCP connection, three small skills (`find`, `validate` to check and benchmark the connection, and `recommended` to pick plugins from a checklist), the `/skill` command and a prompt hook.
 
 ```
 /plugin marketplace add danielrosehill/Canopy
@@ -21,3 +21,6 @@ connection, finds and loads a real tool and skills, and reports the latency and 
 
 The hook searches on each prompt of three words or more, and names up to 3 skills only when the
 server reports a confident match. Otherwise it prints nothing, and it never blocks a prompt.
+
+Ask for the recommended plugins, or run `/canopy-connector:recommended`, to choose from the
+[Canopy Recommended](https://github.com/danielrosehill/Canopy-Recommended) marketplace and install your picks.

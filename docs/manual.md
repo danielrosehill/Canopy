@@ -13,6 +13,10 @@ device:
 /plugin install canopy-connector@canopy
 ```
 
+Plugins for an agent working on your local network are in the separate
+[Canopy Recommended](https://github.com/danielrosehill/Canopy-Recommended) marketplace. Run
+`/canopy-connector:recommended` to pick from a checklist.
+
 Set `CANOPY_MCP_URL` to your server's MCP address, and `CANOPY_TOKEN` to your client token (not needed
 in development mode). Then [validate it](#validate-and-benchmark), on every device you connect.
 

@@ -514,7 +514,7 @@ puts maintenance skills in front of an agent doing something else.
 ```
 
 - **`canopy-connector`** is the only one a user installs, at user level on every device. It holds the MCP
-  connection to the user's own instance, two small skills (`find`, `validate`), the `/skill` command and the prompt hook.
+  connection to the user's own instance, three small skills (`find`, `validate`, `recommended`), the `/skill` command and the prompt hook.
 - **`canopy-manager`** is for running the infrastructure: setup, diagnosis, upstreams, marketplaces, sync,
   backup, staging, CLIs. It is deployed on the server. While setting up, a user can add it at user level for
   a while. Its skills stay findable from any client, because the server indexes them.
