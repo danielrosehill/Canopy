@@ -1,6 +1,6 @@
 [project]
 name = "canopy"
-version = "0.1.0"
+version = "1.1.0"
 description = "Self-hosted progressive discovery for AI agents, across skills and plugins as well as tools."
 readme = "README.md"
 license = "MIT"

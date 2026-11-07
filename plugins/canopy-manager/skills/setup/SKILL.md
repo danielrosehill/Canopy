@@ -42,7 +42,8 @@ Needs Docker with Compose v2.
 5. Offer the CLAUDE.md snippet with the `claude-md-snippet` skill. It is optional, so write nothing without a yes.
 
 The user's own content goes in `~/canopy/agent-data`, through the `manage-marketplaces` and
-`manage-upstreams` skills. Settings and secrets go in `secrets.env` there.
+`manage-upstreams` skills. Settings and secrets go in `secrets.env` there. `docs/customising.md` is the whole
+formula, and `examples/overlay/` a working folder to start from.
 
 Everything binds to 127.0.0.1. Before changing `CANOPY_BIND`, tell the user that the web UI has no
 login of its own.

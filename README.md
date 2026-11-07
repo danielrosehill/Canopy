@@ -96,7 +96,8 @@ clients/canopy up               # ends with "seed finished with 0 problem(s)"
 clients/canopy status
 ```
 
-Link `clients/canopy` into your `PATH` to drop the prefix.
+Link `clients/canopy` into your `PATH` to drop the prefix. Images are on
+[Docker Hub](https://hub.docker.com/r/danielrosehill/canopy): `v1` follows every v1 release.
 
 Connect Claude Code with the connector plugin. Set these before you start the session:
 
@@ -144,7 +145,8 @@ In `agent-data/config`:
 - `servers.json` lists MCP upstreams and groups, with `${VAR}` placeholders filled from `secrets.env`.
   See `config/servers.example.json`. Run `canopy apply` after changing it.
 
-All settings are described in `.env.example`.
+All settings are described in `.env.example`. [Add your own things](docs/customising.md) is the whole
+formula for private skills and MCP servers, with a working folder to copy in `examples/overlay/`.
 
 ## Manage it
 
@@ -152,6 +154,7 @@ The API listens on `127.0.0.1:8090`, and `canopy` is a client of it:
 
 ```bash
 canopy status                       # every component in one reply
+canopy update                       # the newest release, and back again if it is unhealthy
 canopy servers                      # also groups, tools
 canopy add-server upstream.json     # registers it, confirms by reading back, saves it to config
 canopy remove-server NAME

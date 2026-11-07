@@ -45,7 +45,7 @@ def test_compose_uses_secrets_and_override_when_present(folders):
     assert str(folders / "agent/compose.override.yaml") in cli.compose_args()
 
 
-IMAGES = {"ghcr.io/danielrosehill/canopy:v1": "old", "ghcr.io/danielrosehill/canopy:cli-v1": "oldcli"}
+IMAGES = {"danielrosehill/canopy:v1": "old", "danielrosehill/canopy:cli-v1": "oldcli"}
 
 
 @pytest.fixture
@@ -98,8 +98,8 @@ def test_update_moves_to_the_newest_release_of_the_major(stack):
 def test_update_goes_back_when_the_new_version_is_unhealthy(stack):
     stack["healthy"] = [True, False, True]
     assert cli.update() == 1
-    assert ("docker", "tag", "old", "ghcr.io/danielrosehill/canopy:v1") in stack["ran"]
-    assert ("docker", "tag", "oldcli", "ghcr.io/danielrosehill/canopy:cli-v1") in stack["ran"]
+    assert ("docker", "tag", "old", "danielrosehill/canopy:v1") in stack["ran"]
+    assert ("docker", "tag", "oldcli", "danielrosehill/canopy:cli-v1") in stack["ran"]
     assert stack["ran"][-2:] == [("git", "checkout", "-q", "--detach", "aaa"), ("up",)]
 
 

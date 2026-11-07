@@ -59,6 +59,9 @@ data are not touched. Going back cannot undo a database migration, so read a rel
 local changes. A release is the exact image CI tested, under another name: pushing a tag runs
 `.github/workflows/release.yml`, so tag a commit only after CI has passed on it.
 
+Images are on [Docker Hub](https://hub.docker.com/r/danielrosehill/canopy), with the same tags on GHCR
+(`ghcr.io/danielrosehill/canopy`) as a mirror. To use the mirror, add the image to your override file.
+
 ## Settings that matter when moving an existing gateway
 
 - `CANOPY_CLIENT_NAME` must match the name your client gives the server. If your skills say

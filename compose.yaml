@@ -3,7 +3,7 @@
 name: canopy
 
 x-canopy: &canopy
-  image: ghcr.io/danielrosehill/canopy:${CANOPY_TAG:-v1}
+  image: danielrosehill/canopy:${CANOPY_TAG:-v1}
   build: .
   restart: unless-stopped
   networks: [canopy]
@@ -149,7 +149,7 @@ services:
 
   # The CLIs that skills use. Run from the host with `canopy run`.
   cli:
-    image: ghcr.io/danielrosehill/canopy:cli-${CANOPY_TAG:-v1}
+    image: danielrosehill/canopy:cli-${CANOPY_TAG:-v1}
     build:
       context: .
       dockerfile: cli/Dockerfile

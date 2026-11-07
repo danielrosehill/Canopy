@@ -6,7 +6,7 @@ Verified against MCPJungle 0.4.7 on 2026-11-05, on a clean Docker host.
 
 ## Services
 
-One image, `ghcr.io/danielrosehill/canopy`, runs each Python service with a different command. The
+One image, `danielrosehill/canopy` on Docker Hub, with a mirror at `ghcr.io/danielrosehill/canopy`, runs each Python service with a different command. The
 `cli` container has its own tag in the same package.
 
 | Service | Module | Reachable from | State |
@@ -17,7 +17,7 @@ One image, `ghcr.io/danielrosehill/canopy`, runs each Python service with a diff
 | `toolbox` | `canopy.toolbox` | Stack network | None |
 | `api` | `canopy.api`, `canopy.control` | `127.0.0.1:8090` | `data/api`, `data/admin`, `data/tokens` |
 | `seed` | `canopy.seed` | One-shot, a client of `api` | None |
-| `cli` | `ghcr.io/danielrosehill/canopy:cli-*`, Alpine | `canopy run` | `agent-data/cli` |
+| `cli` | `danielrosehill/canopy:cli-*`, Alpine | `canopy run` | `agent-data/cli` |
 | `ui` | `canopy.ui` | `127.0.0.1:8081` | None |
 
 Agents connect to `/v0/groups/core/mcp`. The `core` group always holds `catalogue` and `toolbox`.

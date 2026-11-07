@@ -22,7 +22,9 @@ canopy compose logs --tail 50 api gateway catalogue seed
 | A skill is missing | `catalogue__list` with `plugin=<name>`. If the plugin is absent, its marketplace is not configured or its entry was skipped: read `last_sync.summary.errors`. |
 | A tool is missing | `toolbox__list_tools` with `server=<name>`. If the server is absent, read the seed logs. Then run `catalogue__sync`. |
 | A skill calls a server that is not there | `catalogue__mcp_servers` with `problems_only=true`. |
-| `degraded` in search results | Semantic search is off or failing, and results are keyword only. Check `EMBED_PROVIDER`. |
+| `degraded` in search results | Each entry names what fell short. `keyword only`: check `EMBED_PROVIDER`. `fused order`: the reranker failed or timed out, so check `RERANK_MODEL`. `keyword index is not built yet`: the catalogue has just started, so wait a few seconds. |
+| Search is slow | `canopy api POST /v1/search '{"query":"...","trace":true}'` gives each stage's time and outcome. |
+| Unhealthy straight after an update | `canopy update` goes back by itself. If it reports `STILL NOT HEALTHY`, use the `update` skill. |
 | Seed says the admin token is gone | Restore the backup, as in the `backup-restore` skill. |
 
 An empty search is only a miss if health is `ok`.

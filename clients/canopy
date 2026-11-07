@@ -44,7 +44,6 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-IMAGE = "ghcr.io/danielrosehill/canopy"
 REPO = Path(__file__).resolve().parent.parent
 IN_CLI = os.environ.get("CANOPY_IN_CLI") == "1"
 AGENT_FOLDERS = ("config", "skills", "notes", "cli")
@@ -140,7 +139,7 @@ def canopy_images() -> dict[str, str]:
     """Canopy's own images, by name, with the id each name has here now."""
     names = capture(*compose_args(), "config", "--images").split()
     return {n: capture("docker", "image", "inspect", "--format", "{{.Id}}", n)
-            for n in names if n.startswith(IMAGE + ":")}
+            for n in names if re.search(r"(^|/)canopy:", n)}   # either registry
 
 
 def release_ref(tag: str) -> str:

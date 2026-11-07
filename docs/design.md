@@ -87,15 +87,14 @@ CLI are all clients of one contract.
 | `/v1/storage/stage`, `/buckets` | Upload, presigned URL, expiry | `storage` |
 | `/v1/jobs`, `/jobs/{id}/run`, `/jobs/{id}/history` | Inspect and trigger | Scheduler |
 | `/v1/backup`, `/backup/config` | Run, list, plan a restore | Backup job |
-| `/v1/update/check`, `/update/plan` | Compare versions, read compatibility | `compat.json` |
 
 Rules:
 
 - **Only the API holds the gateway's admin token.** `/admin` is no longer mounted elsewhere.
 - **Every gateway write is verified by reading back.** A registration can report a timeout although
   it worked, so that check lives here, once.
-- **No Docker socket.** That would make the API root on the host. So `update/plan` says what to do, and
-  the `canopy` CLI on the host does it.
+- **No Docker socket.** That would make the API root on the host. So updating is `canopy update`, on the
+  host, and the API only reports health to it.
 - **No management MCP.** This replaces that plan. Managing a server needs a shell, so a skill with the
   CLI is the better route, and it keeps admin operations out of every agent's tool list and out of
   reach of the toolbox. Hosted clients do not manage the server.

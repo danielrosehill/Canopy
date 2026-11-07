@@ -26,6 +26,17 @@ in development mode). Then [validate it](#validate-and-benchmark), on every devi
 On a client, add `canopy-manager` only while setting up, then remove it. Its skills stay findable by
 search, because the server indexes them like any others.
 
+## Update
+
+```bash
+canopy update
+```
+
+This moves to the newest release your `CANOPY_TAG` allows, and goes back to the previous images if the new
+ones come up unhealthy. Your folder and data are not touched. Tags and how it works:
+[Updating](customising.md#updating). Keep your own changes in the agent-data folder, because `update` stops if
+the checkout has local edits.
+
 ## Validate and benchmark
 
 Ask your agent to validate Canopy, or run `/canopy-connector:validate`. It is one skill because the two questions
