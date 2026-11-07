@@ -12,11 +12,18 @@ Every route except `/health` needs `Authorization: Bearer <token>`, from
 | `GET` | `/v1/gateway/servers` | Upstreams registered on the gateway. |
 | `POST` | `/v1/gateway/servers` | Register an upstream. |
 | `DELETE` | `/v1/gateway/servers/{name}` | Remove an upstream. |
+| `POST` | `/v1/gateway/servers/{name}/enable` | Put a disabled upstream back in service. |
+| `POST` | `/v1/gateway/servers/{name}/disable` | Take an upstream out of service without removing it. This is the gateway's state, not the config's. A built-in cannot be disabled. |
+| `POST` | `/v1/gateway/servers/{name}/refresh` | Register an upstream again as it stands, to re-read its tools, and report what was added and removed. Its tools vanish briefly. If it fails, the old definition is put back. |
 | `GET` | `/v1/gateway/groups` | Tool groups. |
 | `PUT` | `/v1/gateway/groups/{name}` | Create or replace a tool group. |
 | `DELETE` | `/v1/gateway/groups/{name}` | Remove a tool group. |
 | `GET` | `/v1/gateway/tools` | Tools the gateway serves. |
+| `POST` | `/v1/gateway/tools/{name}/enable` | Put a disabled tool back in service. |
+| `POST` | `/v1/gateway/tools/{name}/disable` | Take one tool out of service. A refresh keeps it disabled. |
 | `GET` | `/v1/config` | The config the seed applies. |
+| `GET` | `/v1/config/validate` | What is wrong with `servers.json`, if anything. Changes nothing. |
+| `GET` | `/v1/config/diff` | What `apply` would do now: servers to register and remove, groups to rebuild, removals blocked by a group, and servers the config does not manage. Names only. |
 | `POST` | `/v1/config/apply` | Apply `servers.json`: registers what differs, and rebuilds groups when a server was registered or a group changed. |
 | `GET` | `/v1/tokens/agent` | The client token for agents, and the gateway's mode. |
 | `POST` | `/v1/embeddings` | Embed `input` with `model`, OpenAI style. Every embedding goes through here. |

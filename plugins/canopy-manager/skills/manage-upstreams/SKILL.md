@@ -28,3 +28,14 @@ API first: `canopy compose up -d api`.
 
 The `core` group is what agents list natively, and it always includes `catalogue` and `toolbox`.
 Keep it small: everything else stays reachable through `toolbox__call_tool`.
+
+## Check before applying
+
+`canopy validate` lists what is wrong with `servers.json`, and `canopy diff` says what `apply` would do: servers to register and remove, removals a group is blocking, groups to rebuild, and servers the config does not manage. Run both before `canopy apply`, and show the diff before anything is removed.
+
+## Take an upstream out, or re-read it
+
+- `canopy disable NAME` and `canopy enable NAME` keep it registered, so nothing has to be set up again. `canopy disable-tool` and `canopy enable-tool` do the same for one tool. This is the gateway's state: it is not in `servers.json`.
+- `canopy refresh NAME` re-reads its tools, which the gateway otherwise freezes at registration. The reply lists what was added and removed. Its tools vanish for a moment, and what was disabled stays disabled. If it fails, the old definition is put back.
+- `CANOPY_TOOL_REFRESH=true` does this daily for every upstream.
+

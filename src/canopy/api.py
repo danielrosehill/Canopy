@@ -148,6 +148,27 @@ def create_app(control: Control, token: str, embedder: Embedder | None = None,
     async def remove_group(request: Request) -> JSONResponse:
         return await run(request, control.remove_group, request.path_params["name"])
 
+    async def validate(request: Request) -> JSONResponse:
+        return await run(request, control.validate)
+
+    async def diff(request: Request) -> JSONResponse:
+        return await run(request, control.diff)
+
+    async def enable_server(request: Request) -> JSONResponse:
+        return await run(request, control.set_server_enabled, request.path_params["name"], True)
+
+    async def disable_server(request: Request) -> JSONResponse:
+        return await run(request, control.set_server_enabled, request.path_params["name"], False)
+
+    async def refresh_server(request: Request) -> JSONResponse:
+        return await run(request, control.refresh_server, request.path_params["name"])
+
+    async def enable_tool(request: Request) -> JSONResponse:
+        return await run(request, control.set_tool_enabled, request.path_params["name"], True)
+
+    async def disable_tool(request: Request) -> JSONResponse:
+        return await run(request, control.set_tool_enabled, request.path_params["name"], False)
+
     def read_config(_: Request) -> JSONResponse:
         return JSONResponse(control.read_config())
 
@@ -198,11 +219,18 @@ def create_app(control: Control, token: str, embedder: Embedder | None = None,
         Route("/v1/gateway/servers", list_servers),
         Route("/v1/gateway/servers", add_server, methods=["POST"]),
         Route("/v1/gateway/servers/{name}", remove_server, methods=["DELETE"]),
+        Route("/v1/gateway/servers/{name}/enable", enable_server, methods=["POST"]),
+        Route("/v1/gateway/servers/{name}/disable", disable_server, methods=["POST"]),
+        Route("/v1/gateway/servers/{name}/refresh", refresh_server, methods=["POST"]),
         Route("/v1/gateway/groups", list_groups),
         Route("/v1/gateway/groups/{name}", set_group, methods=["PUT"]),
         Route("/v1/gateway/groups/{name}", remove_group, methods=["DELETE"]),
         Route("/v1/gateway/tools", list_tools),
+        Route("/v1/gateway/tools/{name}/enable", enable_tool, methods=["POST"]),
+        Route("/v1/gateway/tools/{name}/disable", disable_tool, methods=["POST"]),
         Route("/v1/config", read_config),
+        Route("/v1/config/validate", validate),
+        Route("/v1/config/diff", diff),
         Route("/v1/config/apply", apply, methods=["POST"]),
         Route("/v1/tokens/agent", agent_token),
         Route("/v1/embeddings", embeddings, methods=["POST"]),
@@ -232,6 +260,7 @@ def main() -> None:
     control.extra_checks["storage"] = storage.check
     jobs = sched.CatalogueJobs(db, control._tool_text)
     scheduler = sched.Scheduler(db, {"sync": jobs.sync, "sync-recent": jobs.sync_recent, "embed": jobs.embed, "health": control.health_job,
+                                     "tool-refresh": control.refresh_job,
                                      **Backups(db).actions(), **storage.actions()})
     control.extra_checks["jobs"] = scheduler.check
     threading.Thread(target=scheduler.loop, daemon=True).start()

@@ -299,3 +299,42 @@ def test_a_replacement_that_cannot_connect_leaves_the_old_server_working(g, uid)
         g.register({**server(name), "url": "http://127.0.0.1:1/mcp"})
     assert g.saved_server(name)["url"] == server(name)["url"]
     assert group_tools(group) == two_tools(name)
+
+
+# --- enable, disable and refresh --------------------------------------------------------
+
+
+def test_a_disabled_server_leaves_its_group_and_comes_back(g, uid):
+    a, b, group = f"a{uid}", f"b{uid}", f"g{uid}"
+    g.register(server(a))
+    g.register(server(b))
+    g.rebuild_group({"name": group, "included_servers": [a, b]}, {a, b})
+    g.set_server_enabled(a, False)
+    assert group_tools(group) == two_tools(b)
+    g.set_server_enabled(a, True)
+    assert group_tools(group) == sorted(two_tools(a) + two_tools(b))
+
+
+def test_a_disabled_tool_leaves_its_group_and_shows_in_the_list(g, uid):
+    a, group = f"a{uid}", f"g{uid}"
+    g.register(server(a))
+    g.rebuild_group({"name": group, "included_servers": [a]}, {a})
+    g.set_tool_enabled(f"{a}__{a}_a", False)
+    assert group_tools(group) == [f"{a}__{a}_b"]
+    assert {t["name"]: t["enabled"] for t in g.tools(a)} == {f"{a}__{a}_a": False, f"{a}__{a}_b": True}
+
+
+def test_tools_can_be_listed_for_one_server(g, uid):
+    a, b = f"a{uid}", f"b{uid}"
+    g.register(server(a))
+    g.register(server(b))
+    assert sorted(t["name"] for t in g.tools(a)) == two_tools(a)
+
+
+def test_registering_again_from_the_saved_definition_keeps_the_group(g, uid):
+    a, group = f"a{uid}", f"g{uid}"
+    g.register(server(a))
+    g.rebuild_group({"name": group, "included_servers": [a]}, {a})
+    g.register(g.saved_server(a))
+    assert group_tools(group) == two_tools(a)
+

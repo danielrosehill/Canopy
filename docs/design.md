@@ -396,8 +396,9 @@ restart, which would otherwise turn an update landing mid-job into a rollback. T
 `CANOPY_ALERT_WEBHOOK` when the set of failing components changes: found on 2026-11-06, when the live `health`
 job failed for two hours and only a table knew.
 
-Built so far: `sync`, `sync-recent`, `embed`, `health`, `storage-expiry`, `backup-data`, `backup-config`, and `restore-test`, which runs after
-`backup-data`. The backup jobs start once `backup.json` exists. The rest of the table arrives with what each one does, and a job
+Built so far: `sync`, `sync-recent`, `embed`, `health`, `storage-expiry`, `tool-refresh`, `backup-data`, `backup-config`, and `restore-test`, which runs after
+`backup-data`. `tool-refresh` ships off, unlike the table above: the gateway has no refresh, so each server is deleted and registered
+again, and its tools vanish for a moment. Set `CANOPY_TOOL_REFRESH=true`, or use `canopy refresh NAME` for one server. The backup jobs start once `backup.json` exists. The rest of the table arrives with what each one does, and a job
 named in `jobs.json` with nothing behind it is listed as not `runnable` and left alone. `every` takes a
 number and m, h or d, and `after` chains a job to another's success. `EMBED_ON_SYNC` is off by
 default, so a schedule never spends money by surprise. When on, every sync embeds what it wrote, so a change

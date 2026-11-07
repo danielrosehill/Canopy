@@ -47,11 +47,24 @@ class FakeJungle:
     def __init__(self):
         self.servers, self.groups, self.lie = {}, {}, False
         self.refuse, self.time_out_group = set(), False   # server urls that will not connect
+        self.tools, self.upstream = {}, {}   # what is registered, and what each upstream would offer
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         path, method = request.url.path, request.method
         if path == "/api/v0/servers" and method == "GET":
             return httpx.Response(200, json=list(self.servers.values()))
+        if path == "/api/v0/tools":
+            wanted = request.url.params.get("server")
+            return httpx.Response(200, json=[t for t in self.tools.values()
+                                             if not wanted or t["name"].startswith(f"{wanted}__")])
+        if path == "/api/v0/tools/enable" or path == "/api/v0/tools/disable":
+            self.tools[request.url.params["entity"]]["enabled"] = path.endswith("enable")
+            return httpx.Response(200, json=[])
+        if path.startswith("/api/v0/servers/") and method == "POST":
+            _, name, verb = path.rsplit("/", 2)
+            if not self.lie:
+                self.servers[name]["enabled"] = verb == "enable"
+            return httpx.Response(200, json={})
         if path == "/api/v0/server_configs":
             return httpx.Response(200, json=list(self.servers.values()))
         if path == "/api/v0/servers" and method == "POST":
@@ -60,10 +73,14 @@ class FakeJungle:
                 return httpx.Response(502, text="cannot connect")
             if not self.lie:
                 self.servers[doc["name"]] = doc
+                for t in self.upstream.get(doc["name"], []):
+                    self.tools[t] = {"name": t, "enabled": True}
             return httpx.Response(201, json={})
         if path.startswith("/api/v0/servers/") and method == "DELETE":
             if not self.lie:
-                self.servers.pop(path.rsplit("/", 1)[1], None)
+                name = path.rsplit("/", 1)[1]
+                self.servers.pop(name, None)
+                self.tools = {k: v for k, v in self.tools.items() if not k.startswith(f"{name}__")}
             return httpx.Response(200, json={})
         if path == "/api/v0/tool-groups" and method == "POST":
             doc = json.loads(request.content)
@@ -356,4 +373,96 @@ def test_no_webhook_means_no_call(ctl):
     ctl.post = None
     ctl.alert_url = ""
     ctl.alert(report("jobs"))
+
+
+# --- check before applying ---------------------------------------------------------------
+
+def config(ctl, **doc):
+    (ctl.config / "servers.json").write_text(json.dumps(doc))
+
+
+def test_validate_finds_what_apply_would_trip_on(ctl):
+    config(ctl, servers=[{"name": "a", "url": "${NOPE}"}, {"name": "a"}, {"name": "catalogue"}, {"name": "../x"}],
+           groups=[{"name": "g", "included_servers": ["ghost"]}])
+    problems = " | ".join(ctl.validate()["problems"])
+    for word in ("NOPE", "named twice", "built in", "invalid name", "ghost"):
+        assert word in problems
+
+
+def test_validate_reads_a_broken_file_as_a_problem(ctl):
+    (ctl.config / "servers.json").write_text("{")
+    assert ctl.validate()["ok"] is False
+    (ctl.config / "servers.json").write_text("[]")
+    assert ctl.validate()["ok"] is False
+
+
+def test_a_group_may_name_a_server_registered_by_hand(ctl, jungle):
+    jungle.servers["hand"] = {"name": "hand"}
+    config(ctl, groups=[{"name": "g", "included_servers": ["hand"]}])
+    assert ctl.validate() == {"ok": True, "problems": []}
+
+
+def test_diff_says_what_apply_would_do_and_keeps_values_out(ctl, jungle):
+    jungle.servers |= {"old": {"name": "old"}, "held": {"name": "held"}, "hand": {"name": "hand"},
+                       "same": {"name": "same", "url": "http://s"}}
+    ctl.write_state({"old": "x", "held": "x", "same": seed.digest({"name": "same", "url": "http://s"}),
+                     "catalogue": seed.digest(seed.BUILTIN_SERVERS[0]), "toolbox": seed.digest(seed.BUILTIN_SERVERS[1])})
+    config(ctl, servers=[{"name": "same", "url": "http://s"}, {"name": "new", "url": "http://${KEY}"}],
+           groups=[{"name": "g", "included_servers": ["held"]}])
+    out = ctl.diff()
+    assert out["register"] == [{"name": "new", "why": "not on the gateway"}]
+    assert out["remove"] == ["old"] and out["blocked"] == {"held": "g"} and out["unmanaged"] == ["hand"]
+    assert out["rebuild_groups"] == ["core", "g"]
+    assert "secret" not in json.dumps(out)
+
+
+def test_diff_after_apply_is_empty(ctl, jungle, monkeypatch):
+    monkeypatch.setattr(seed, "wait_for_gateway", lambda: None)
+    config(ctl, servers=[{"name": "a", "url": "http://a"}])
+    assert ctl.apply()["ok"]
+    out = ctl.diff()
+    assert out["register"] == [] and out["remove"] == [] and out["rebuild_groups"] == []
+
+
+# --- enable, disable and refresh ---------------------------------------------------------
+
+def test_disable_is_read_back(ctl, jungle):
+    jungle.servers["up"] = {"name": "up", "enabled": True}
+    assert ctl.set_server_enabled("up", False)["enabled"] is False
+    jungle.lie = True
+    with pytest.raises(ControlError) as e:
+        ctl.set_server_enabled("up", True)
+    assert e.value.status == 502
+
+
+def test_a_built_in_cannot_be_disabled_and_a_stranger_is_a_404(ctl):
+    for name, status in (("catalogue", 400), ("ghost", 404)):
+        with pytest.raises(ControlError) as e:
+            ctl.set_server_enabled(name, False)
+        assert e.value.status == status
+
+
+def test_refresh_reports_the_change_and_keeps_what_was_disabled(ctl, jungle):
+    jungle.servers["up"] = {"name": "up", "url": "http://u"}
+    jungle.tools = {"up__a": {"name": "up__a", "enabled": False}, "up__gone": {"name": "up__gone", "enabled": True}}
+    jungle.upstream["up"] = ["up__a", "up__new"]
+    out = ctl.refresh_server("up")
+    assert out["added"] == ["up__new"] and out["removed"] == ["up__gone"] and out["tools"] == 2
+    assert jungle.tools["up__a"]["enabled"] is False and jungle.tools["up__new"]["enabled"] is True
+
+
+def test_refresh_keeps_a_disabled_server_disabled(ctl, jungle):
+    jungle.servers["up"] = {"name": "up", "enabled": False}
+    ctl.refresh_server("up")
+    assert jungle.servers["up"]["enabled"] is False
+
+
+def test_the_refresh_job_carries_on_past_a_failure_and_then_says_so(ctl, jungle):
+    jungle.servers |= {"bad": {"name": "bad", "url": "http://bad"}, "good": {"name": "good", "url": "http://g"},
+                       "off": {"name": "off", "enabled": False}}
+    jungle.refuse.add("http://bad")
+    jungle.upstream["good"] = ["good__t"]
+    with pytest.raises(RuntimeError, match="bad"):
+        ctl.refresh_job()
+    assert "good__t" in jungle.tools and "url" not in jungle.servers["off"]
 

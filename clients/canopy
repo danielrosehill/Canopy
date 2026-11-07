@@ -11,7 +11,12 @@
     canopy remove-server NAME
     canopy set-group FILE
     canopy remove-group NAME
+    canopy validate                 what is wrong with the config, changing nothing
+    canopy diff                     what `apply` would do now
     canopy apply                    apply agent-data/config to the gateway
+    canopy enable | disable NAME    put an upstream in or out of service, keeping it registered
+    canopy enable-tool | disable-tool NAME
+    canopy refresh NAME             re-read an upstream's tools
     canopy jobs                     the scheduler's jobs and their last runs
     canopy jobs run NAME            run a job now
     canopy jobs runs NAME           recent runs of a job
@@ -346,6 +351,14 @@ def main() -> int:
         return show("GET", "/v1/storage/buckets")
     if cmd == "apply":
         return show("POST", "/v1/config/apply")
+    if cmd in ("validate", "diff"):
+        code, reply = call("GET", f"/v1/config/{cmd}")
+        print(json.dumps(reply, indent=2, ensure_ascii=False))
+        return 0 if code < 400 and reply.get("ok") else 1
+    if cmd in ("enable", "disable", "refresh") and args:
+        return show("POST", f"/v1/gateway/servers/{args[0]}/{cmd}")
+    if cmd in ("enable-tool", "disable-tool") and args:
+        return show("POST", f"/v1/gateway/tools/{args[0]}/{cmd.split('-')[0]}")
     if cmd == "token":
         code, reply = call("GET", "/v1/tokens/agent")
         if code >= 400:

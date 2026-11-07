@@ -28,6 +28,8 @@ OVERDUE_SLACK = 600   # seconds past two intervals, as the catalogue judges a la
 INTERRUPTED = "interrupted by a restart"
 # Embedding can cost money, so unattended runs stay off unless asked for.
 EMBED_ON_SYNC = os.environ.get("EMBED_ON_SYNC", "false").lower() == "true"
+# A refresh deletes and registers each server again, so its tools vanish briefly. Off unless asked for.
+TOOL_REFRESH = os.environ.get("CANOPY_TOOL_REFRESH", "false").lower() == "true"
 
 def defaults(config: Path) -> list[dict]:
     """Backups start once `backup.json` names a target. `backup-config` pushes only what changed."""
@@ -36,7 +38,7 @@ def defaults(config: Path) -> list[dict]:
             {"name": "health", "every": "5m"}, {"name": "backup-data", "every": "1d", "enabled": target},
             {"name": "backup-config", "every": "1h", "enabled": target},
             {"name": "restore-test", "after": "backup-data", "enabled": target},
-            {"name": "storage-expiry", "every": "1d"}]
+            {"name": "storage-expiry", "every": "1d"}, {"name": "tool-refresh", "every": "1d", "enabled": TOOL_REFRESH}]
 
 
 _UNITS = {"m": 60, "h": 3600, "d": 86400}

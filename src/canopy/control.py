@@ -150,10 +150,22 @@ class Gateway:
         r.raise_for_status()
         return r.json()
 
-    def tools(self) -> list[dict]:
-        r = self.http.get("/api/v0/tools")
+    def tools(self, server: str | None = None) -> list[dict]:
+        r = self.http.get("/api/v0/tools", params={"server": server} if server else None)
         r.raise_for_status()
         return r.json()
+
+    def set_server_enabled(self, name: str, on: bool) -> None:
+        self.http.post(f"/api/v0/servers/{name}/{'enable' if on else 'disable'}").raise_for_status()
+        record = next((s for s in self.servers() if s["name"] == name), {})
+        if record.get("enabled") is not on:
+            raise RuntimeError(f"the gateway still has {name} enabled={record.get('enabled')}")
+
+    def set_tool_enabled(self, name: str, on: bool) -> None:
+        self.http.post(f"/api/v0/tools/{'enable' if on else 'disable'}", params={"entity": name}).raise_for_status()
+        record = next((t for t in self.tools(name.split("__")[0]) if t["name"] == name), {})
+        if record.get("enabled") is not on:
+            raise RuntimeError(f"the gateway still has {name} enabled={record.get('enabled')}")
 
     def saved_server(self, name: str) -> dict | None:
         """What `name` was registered with, in the form a registration takes."""
@@ -387,19 +399,26 @@ class Control:
                         time.sleep(3)
         return changed, failures
 
+    @staticmethod
+    def _prunable(doc: dict, state: dict) -> tuple[list[str], dict[str, str]]:
+        """Servers dropped from the config: those to remove, and those a group still holds. Only names
+        in the state file are candidates, so a server registered by hand is never touched. A missing or
+        empty config reads the same as one that was lost, so it removes nothing: use remove_server to
+        take the last server out."""
+        if not doc["servers"]:
+            return [], {}
+        keep = BUILTIN_NAMES | {s.get("name") for s in doc["servers"]}
+        grouped = {n: x["name"] for x in merged_groups(doc["groups"]) for n in group_servers(x)}
+        dropped = [n for n in state if not n.startswith("#") and n not in keep]
+        return [n for n in dropped if n not in grouped], {n: grouped[n] for n in dropped if n in grouped}
+
     def _prune(self, g: Gateway, doc: dict, state: dict, say, failures: list[str]) -> None:
-        """Deregister servers dropped from the config. Only names in the state file are candidates, so a
-        server registered by hand is never touched. A missing or empty config reads the same as one that
-        was lost, so it removes nothing: use remove_server to take the last server out."""
         if not doc["servers"]:
             say("no servers in the config, so nothing was pruned")
             return
-        keep = BUILTIN_NAMES | {s.get("name") for s in doc["servers"]}
-        grouped = {n: x["name"] for x in merged_groups(doc["groups"]) for n in group_servers(x)}
-        for name in [n for n in state if not n.startswith("#") and n not in keep]:
-            if name in grouped:
-                failures.append(f"{name}: dropped from the config but still in group {grouped[name]}")
-                continue
+        remove, held = self._prunable(doc, state)
+        failures += [f"{n}: dropped from the config but still in group {group}" for n, group in held.items()]
+        for name in remove:
             try:
                 g.deregister(name)
             except (RuntimeError, httpx.HTTPError) as e:
@@ -452,6 +471,74 @@ class Control:
             self.last_apply = {"at": time.time(), "ok": not failures, "failures": failures}
             return {"ok": not failures, "log": log, "failures": failures}
 
+    # --- check before applying ------------------------------------------------------
+
+    def validate(self) -> dict:
+        """What is wrong with the config, without touching anything. Groups are checked against the
+        config and, if it answers, the gateway, since a group may name a server registered by hand."""
+        try:
+            doc = json.loads(self.servers_path.read_text()) if self.servers_path.exists() else {}
+        except ValueError as e:
+            return {"ok": False, "problems": [f"servers.json is not JSON: {e}"]}
+        if not isinstance(doc, dict) or not all(isinstance(doc.get(k, []), list) for k in ("servers", "groups")):
+            return {"ok": False, "problems": ["servers.json must be an object with `servers` and `groups` lists"]}
+        problems, seen = [], set()
+        for s in doc.get("servers", []):
+            name = s.get("name") if isinstance(s, dict) else None
+            try:
+                check_name(name)
+            except ControlError as e:
+                problems.append(f"server: {e}")
+                continue
+            if name in seen:
+                problems.append(f"{name}: named twice")
+            if name in BUILTIN_NAMES:
+                problems.append(f"{name}: is built in")
+            seen.add(name)
+            try:
+                expand(s, self.env)
+            except KeyError as e:
+                problems.append(f"{name}: environment variable {e.args[0]} is not set")
+        known = seen | BUILTIN_NAMES
+        try:
+            known |= self.gateway().server_names()
+        except (httpx.HTTPError, ControlError):
+            pass
+        groups = set()
+        for x in doc.get("groups", []):
+            name = x.get("name") if isinstance(x, dict) else None
+            try:
+                check_name(name)
+            except ControlError as e:
+                problems.append(f"group: {e}")
+                continue
+            if name in groups:
+                problems.append(f"group {name}: named twice")
+            groups.add(name)
+            if missing := group_servers(x) - known:
+                problems.append(f"group {name}: names unregistered servers: {sorted(missing)}")
+        return {"ok": not problems, "problems": problems}
+
+    def diff(self) -> dict:
+        """What `apply` would do now, by name only. Values stay out: they may hold credentials."""
+        checked = self.validate()
+        if not checked["ok"]:
+            return {**checked, "register": [], "remove": [], "blocked": {}, "rebuild_groups": []}
+        doc, state, live = self.read_config(), self.read_state(), self.gateway().server_names()
+        register = []
+        for raw in [*BUILTIN_SERVERS, *doc["servers"]]:
+            name = raw["name"]
+            if name not in live:
+                register.append({"name": name, "why": "not on the gateway"})
+            elif state.get(name) != digest(expand(raw, self.env)):
+                register.append({"name": name, "why": "changed" if name in state else "not registered by apply"})
+        remove, held = self._prunable(doc, state)
+        wanted = merged_groups(doc["groups"])
+        rebuild = [x["name"] for x in wanted] if register or state.get("#groups") != digest(wanted) else []
+        return {"ok": True, "problems": [], "register": register, "remove": remove, "blocked": held,
+                "rebuild_groups": rebuild,
+                "unmanaged": sorted(live - BUILTIN_NAMES - {s["name"] for s in doc["servers"]} - set(remove) - set(held))}
+
     # --- single changes ------------------------------------------------------------
 
     def add_server(self, raw: dict, replace: bool = False) -> dict:
@@ -476,17 +563,97 @@ class Control:
             state = self.read_state()
             state[name] = digest(server)
             self.write_state(state)
-            # On 0.4.7 a group follows the name, so this is a precaution. See the contract suite.
-            registered = g.server_names()
-            rebuilt = []
-            for group in merged_groups(doc["groups"]):
-                if name in group_servers(group):
-                    try:
-                        g.rebuild_group(group, registered)
-                    except RuntimeError as e:
-                        raise ControlError(502, f"{name} is registered, but group {group['name']}: {e}") from None
-                    rebuilt.append(group["name"])
+            rebuilt = self._rebuild_for(g, doc, name)
         return {"registered": name, "rebuilt_groups": rebuilt, "sync_error": self.sync()}
+
+    @staticmethod
+    def _rebuild_for(g: Gateway, doc: dict, name: str) -> list[str]:
+        """On 0.4.7 a group follows the name, so this is a precaution. See the contract suite."""
+        registered, rebuilt = g.server_names(), []
+        for group in merged_groups(doc["groups"]):
+            if name in group_servers(group):
+                try:
+                    g.rebuild_group(group, registered)
+                except RuntimeError as e:
+                    raise ControlError(502, f"{name} is registered, but group {group['name']}: {e}") from None
+                rebuilt.append(group["name"])
+        return rebuilt
+
+    def _listed(self, g: Gateway, name: str) -> dict:
+        check_name(name)
+        record = next((s for s in g.servers() if s["name"] == name), None)
+        if record is None:
+            raise ControlError(404, f"no server {name}")
+        return record
+
+    def _bad_gateway(self, fn, *args) -> None:
+        try:
+            fn(*args)
+        except RuntimeError as e:
+            raise ControlError(502, str(e)) from None
+
+    def set_server_enabled(self, name: str, on: bool) -> dict:
+        """Takes an upstream out without forgetting it. This is the gateway's state, not the config's."""
+        if name in BUILTIN_NAMES and not on:
+            raise ControlError(400, f"{name} is built in")
+        with self.lock:
+            g = self.gateway()
+            self._listed(g, name)
+            self._bad_gateway(g.set_server_enabled, name, on)
+        return {"server": name, "enabled": on, "sync_error": self.sync()}
+
+    def set_tool_enabled(self, name: str, on: bool) -> dict:
+        server = check_name(name).split("__")[0]
+        if server in BUILTIN_NAMES and not on:
+            raise ControlError(400, f"{server} is built in")
+        with self.lock:
+            g = self.gateway()
+            if not any(t["name"] == name for t in g.tools(server)):
+                raise ControlError(404, f"no tool {name}")
+            self._bad_gateway(g.set_tool_enabled, name, on)
+        return {"tool": name, "enabled": on, "sync_error": self.sync()}
+
+    def _refresh(self, g: Gateway, name: str) -> dict:
+        """Register a server again as it stands, the only way the gateway re-reads its tools. That
+        clears what was disabled, so it is disabled again afterwards."""
+        record = self._listed(g, name)
+        before = {t["name"]: t.get("enabled") is not False for t in g.tools(name)}
+        self._bad_gateway(g.register, g.saved_server(name))
+        if record.get("enabled") is False:
+            self._bad_gateway(g.set_server_enabled, name, False)
+        after = {t["name"] for t in g.tools(name)}
+        for tool in sorted(after):
+            if before.get(tool) is False and record.get("enabled") is not False:
+                self._bad_gateway(g.set_tool_enabled, tool, False)
+        return {"refreshed": name, "tools": len(after), "added": sorted(after - set(before)),
+                "removed": sorted(set(before) - after), "rebuilt_groups": self._rebuild_for(g, self.read_config(), name)}
+
+    def refresh_server(self, name: str) -> dict:
+        with self.lock:
+            reply = self._refresh(self.gateway(), name)
+        return {**reply, "sync_error": self.sync()}
+
+    def refresh_job(self) -> str:
+        """The `tool-refresh` job. Disabled servers are left alone, and the built-ins change only with
+        an update. One failure does not stop the rest, and each failure keeps its old definition."""
+        lines, failures = [], []
+        with self.lock:
+            g = self.gateway()
+            for s in sorted(g.servers(), key=lambda s: s["name"]):
+                if s["name"] in BUILTIN_NAMES or s.get("enabled") is False:
+                    continue
+                try:
+                    r = self._refresh(g, s["name"])
+                    if r["added"] or r["removed"]:
+                        lines.append(f"{s['name']}: +{len(r['added'])} -{len(r['removed'])}")
+                except (ControlError, httpx.HTTPError) as e:
+                    failures.append(f"{s['name']}: {e}")
+        err = self.sync()
+        if err:
+            failures.append(f"catalogue sync: {err}")
+        if failures:
+            raise RuntimeError("; ".join(failures))
+        return "; ".join(lines) or "no tool lists changed"
 
     def remove_server(self, name: str) -> dict:
         check_name(name)

@@ -124,6 +124,7 @@ services:
       CANOPY_STORAGE_CAPACITY_GB: ${CANOPY_STORAGE_CAPACITY_GB:-10}
       CANOPY_STAGE_MAX_MB: ${CANOPY_STAGE_MAX_MB:-256}
       CANOPY_ALERT_WEBHOOK: ${CANOPY_ALERT_WEBHOOK:-}
+      CANOPY_TOOL_REFRESH: ${CANOPY_TOOL_REFRESH:-false}
     env_file:
       - path: ${CANOPY_AGENT_DATA:-${HOME}/canopy/agent-data}/secrets.env
         required: false

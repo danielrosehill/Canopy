@@ -161,6 +161,9 @@ version. `compat.json` records what has passed. Measured on 0.4.7, 2026-11-05.
   that used to cost the working server: `register` now takes its definition from
   `GET /api/v0/server_configs` beforehand, and registers it again if the new one fails. That route is the
   only copy of the expanded credentials, and what it returns registers as it is.
+- Enable and disable work on a server or a tool, and take it out of a group's tools. Registering again
+  clears them, so a refresh disables again whatever was disabled.
+- `GET /api/v0/tools?server=` lists one server's tools, each with `enabled`.
 - Writes use the REST API. The gateway's CLI is in a different image.
 - `GET /api/v0/tools` lists tools for an admin token.
 - `/init` gives the admin token once. A client token works only on MCP endpoints, and a user token only
