@@ -32,6 +32,7 @@ from typing import Callable
 import httpx
 
 from . import gateway as gw
+from . import index as ix
 
 ADMIN_DIR = Path(os.environ.get("CANOPY_ADMIN_DIR", "/admin"))
 CONFIG = Path(os.environ.get("CANOPY_CONFIG", "/config"))
@@ -122,6 +123,8 @@ def merged_groups(groups: list[dict]) -> list[dict]:
         core = {"name": CORE_GROUP, "description": "Search plus the long-tail tool caller"}
         out.insert(0, core)
     core["included_servers"] = list(dict.fromkeys([*builtin, *core.get("included_servers", [])]))
+    if gw.ADMIN_TOOLS:
+        core["excluded_tools"] = list(dict.fromkeys([*core.get("excluded_tools", []), *gw.ADMIN_TOOLS]))
     return out
 
 
@@ -707,6 +710,82 @@ class Control:
             doc["groups"] = [x for x in doc["groups"] if x.get("name") != name]
             write_json(self.servers_path, doc)
         return {"removed": name}
+
+    # --- catalogue -----------------------------------------------------------------
+
+    def _catalogue(self, tool: str, arguments: dict | None = None) -> str:
+        try:
+            return self._tool_text(f"catalogue__{tool}", arguments)
+        except RuntimeError as e:
+            raise ControlError(502, f"catalogue: {e}") from None
+
+    def catalogue_sync(self, doc: dict) -> dict:
+        args = {k: doc[k] for k in ("plugin", "force", "full") if k in doc}
+        if extra := set(doc) - set(args):
+            raise ControlError(400, f"unknown fields: {sorted(extra)}")
+        return json.loads(self._catalogue("sync", args))
+
+    def embed_state(self, run: bool = False) -> dict:
+        return json.loads(self._catalogue("embed", {"dry_run": not run}))
+
+    def read_record(self, rid: str) -> dict:
+        text = self._catalogue("read", {"ids": [rid]})
+        header = text.split("\n", 2)[1] if text.count("\n") else "{}"
+        if "error" in json.loads(header):
+            raise ControlError(404, json.loads(header)["error"])
+        return {"id": rid, "text": text}
+
+    @property
+    def marketplaces_path(self) -> Path:
+        return self.config / "marketplaces.json"
+
+    def _marketplace_doc(self) -> dict:
+        doc = json.loads(self.marketplaces_path.read_text()) if self.marketplaces_path.exists() else {}
+        return {**doc, "marketplaces": doc.get("marketplaces", [])}
+
+    @staticmethod
+    def _marketplace_name(entry: dict) -> str:
+        return ix.safe_name(entry.get("name") or entry["repo"].rstrip("/").rsplit("/", 1)[-1].removesuffix(".git"))
+
+    def marketplaces(self) -> list[dict]:
+        out = []
+        for m in self._marketplace_doc()["marketplaces"]:
+            name, plugins = self._marketplace_name(m), None
+            try:
+                plugins = json.loads(self._tool_text("catalogue__list", {
+                    "kind": "plugin", "marketplace": name, "limit": 1}))["total"]
+            except (RuntimeError, httpx.HTTPError, ValueError, KeyError):
+                pass   # the list is in the config: a catalogue that is down must not hide it
+            out.append({**m, "name": name, "plugins": plugins})
+        return out
+
+    def add_marketplace(self, doc: dict) -> dict:
+        """Only a full pass reads the marketplace list, so that is the sync this asks for. It runs in the
+        background: a repo that cannot be read shows in `last_sync` and in /v1/status."""
+        if extra := set(doc) - {"repo", "name", "ref"}:
+            raise ControlError(400, f"unknown fields: {sorted(extra)}")
+        try:
+            ix.git_url(doc.get("repo"))
+            ix.clean_ref(doc.get("ref"))
+            name = self._marketplace_name(doc)
+        except (ValueError, TypeError, AttributeError) as e:
+            raise ControlError(400, f"needs a `repo`, as owner/name or an https URL: {e}") from None
+        with self.lock:
+            current = self._marketplace_doc()
+            if any(self._marketplace_name(m) == name for m in current["marketplaces"]):
+                raise ControlError(409, f"{name} is already listed")
+            current["marketplaces"].append(doc)
+            write_json(self.marketplaces_path, current)
+        return {"added": name, "sync": self.catalogue_sync({"full": True})}
+
+    def remove_marketplace(self, name: str) -> dict:
+        with self.lock:
+            current = self._marketplace_doc()
+            kept = [m for m in current["marketplaces"] if self._marketplace_name(m) != name]
+            if len(kept) == len(current["marketplaces"]):
+                raise ControlError(404, f"no marketplace {name}")
+            write_json(self.marketplaces_path, {**current, "marketplaces": kept})
+        return {"removed": name, "sync": self.catalogue_sync({"full": True})}
 
     # --- status --------------------------------------------------------------------
 

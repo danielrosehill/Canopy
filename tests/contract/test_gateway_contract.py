@@ -338,3 +338,11 @@ def test_registering_again_from_the_saved_definition_keeps_the_group(g, uid):
     g.register(g.saved_server(a))
     assert group_tools(group) == two_tools(a)
 
+
+def test_excluded_tools_leave_a_group_that_includes_their_server(g, uid):
+    """How admin tools stay off an agent's list."""
+    a, group = f"a{uid}", f"g{uid}"
+    g.register(server(a))
+    g.rebuild_group({"name": group, "included_servers": [a], "excluded_tools": [f"{a}__{a}_a"]}, {a})
+    assert group_tools(group) == [f"{a}__{a}_b"]
+

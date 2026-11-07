@@ -51,8 +51,8 @@ _cache: dict = {"tools": None, "at": 0.0}
 def _all_tools() -> list[dict]:
     with _cache_lock:
         if _cache["tools"] is None or time.time() - _cache["at"] >= CACHE_TTL:
-            _cache.update(tools=[t for t in _client.tools() if not t["name"].startswith(SELF_PREFIX)],
-                          at=time.time())
+            _cache.update(tools=[t for t in _client.tools() if not t["name"].startswith(SELF_PREFIX)
+                                 and t["name"] not in gw.ADMIN_TOOLS], at=time.time())
         return _cache["tools"]
 
 
@@ -148,6 +148,8 @@ def call_tool(name: str, arguments: dict | None = None) -> list:
     (catalogue__read("tool:<name>") or describe_tools)."""
     if norm(name).startswith(SELF_PREFIX):
         return [TextContent(type="text", text="error: toolbox cannot call itself")]
+    if norm(name) in gw.ADMIN_TOOLS:
+        return [TextContent(type="text", text=f"error: {norm(name)} is for the control API: use `canopy`")]
     try:
         return to_blocks(_client.call(norm(name), arguments))
     except Exception as e:  # noqa: BLE001 — the agent needs the reason, not a crash

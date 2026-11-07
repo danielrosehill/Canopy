@@ -23,6 +23,11 @@ GATEWAY_URL = os.environ.get("GATEWAY_URL", "http://gateway:8080").rstrip("/")
 TOKEN_DIR = Path(os.environ.get("CANOPY_TOKEN_DIR", "/tokens"))
 SERVICES_TOKEN = "services"   # MCP client identity
 READER_TOKEN = "reader"       # read-only REST identity
+# Managing the server is for the API and its token: `embed` spends money. The API's own jobs still call
+# these, on the gateway's /mcp endpoint. CANOPY_AGENT_ADMIN_TOOLS=true hands them back to agents, for a
+# deployment whose agents have no route to the API.
+ADMIN_TOOLS = (() if os.environ.get("CANOPY_AGENT_ADMIN_TOOLS", "false").lower() == "true"
+               else ("catalogue__sync", "catalogue__embed"))
 
 
 def offload(fn):

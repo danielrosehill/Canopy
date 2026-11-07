@@ -534,7 +534,7 @@ def refresh_tools(db: store.Db) -> int:
     with write_lock, db:
         db.execute("DELETE FROM gateway_tools")
         for t in tools:
-            if t["name"].startswith("toolbox__"):
+            if t["name"].startswith("toolbox__") or t["name"] in gw.ADMIN_TOOLS:
                 continue
             db.execute("INSERT INTO gateway_tools VALUES (%s,%s,%s,%s)",
                        (t["name"], t.get("description") or "", json.dumps(t.get("inputSchema") or {}),

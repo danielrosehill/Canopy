@@ -64,7 +64,7 @@ flowchart LR
 - **Skills library.** Indexes plugin marketplaces. Claude Code's format is the one supported today, but the
   idea is not tied to it. Skills stay out of the agent's context until a search finds them.
 - **MCP aggregation.** MCPJungle puts all your upstreams behind one endpoint. This is progressive too: the
-  agent sees a small `core` group of 12 tools, and reaches the long tail through the toolbox.
+  agent sees a small `core` group of 10 tools, and reaches the long tail through the toolbox.
 - **CLI container.** Tools such as `gh` and `aws`, with their logins, on the server.
 - **File transport.** See [below](#file-transport).
 

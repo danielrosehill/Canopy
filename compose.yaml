@@ -31,6 +31,7 @@ x-canopy-env: &canopy-env
   CORE_GROUP: ${CORE_GROUP:-core}
   TOOLS_GROUP: ${TOOLS_GROUP:-}
   CANOPY_CLIENT_NAME: ${CANOPY_CLIENT_NAME:-canopy}
+  CANOPY_AGENT_ADMIN_TOOLS: ${CANOPY_AGENT_ADMIN_TOOLS:-false}
 
 services:
   db:

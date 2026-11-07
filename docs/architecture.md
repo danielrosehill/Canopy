@@ -213,10 +213,10 @@ calls it. The column is `vector(1024)`, so a model of another size needs a migra
 
 A record keeps its vector while `embed_key`, the hash of the embedded text, stays the same. With
 `EMBED_ON_SYNC=true` every sync embeds what it wrote, however it was started, and a record still missing a
-vector afterwards fails `health`. Otherwise `catalogue__embed` reports pending records and estimated tokens,
+vector afterwards fails `health`. Otherwise `canopy embed` reports pending records and estimated tokens,
 and `dry_run=false` starts the run. Until it has a vector, a record ranks on its keyword position alone.
 
-**Freshness.** `sync-recent` runs every 5 minutes, and `catalogue__sync` with no arguments does the same: one
+**Freshness.** `sync-recent` runs every 5 minutes, and `canopy sync` with no arguments does the same: one
 GitHub call lists recent pushes, and only marketplaces and plugin repos pushed since the last pass are checked.
 A marketplace push is how a plugin arrives or leaves, so pruning always runs. With no token, a failed call, or
 a list that cannot cover the gap, it becomes a full pass. The hourly `sync` checks every plugin as the backstop.

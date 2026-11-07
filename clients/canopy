@@ -17,6 +17,12 @@
     canopy enable | disable NAME    put an upstream in or out of service, keeping it registered
     canopy enable-tool | disable-tool NAME
     canopy refresh NAME             re-read an upstream's tools
+    canopy marketplaces             the marketplaces in the config
+    canopy add-marketplace REPO [NAME]    owner/name or an https URL, then a full sync
+    canopy remove-marketplace NAME
+    canopy sync [PLUGIN] [--full] [--force]    start a sync. Alone: recent pushes only
+    canopy embed [--run]            what is pending and its cost. --run starts it
+    canopy read ID                  one record in full, such as skill:my-plugin/my-skill
     canopy jobs                     the scheduler's jobs and their last runs
     canopy jobs run NAME            run a job now
     canopy jobs runs NAME           recent runs of a job
@@ -349,6 +355,23 @@ def main() -> int:
         return stage(args)
     if cmd == "buckets":
         return show("GET", "/v1/storage/buckets")
+    if cmd == "marketplaces":
+        return show("GET", "/v1/catalogue/marketplaces")
+    if cmd == "add-marketplace" and args:
+        return show("POST", "/v1/catalogue/marketplaces",
+                    {"repo": args[0], **({"name": args[1]} if len(args) > 1 else {})})
+    if cmd == "remove-marketplace" and args:
+        return show("DELETE", f"/v1/catalogue/marketplaces/{args[0]}")
+    if cmd == "sync":
+        flags = {f.removeprefix("--"): True for f in args if f in ("--full", "--force")}
+        names = [a for a in args if not a.startswith("--")]
+        return show("POST", "/v1/catalogue/sync", {**flags, **({"plugin": names[0]} if names else {})})
+    if cmd == "embed":
+        return show("POST", "/v1/embeddings/run") if "--run" in args else show("GET", "/v1/embeddings/pending")
+    if cmd == "read" and args:
+        code, reply = call("GET", f"/v1/catalogue/records/{urllib.parse.quote(args[0], safe=':/')}")
+        print(reply.get("text") or json.dumps(reply, indent=2, ensure_ascii=False))
+        return 0 if code < 400 else 1
     if cmd == "apply":
         return show("POST", "/v1/config/apply")
     if cmd in ("validate", "diff"):

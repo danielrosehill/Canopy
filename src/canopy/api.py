@@ -169,6 +169,28 @@ def create_app(control: Control, token: str, embedder: Embedder | None = None,
     async def disable_tool(request: Request) -> JSONResponse:
         return await run(request, control.set_tool_enabled, request.path_params["name"], False)
 
+    async def list_marketplaces(request: Request) -> JSONResponse:
+        return await run(request, control.marketplaces)
+
+    async def add_marketplace(request: Request) -> JSONResponse:
+        return await run(request, control.add_marketplace, await body(request), status=201)
+
+    async def remove_marketplace(request: Request) -> JSONResponse:
+        return await run(request, control.remove_marketplace, request.path_params["name"])
+
+    async def catalogue_sync(request: Request) -> JSONResponse:
+        doc = await body(request) if await request.body() else {}
+        return await run(request, control.catalogue_sync, doc, status=202)
+
+    async def read_record(request: Request) -> JSONResponse:
+        return await run(request, control.read_record, request.path_params["id"])
+
+    async def embeddings_pending(request: Request) -> JSONResponse:
+        return await run(request, control.embed_state)
+
+    async def embeddings_run(request: Request) -> JSONResponse:
+        return await run(request, control.embed_state, True, status=202)
+
     def read_config(_: Request) -> JSONResponse:
         return JSONResponse(control.read_config())
 
@@ -233,7 +255,14 @@ def create_app(control: Control, token: str, embedder: Embedder | None = None,
         Route("/v1/config/diff", diff),
         Route("/v1/config/apply", apply, methods=["POST"]),
         Route("/v1/tokens/agent", agent_token),
+        Route("/v1/catalogue/marketplaces", list_marketplaces),
+        Route("/v1/catalogue/marketplaces", add_marketplace, methods=["POST"]),
+        Route("/v1/catalogue/marketplaces/{name}", remove_marketplace, methods=["DELETE"]),
+        Route("/v1/catalogue/sync", catalogue_sync, methods=["POST"]),
+        Route("/v1/catalogue/records/{id:path}", read_record),
         Route("/v1/embeddings", embeddings, methods=["POST"]),
+        Route("/v1/embeddings/pending", embeddings_pending),
+        Route("/v1/embeddings/run", embeddings_run, methods=["POST"]),
         Route("/v1/search", search, methods=["POST"]),
         Route("/v1/skills/mcp", skills_mcp, methods=["POST"]),
         Route("/v1/storage/stage", stage, methods=["POST"]),

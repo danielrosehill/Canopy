@@ -72,7 +72,7 @@ MCP gateway. On top of that, `docker compose up -d` brings up:
 - a **cli** container with `gh`, `aws`, `rclone`, `restic` and others, so skills can use them without
   installing anything on the host
 
-An agent connects to one small group of 12 tools. Skills and other tools stay out of its context
+An agent connects to one small group of 10 tools. Skills and other tools stay out of its context
 until it searches for them.
 
 For people, there is a **skill picker**: fuzzy search across the skills and tools on your server, in

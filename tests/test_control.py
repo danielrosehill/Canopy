@@ -466,3 +466,76 @@ def test_the_refresh_job_carries_on_past_a_failure_and_then_says_so(ctl, jungle)
         ctl.refresh_job()
     assert "good__t" in jungle.tools and "url" not in jungle.servers["off"]
 
+
+# --- marketplaces and the catalogue ------------------------------------------------------
+
+@pytest.fixture
+def tools(ctl):
+    calls = []
+
+    def text(name, arguments=None):
+        calls.append((name, arguments))
+        return {"catalogue__list": '{"total": 4}'}.get(name, "{}")
+    ctl._tool_text = text
+    return calls
+
+
+def test_a_new_marketplace_is_saved_and_gets_a_full_sync(ctl, tools):
+    (ctl.config / "marketplaces.json").write_text(json.dumps({"marketplaces": [{"repo": "a/one"}]}))
+    assert ctl.add_marketplace({"repo": "a/two"})["added"] == "two"
+    assert ("catalogue__sync", {"full": True}) in tools
+    assert [m["name"] for m in ctl.marketplaces()] == ["one", "two"]
+    assert ctl.marketplaces()[0]["plugins"] == 4
+
+
+@pytest.mark.parametrize("doc,status", [
+    ({}, 400), ({"repo": "not a repo"}, 400), ({"repo": "a/b", "ref": "--upload-pack=x"}, 400),
+    ({"repo": "a/b", "nope": 1}, 400), ({"repo": "x/one"}, 409)])
+def test_a_bad_marketplace_changes_nothing(ctl, tools, doc, status):
+    before = json.dumps({"marketplaces": [{"repo": "a/one"}]})
+    (ctl.config / "marketplaces.json").write_text(before)
+    with pytest.raises(ControlError) as e:
+        ctl.add_marketplace(doc)
+    assert e.value.status == status and (ctl.config / "marketplaces.json").read_text() == before
+
+
+def test_removing_a_marketplace_syncs_and_a_stranger_is_a_404(ctl, tools):
+    (ctl.config / "marketplaces.json").write_text(json.dumps({"marketplaces": [{"repo": "a/one", "name": "n"}]}))
+    with pytest.raises(ControlError) as e:
+        ctl.remove_marketplace("ghost")
+    assert e.value.status == 404
+    ctl.remove_marketplace("n")
+    assert ctl.marketplaces() == [] and ("catalogue__sync", {"full": True}) in tools
+
+
+def test_marketplaces_still_list_with_the_catalogue_down(ctl):
+    (ctl.config / "marketplaces.json").write_text(json.dumps({"marketplaces": [{"repo": "a/one"}]}))
+
+    def down(name, arguments=None):
+        raise httpx.ConnectError("no")
+    ctl._tool_text = down
+    assert ctl.marketplaces() == [{"repo": "a/one", "name": "one", "plugins": None}]
+
+
+def test_a_record_that_is_not_there_is_a_404(ctl):
+    ctl._tool_text = lambda name, arguments=None: '=== x\n{"error":"no such record"}'
+    with pytest.raises(ControlError) as e:
+        ctl.read_record("x")
+    assert e.value.status == 404
+
+
+def test_embedding_is_a_dry_run_unless_asked(ctl, tools):
+    ctl.embed_state()
+    ctl.embed_state(True)
+    assert [a for _, a in tools] == [{"dry_run": True}, {"dry_run": False}]
+
+
+def test_core_keeps_admin_tools_from_agents_and_what_the_user_excluded():
+    core = seed.merged_groups([{"name": "core", "excluded_tools": ["time__now"]}])[0]
+    assert core["excluded_tools"] == ["time__now", "catalogue__sync", "catalogue__embed"]
+
+
+def test_the_opt_out_hands_admin_tools_back(monkeypatch):
+    monkeypatch.setattr(seed.gw, "ADMIN_TOOLS", ())
+    assert "excluded_tools" not in seed.merged_groups([])[0]
+

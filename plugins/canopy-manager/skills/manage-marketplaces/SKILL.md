@@ -17,8 +17,11 @@ private repo needs `GITHUB_TOKEN` in `agent-data/secrets.env`, then `canopy comp
 
 To add or remove one:
 
-1. Edit the file. The catalogue reads it on every sync, so nothing needs restarting.
-2. Call `catalogue__sync`. Removing a marketplace drops its plugins from the index on this sync.
+1. `canopy add-marketplace owner/repo [NAME]` or `canopy remove-marketplace NAME`. Each starts a full sync,
+   and removing a marketplace drops its plugins from the index on that sync. To pin a `ref`, use
+   `canopy api POST /v1/catalogue/marketplaces '{"repo":"owner/repo","ref":"v2"}'`. `canopy marketplaces` lists them.
+2. If you edit the file by hand instead, nothing needs restarting, but run `canopy sync --full`: a quick pass does
+   not read the list.
 3. Poll `catalogue__health` until `sync_running` is false, and check `last_sync.summary.errors`.
 4. Confirm with `catalogue__list` and `kind="plugin"`, `marketplace="<name>"`.
 

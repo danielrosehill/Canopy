@@ -421,7 +421,7 @@ def health() -> str:
             problems.append(f"{pending} records have no embedding, though every sync should embed them")
         else:
             warnings.append(f"{pending} records have no embedding (semantic search misses them); "
-                            "run embed to see the cost, then embed(dry_run=false)")
+                            "`canopy embed` shows the cost, and `canopy embed --run` starts it")
     if not ix.EMBED_URL:
         warnings.append("no embedding provider configured: keyword search only")
     gw_at = db.execute("SELECT value FROM meta WHERE key = 'gateway_fetched_at'").fetchone()

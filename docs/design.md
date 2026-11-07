@@ -95,6 +95,11 @@ Rules:
   it worked, so that check lives here, once.
 - **No Docker socket.** That would make the API root on the host. So updating is `canopy update`, on the
   host, and the API only reports health to it.
+- **Admin tools stay off the agent's list.** The core group excludes `catalogue__sync` and `catalogue__embed`,
+  the toolbox refuses them, and search does not return them, so `canopy sync` and `canopy embed` are the route.
+  The stack's own jobs still call them on the gateway's `/mcp`, so a client pointed there by hand can reach them:
+  this keeps them out of an agent's way, and is not an access control. `CANOPY_AGENT_ADMIN_TOOLS=true` hands them
+  back, for a deployment whose agents have no route to the API.
 - **No management MCP.** This replaces that plan. Managing a server needs a shell, so a skill with the
   CLI is the better route, and it keeps admin operations out of every agent's tool list and out of
   reach of the toolbox. Hosted clients do not manage the server.
@@ -331,7 +336,9 @@ numbered migrations. Agents never connect directly: they use the API.
 | `workspace` | The user | `sources` (their marketplaces), `namespaces`, `memories` |
 
 A system source can be disabled but not edited, so an update can change it safely, and nothing the
-user adds is touched by a migration. Marketplaces and namespaces are managed through the API, and the
+user adds is touched by a migration. Marketplaces and namespaces are managed through the API. As built,
+marketplaces live in `agent-data/config/marketplaces.json`, not `workspace.sources`, which nothing writes to
+yet: a plain file is what people edit, and the config backup already covers it. The
 `backup-config` job exports them to `agent-data/config` as JSON, so config stays readable and portable.
 
 ## Secrets

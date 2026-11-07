@@ -108,3 +108,17 @@ def test_search_forwards_to_the_catalogue_and_keeps_its_status(client, monkeypat
     assert r.status_code == 400 and r.json() == {"error": "needs `query`"}
     assert seen["url"].endswith("/search") and b"limit" in seen["body"]
     assert client.post("/v1/search", json={"query": "x"}).status_code == 401
+
+
+def test_a_record_id_keeps_its_slashes(client, monkeypatch):
+    seen = []
+    monkeypatch.setattr(Stub, "read_record", lambda self, rid: seen.append(rid) or {"id": rid}, raising=False)
+    assert client.get("/v1/catalogue/records/skill:p/name/references/x.md", headers=AUTH).status_code == 200
+    assert seen == ["skill:p/name/references/x.md"]
+
+
+def test_sync_takes_an_empty_body(client, monkeypatch):
+    monkeypatch.setattr(Stub, "catalogue_sync", lambda self, doc: {"doc": doc}, raising=False)
+    r = client.post("/v1/catalogue/sync", headers=AUTH)
+    assert r.status_code == 202 and r.json() == {"doc": {}}
+
