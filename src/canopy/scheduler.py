@@ -24,6 +24,8 @@ CONFIG = Path(os.environ.get("CANOPY_CONFIG", "/config"))
 TICK = int(os.environ.get("SCHEDULER_TICK_SEC", "30"))
 START_DELAY = int(os.environ.get("SCHEDULER_START_DELAY_SEC", "60"))   # the seed makes the tokens
 OUTPUT_CAP = 10_000
+OVERDUE_SLACK = 600   # seconds past two intervals, as the catalogue judges a late sync
+INTERRUPTED = "interrupted by a restart"
 # Embedding can cost money, so unattended runs stay off unless asked for.
 EMBED_ON_SYNC = os.environ.get("EMBED_ON_SYNC", "false").lower() == "true"
 
@@ -85,6 +87,7 @@ class Scheduler:
     def __init__(self, db: store.Db, actions: dict[str, Callable[[], str]], config: Path = CONFIG,
                  clock: Callable[[], float] = time.time):
         self.db, self.actions, self.config, self.clock = db, actions, config, clock
+        self.ticked = clock()   # the loop's last sign of life
 
     def jobs(self) -> dict[str, Job]:
         return {j.name: j for j in load(self.config)}
@@ -92,8 +95,8 @@ class Scheduler:
     def recover(self) -> int:
         """Close runs a restart cut short, or their lock would hold for ever."""
         return len(self.db.execute(
-            "UPDATE system.job_runs SET finished = now(), ok = FALSE, output = 'interrupted by a restart' "
-            "WHERE finished IS NULL RETURNING id").fetchall())
+            "UPDATE system.job_runs SET finished = now(), ok = FALSE, output = %s "
+            "WHERE finished IS NULL RETURNING id", (INTERRUPTED,)).fetchall())
 
     def _last_started(self, name: str) -> float | None:
         row = self.db.execute("SELECT extract(epoch FROM max(started))::float8 AS at FROM system.job_runs "
@@ -149,6 +152,39 @@ class Scheduler:
                         "runnable": j.name in self.actions, "last": last[0] if last else None})
         return out
 
+    def check(self) -> dict:
+        """For /v1/status: a job that fails or stops running is a fault in the stack, even with every
+        service up. Two kinds of run do not count. `health` calls this, so its own failure would keep it red for
+        ever. And a run cut off by a restart says nothing about the job: counting it would turn every
+        `canopy update` that lands during a job into a rollback."""
+        now, jobs = self.clock(), self.jobs()
+        last = {r["job"]: r for r in self.db.execute(
+            "SELECT DISTINCT ON (job) job, ok, left(output, 300) AS output FROM system.job_runs "
+            "WHERE finished IS NOT NULL AND output IS DISTINCT FROM %s ORDER BY job, id DESC", (INTERRUPTED,))}
+        good = {r["job"]: r["at"] for r in self.db.execute(
+            "SELECT job, extract(epoch FROM max(started))::float8 AS at FROM system.job_runs "
+            "WHERE ok GROUP BY job")}
+        watched = [j for j in jobs.values() if j.enabled and j.name in self.actions and j.name != "health"]
+        failing = {j.name: last[j.name]["output"] for j in watched
+                   if j.name in last and not last[j.name]["ok"]}
+        overdue = sorted(j.name for j in watched if j.every and j.name in good
+                         and now - good[j.name] > 2 * j.every + OVERDUE_SLACK)
+        stalled = now - self.ticked > START_DELAY + 10 * TICK
+        out = {"ok": not (failing or overdue or stalled), "failing": failing, "overdue": overdue,
+               "backup": self._backup_age(jobs, good, last, now)}
+        if stalled:
+            out["error"] = f"the scheduler has not ticked for {now - self.ticked:.0f}s"
+        return out
+
+    def _backup_age(self, jobs: dict[str, Job], good: dict, last: dict, now: float) -> dict:
+        data = jobs.get("backup-data")
+        if data is None or not data.enabled:
+            return {"state": "off"}
+        at = good.get("backup-data")
+        test = last.get("restore-test")
+        return {"state": "on", "last_ok_hours": round((now - at) / 3600, 1) if at else None,
+                "restore_test_ok": test["ok"] if test else None}
+
     def tick(self) -> list[threading.Thread]:
         """Each job gets a thread, so a long sync does not hold up the rest."""
         threads = [threading.Thread(target=self.run, args=(n,), daemon=True) for n in self.due()]
@@ -160,6 +196,7 @@ class Scheduler:
         self.recover()
         time.sleep(START_DELAY)
         while True:
+            self.ticked = self.clock()
             try:
                 self.tick()
             except Exception as e:  # noqa: BLE001 - a bad jobs.json must not end the loop

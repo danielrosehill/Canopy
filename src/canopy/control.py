@@ -39,6 +39,7 @@ MODE = os.environ.get("SERVER_MODE", "enterprise")
 CORE_GROUP = os.environ.get("CORE_GROUP", "core")
 REGISTER_TIMEOUT = float(os.environ.get("REGISTER_TIMEOUT_SEC", "30"))
 REGISTER_SETTLE = float(os.environ.get("REGISTER_SETTLE_SEC", "30"))
+ALERT_WEBHOOK = os.environ.get("CANOPY_ALERT_WEBHOOK", "")
 
 BUILTIN_SERVERS = [
     {"name": "catalogue", "transport": "streamable_http", "url": "http://catalogue:3000/mcp",
@@ -292,10 +293,13 @@ class Control:
 
     def __init__(self, gateway: Callable[[str], Gateway] = Gateway, sync: Callable[[], str | None] = ask_catalogue_to_sync,
                  config: Path = CONFIG, admin_dir: Path = ADMIN_DIR, token_dir: Path = gw.TOKEN_DIR,
-                 mode: str = MODE, env: dict[str, str] | None = None):
+                 mode: str = MODE, env: dict[str, str] | None = None, alert_url: str = ALERT_WEBHOOK,
+                 post: Callable = httpx.post):
         self.make_gateway, self.sync = gateway, sync
         self.config, self.admin_dir, self.token_dir, self.mode = config, admin_dir, token_dir, mode
         self.env = os.environ if env is None else env
+        self.alert_url, self.post = alert_url, post
+        self.alerted: list[str] = []   # the parts last reported as failing
         self.lock = threading.RLock()
         self.last_apply: dict | None = None
         self.extra_checks: dict[str, Callable[[], dict]] = {}   # parts /v1/status reports, set by `api`
@@ -579,9 +583,29 @@ class Control:
     def health_job(self) -> str:
         """The `health` job: a failed check fails the run, so the record shows when it broke."""
         report = self.status()
+        self.alert(report)
         if not report["ok"]:
             raise RuntimeError(json.dumps(report)[:2000])
         return json.dumps(report)
+
+    def alert(self, report: dict) -> None:
+        """Tell the webhook when the set of failing parts changes, and only then, so an outage is one
+        message and its end another. `text` suits Slack and Mattermost, `content` Discord. If the
+        message cannot be sent it is tried again on the next run."""
+        failing = {k: v for k, v in report["components"].items() if not v["ok"]}
+        names = sorted(failing)
+        if names == self.alerted or not self.alert_url:
+            return
+        text = (f"Canopy: failing: {', '.join(names)}" if names
+                else f"Canopy: recovered: {', '.join(self.alerted)}")
+        try:
+            self.post(self.alert_url, timeout=10, json={
+                "text": text, "content": text, "ok": not names,
+                "failing": {k: json.dumps(v)[:500] for k, v in failing.items()}}).raise_for_status()
+        except httpx.HTTPError as e:
+            print(f"alert not sent: {e!r}", flush=True)
+            return
+        self.alerted = names
 
     def status(self) -> dict:
         checks = {"gateway": self._check_gateway, "upstreams": self._check_upstreams,

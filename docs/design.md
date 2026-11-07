@@ -389,6 +389,13 @@ result and output, which is what the dashboard shows.
 
 A job takes a lock, so two runs never overlap. A missed run starts on the next boot.
 
+`/v1/status` has a `jobs` component, red when a job's last run failed, when a job with an interval has not
+succeeded for two intervals and ten minutes, or when the scheduler itself has stopped. Without it a stack could
+read green through a week of failed backups. It leaves out `health`, which calls it, and runs cut off by a
+restart, which would otherwise turn an update landing mid-job into a rollback. The `health` job posts to
+`CANOPY_ALERT_WEBHOOK` when the set of failing components changes: found on 2026-11-06, when the live `health`
+job failed for two hours and only a table knew.
+
 Built so far: `sync`, `sync-recent`, `embed`, `health`, `storage-expiry`, `backup-data`, `backup-config`, and `restore-test`, which runs after
 `backup-data`. The backup jobs start once `backup.json` exists. The rest of the table arrives with what each one does, and a job
 named in `jobs.json` with nothing behind it is listed as not `runnable` and left alone. `every` takes a

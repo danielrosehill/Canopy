@@ -123,6 +123,7 @@ services:
       CANOPY_STORAGE_PUBLIC_URL: ${CANOPY_STORAGE_PUBLIC_URL:-http://127.0.0.1:${CANOPY_STORAGE_PORT:-3900}}
       CANOPY_STORAGE_CAPACITY_GB: ${CANOPY_STORAGE_CAPACITY_GB:-10}
       CANOPY_STAGE_MAX_MB: ${CANOPY_STAGE_MAX_MB:-256}
+      CANOPY_ALERT_WEBHOOK: ${CANOPY_ALERT_WEBHOOK:-}
     env_file:
       - path: ${CANOPY_AGENT_DATA:-${HOME}/canopy/agent-data}/secrets.env
         required: false

@@ -233,6 +233,7 @@ def main() -> None:
     jobs = sched.CatalogueJobs(db, control._tool_text)
     scheduler = sched.Scheduler(db, {"sync": jobs.sync, "sync-recent": jobs.sync_recent, "embed": jobs.embed, "health": control.health_job,
                                      **Backups(db).actions(), **storage.actions()})
+    control.extra_checks["jobs"] = scheduler.check
     threading.Thread(target=scheduler.loop, daemon=True).start()
     app = create_app(control, load_token(), Embedder(provider_model=model_lookup(db)), scheduler, storage)
     uvicorn.run(app, host=os.environ.get("CANOPY_API_HOST", "0.0.0.0"), port=PORT, log_level="warning")

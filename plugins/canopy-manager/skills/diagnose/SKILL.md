@@ -25,6 +25,8 @@ canopy compose logs --tail 50 api gateway catalogue seed
 | `degraded` in search results | Each entry names what fell short. `keyword only`: check `EMBED_PROVIDER`. `fused order`: the reranker failed or timed out, so check `RERANK_MODEL`. `keyword index is not built yet`: the catalogue has just started, so wait a few seconds. |
 | Search is slow | `canopy api POST /v1/search '{"query":"...","trace":true}'` gives each stage's time and outcome. |
 | Unhealthy straight after an update | `canopy update` goes back by itself. If it reports `STILL NOT HEALTHY`, use the `update` skill. |
+| `jobs` is red in `canopy status` | `failing` holds each job's last error, and `canopy jobs runs NAME` its history. `overdue` means no success for two intervals. An `error` about ticking means the scheduler has stopped: restart `api`. |
+| No alert arrived | Alerts need `CANOPY_ALERT_WEBHOOK`, and come only from the `health` job, when the failing set changes. `canopy compose logs api` shows `alert not sent`. |
 | Seed says the admin token is gone | Restore the backup, as in the `backup-restore` skill. |
 
 An empty search is only a miss if health is `ok`.

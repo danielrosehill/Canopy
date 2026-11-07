@@ -309,3 +309,51 @@ def test_state_is_written_whole(ctl):
     ctl.write_state({"a": "1"})
     assert ctl.read_state() == {"a": "1"}
     assert [p.name for p in ctl.admin_dir.iterdir()] == ["registered.json"]
+
+
+# --- alerts ------------------------------------------------------------------------------
+
+def report(*failing):
+    return {"components": {"gateway": {"ok": "gateway" not in failing}, "jobs": {"ok": "jobs" not in failing}}}
+
+
+@pytest.fixture
+def sent(ctl):
+    out = []
+
+    def post(url, timeout, json):
+        out.append(json)
+        return httpx.Response(200, request=httpx.Request("POST", url))
+    ctl.alert_url, ctl.post = "http://hook", post
+    return out
+
+
+def test_an_outage_is_one_message_and_its_end_another(ctl, sent):
+    for r in (report(), report("jobs"), report("jobs"), report()):
+        ctl.alert(r)
+    assert [m["text"] for m in sent] == ["Canopy: failing: jobs", "Canopy: recovered: jobs"]
+
+
+def test_a_new_failure_during_an_outage_is_reported(ctl, sent):
+    ctl.alert(report("jobs"))
+    ctl.alert(report("gateway", "jobs"))
+    assert sent[-1]["text"] == "Canopy: failing: gateway, jobs" and len(sent) == 2
+
+
+def test_an_alert_that_cannot_be_sent_is_tried_again(ctl, sent):
+    good = ctl.post
+
+    def down(url, timeout, json):
+        raise httpx.ConnectError("no")
+    ctl.post = down
+    ctl.alert(report("jobs"))
+    ctl.post = good
+    ctl.alert(report("jobs"))
+    assert len(sent) == 1
+
+
+def test_no_webhook_means_no_call(ctl):
+    ctl.post = None
+    ctl.alert_url = ""
+    ctl.alert(report("jobs"))
+

@@ -8,7 +8,7 @@ Every route except `/health` needs `Authorization: Bearer <token>`, from
 | Method | Route | Does |
 | --- | --- | --- |
 | `GET` | `/health` | Liveness, with no token. |
-| `GET` | `/v1/status` | Every component: gateway, upstreams, groups, catalogue, toolbox and storage. |
+| `GET` | `/v1/status` | Every component: gateway, upstreams, groups, catalogue, toolbox, storage and jobs. `jobs` is red when a job's last run failed, a job is overdue or the scheduler has stopped, and it reports the age of the last backup. |
 | `GET` | `/v1/gateway/servers` | Upstreams registered on the gateway. |
 | `POST` | `/v1/gateway/servers` | Register an upstream. |
 | `DELETE` | `/v1/gateway/servers/{name}` | Remove an upstream. |
