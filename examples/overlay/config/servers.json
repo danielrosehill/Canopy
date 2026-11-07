@@ -1,0 +1,24 @@
+{
+  "servers": [
+    {
+      "name": "my-mcp",
+      "transport": "streamable_http",
+      "description": "My private server, from compose.override.yaml. Say what it is for: agents search on this.",
+      "url": "http://my-mcp:8000/mcp"
+    },
+    {
+      "name": "my-hosted-mcp",
+      "transport": "streamable_http",
+      "description": "A hosted server, with its token from secrets.env",
+      "url": "https://mcp.example.com/mcp",
+      "bearer_token": "${MY_HOSTED_TOKEN}"
+    }
+  ],
+  "groups": [
+    {
+      "name": "core",
+      "description": "Listed to agents directly. Everything else is reached through the toolbox.",
+      "included_tools": ["my-mcp__my_most_used_tool"]
+    }
+  ]
+}

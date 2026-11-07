@@ -217,7 +217,7 @@ follow, so add only sources you trust.
 - [Deployment patterns](docs/deployment-patterns.md): remote access with Tailscale and Cloudflare,
   including hosted clients such as ChatGPT and claude.ai
 - [Target design](docs/design.md): where this is heading, and the order of work
-- [Private overlay](docs/private-overlay.md): keeping your own settings out of a Canopy checkout
+- [Add your own things](docs/customising.md): private skills, MCP servers and settings, kept out of a Canopy checkout, and updating
 - [MCP Deployment Architecture](https://github.com/danielrosehill/MCP-Deployment-Architecture): the
   conceptual notes behind this design
 

@@ -1,0 +1,6 @@
+{
+  "marketplaces": [
+    { "name": "canopy", "repo": "danielrosehill/Canopy" },
+    { "name": "my-private-skills", "repo": "you/my-private-skills" }
+  ]
+}

@@ -1,0 +1,9 @@
+# Your own services. `canopy` reads this from your agent-data folder, on top of compose.yaml.
+# This one is a private MCP server: only the stack can reach it, because it publishes no ports.
+services:
+  my-mcp:
+    image: ghcr.io/you/my-mcp:1.0.0
+    restart: unless-stopped
+    environment:
+      MY_MCP_API_KEY: ${MY_MCP_API_KEY:-}
+    networks: [canopy]

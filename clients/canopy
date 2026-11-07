@@ -4,6 +4,7 @@
     canopy init                     make the folders and default config
     canopy up [compose args]        start the stack and wait for the seed
     canopy down [compose args]      stop it. Data stays in the folders
+    canopy update                   move to the newest release of CANOPY_TAG, and go back if unhealthy
     canopy status                   health of every component
     canopy servers | groups | tools list what the gateway has
     canopy add-server FILE [--replace]    FILE is JSON, or - for stdin
@@ -33,6 +34,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -42,6 +44,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+IMAGE = "ghcr.io/danielrosehill/canopy"
 REPO = Path(__file__).resolve().parent.parent
 IN_CLI = os.environ.get("CANOPY_IN_CLI") == "1"
 AGENT_FOLDERS = ("config", "skills", "notes", "cli")
@@ -121,6 +124,93 @@ def up(args: list[str]) -> int:
         return code
     print("waiting for the seed...", flush=True)
     return compose("logs", "--follow", "--no-log-prefix", "seed") or seed_exit_code()
+
+
+def capture(*cmd: str) -> str:
+    """What a command printed, or nothing if it failed."""
+    done = subprocess.run(cmd, env=compose_env(), capture_output=True, text=True)
+    return done.stdout.strip() if done.returncode == 0 else ""
+
+
+def git(*args: str) -> int:
+    return subprocess.call(["git", "-C", str(REPO), *args])
+
+
+def canopy_images() -> dict[str, str]:
+    """Canopy's own images, by name, with the id each name has here now."""
+    names = capture(*compose_args(), "config", "--images").split()
+    return {n: capture("docker", "image", "inspect", "--format", "{{.Id}}", n)
+            for n in names if n.startswith(IMAGE + ":")}
+
+
+def release_ref(tag: str) -> str:
+    """The commit of this repo that matches an image tag, so compose.yaml and the images agree."""
+    if tag == "main":
+        return "origin/main"
+    if re.fullmatch(r"v\d+", tag):   # moves with each release: its newest
+        tags = capture("git", "-C", str(REPO), "tag", "--list", f"{tag}.*", "--sort=-v:refname").split()
+        if not tags:
+            sys.exit(f"no release matches {tag}. Nothing was changed.")
+        return tags[0]
+    return tag
+
+
+def healthy(tries: int = 60, wait: float = 5) -> bool:
+    for attempt in range(tries):
+        try:
+            code, reply = call("GET", "/v1/status", timeout=10)
+            if code < 400 and reply.get("ok"):
+                return True
+        except (SystemExit, OSError, ValueError):   # not up yet
+            pass
+        if attempt < tries - 1:
+            time.sleep(wait)
+    return False
+
+
+def update() -> int:
+    """Pull first, so the only downtime is the swap, and go back if the new version is unhealthy.
+    Going back restores the images and compose.yaml. It cannot undo a database migration."""
+    if IN_CLI:
+        sys.exit("run `canopy update` on the host, not in the cli container")
+    before = canopy_images()
+    if not before:
+        sys.exit("cannot read the stack's images: check `canopy compose config`")
+    tag = next(n.rsplit(":", 1)[1] for n in before if ":cli-" not in n)
+    was_healthy = healthy(tries=1)
+    head = capture("git", "-C", str(REPO), "rev-parse", "HEAD") if (REPO / ".git").exists() else ""
+    if head:
+        if capture("git", "-C", str(REPO), "status", "--porcelain", "--untracked-files=no"):
+            sys.exit(f"{REPO} has local changes, so nothing was changed. Your own changes belong in "
+                     "the agent-data folder: see docs/customising.md.")
+        if git("fetch", "-q", "--tags", "--force", "origin") or git("checkout", "-q", "--detach", release_ref(tag)):
+            git("checkout", "-q", "--detach", head)
+            sys.exit("cannot fetch the release, so the stack was not touched")
+    if compose("pull", "--quiet", "api", "cli"):
+        if head:
+            git("checkout", "-q", "--detach", head)
+        print("pull failed, so the stack was not touched", file=sys.stderr)
+        return 1
+    new_head = capture("git", "-C", str(REPO), "rev-parse", "HEAD") if head else ""
+    if canopy_images() == before and new_head == head:
+        print(f"already up to date on {tag}")
+        return 0
+    if up([]) == 0 and healthy():
+        print(f"updated on {tag}" + (f" at {new_head[:12]}" if new_head else ""))
+        return 0
+    if not was_healthy:
+        print("not healthy after the update, and it was not healthy before: left as it is", file=sys.stderr)
+        return 1
+    print("not healthy after the update: going back", file=sys.stderr)
+    for name, image in before.items():
+        if image:
+            subprocess.call(["docker", "tag", image, name])
+    if head:
+        git("checkout", "-q", "--detach", head)
+    up([])
+    print("went back to the previous version" if healthy() else "STILL NOT HEALTHY: see `canopy status`",
+          file=sys.stderr)
+    return 1
 
 
 def seed_exit_code() -> int:
@@ -216,6 +306,8 @@ def main() -> int:
         return init()
     if cmd == "up":
         return up(args)
+    if cmd == "update":
+        return update()
     if cmd == "down":
         return compose("down", *args)
     if cmd == "compose":

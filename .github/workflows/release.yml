@@ -1,0 +1,27 @@
+name: Release
+
+# Pushing a tag such as v1.00 gives that commit's images two more names, v1.00 and v1. Nothing is
+# rebuilt, so a release is the exact image CI tested. Tag a commit only after CI has passed on it.
+on:
+  push:
+    tags: ["v[0-9]*.[0-9]*"]
+
+jobs:
+  images:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Name the tested images
+        run: |
+          image=ghcr.io/danielrosehill/canopy
+          version="$GITHUB_REF_NAME"
+          major="${version%%.*}"
+          docker buildx imagetools create -t "$image:$version" -t "$image:$major" "$image:$GITHUB_SHA"
+          docker buildx imagetools create -t "$image:cli-$version" -t "$image:cli-$major" "$image:cli-$GITHUB_SHA"
