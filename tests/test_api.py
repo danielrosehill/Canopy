@@ -90,3 +90,21 @@ def test_running_an_unknown_job_is_a_404(tmp_path):
                    raise_server_exceptions=False)
     assert c.post("/v1/jobs/nope/run", headers=AUTH).status_code == 404
     assert c.post("/v1/jobs/nope/run").status_code == 401
+
+
+def test_search_forwards_to_the_catalogue_and_keeps_its_status(client, monkeypatch):
+    seen = {}
+
+    class Http:
+        def __init__(self, **kw): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): pass
+        async def post(self, url, content, headers):
+            seen.update(url=url, body=content)
+            return httpx.Response(400, content=b'{"error":"needs `query`"}')
+
+    monkeypatch.setattr(api.httpx, "AsyncClient", Http)
+    r = client.post("/v1/search", headers={"Authorization": "Bearer right"}, json={"limit": 1})
+    assert r.status_code == 400 and r.json() == {"error": "needs `query`"}
+    assert seen["url"].endswith("/search") and b"limit" in seen["body"]
+    assert client.post("/v1/search", json={"query": "x"}).status_code == 401

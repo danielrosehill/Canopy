@@ -1,9 +1,11 @@
 """The catalogue on the real database: storage, vectors and search, with a stand-in embedder."""
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import sqlite3
+import types
 from pathlib import Path
 
 import numpy as np
@@ -13,6 +15,7 @@ from canopy import catalogue as cat
 from canopy import import_vectors as iv
 from canopy import index as ix
 from canopy import ranking
+from canopy import retrieval
 
 FIXTURE = json.loads((Path(__file__).parent.parent / "fixtures" / "search.json").read_text())
 
@@ -42,7 +45,7 @@ def embedder(monkeypatch):
 @pytest.fixture(autouse=True)
 def clean():
     cat.db.execute("TRUNCATE records, plugins, reads, runs")
-    cat._keywords.update(index=None, signature=None)
+    cat._keywords.update(index=None, hashes={})
 
 
 def stored(rid: str):
@@ -147,7 +150,7 @@ def test_hybrid_search_uses_the_stored_vectors(embedder):
 def test_a_poor_match_says_it_is_weak(embedder, monkeypatch):
     load_fixture()
     ix.embed_pending(cat.db)
-    monkeypatch.setattr(cat, "CONFIDENCE_MIN", 1.01)
+    monkeypatch.setattr(retrieval, "CONFIDENCE_MIN", 1.01)
     out = search(ix.embed_text(dict(stored("skill:media/video-trim"))))
     assert out["weak"] is True and out["results"]   # results stay: weak is a signal, not a filter
 
@@ -175,15 +178,79 @@ def test_an_empty_index_is_a_fault_not_a_miss(monkeypatch):
     assert "EMPTY" in search("anything")["error"]
 
 
-def test_keywords_rebuild_only_when_records_change(monkeypatch):
+def test_a_new_skill_updates_the_keyword_index_in_place(monkeypatch):
     monkeypatch.setattr(ix, "EMBED_URL", "")
     load_fixture()
-    first = cat._keywords["index"]
+    index = cat._keywords["index"]
+    before = len(index)
+    written = []
+    update = index.update
+    monkeypatch.setattr(index, "update", lambda rows=(), removed=(): (written.append(list(rows)), update(rows, removed)))
     cat.refresh_keywords()
-    assert cat._keywords["index"] is first
-    store(rec("skill:p/new", description="Something new"))
+    assert written == []                       # nothing changed, nothing touched
+    store(rec("skill:p/new", description="Polish the zeppelin"))
     cat.refresh_keywords()
-    assert cat._keywords["index"] is not first
+    assert cat._keywords["index"] is index     # never a rebuild
+    assert [[r["id"] for r in rows] for rows in written] == [["skill:p/new"]]
+    assert len(index) == before + 1
+    assert search("polish zeppelin")["results"][0]["id"] == "skill:p/new"
+
+
+def test_a_removed_record_leaves_the_keyword_index(monkeypatch):
+    monkeypatch.setattr(ix, "EMBED_URL", "")
+    load_fixture()
+    store(rec("skill:p/gone", description="Polish the zeppelin"))
+    cat.refresh_keywords()
+    cat.db.execute("DELETE FROM records WHERE id = 'skill:p/gone'")
+    cat.refresh_keywords()
+    assert cat._keywords["index"].search("zeppelin") == []
+
+
+def test_a_search_is_logged_and_a_log_failure_costs_nothing(monkeypatch):
+    monkeypatch.setattr(ix, "EMBED_URL", "")
+    load_fixture()
+    cat.db.execute("TRUNCATE system.search_log")
+    out = search("merge pdf files")
+    row = cat.db.execute("SELECT query, results, degraded FROM system.search_log").fetchone()
+    assert row["query"] == "merge pdf files" and row["degraded"] is True
+    assert row["results"] == [r["id"] for r in out["results"]]
+    monkeypatch.setattr(retrieval, "LOG_DAYS", 0)
+    search("merge pdf files")
+    assert cat.db.execute("SELECT COUNT(*) AS n FROM system.search_log").fetchone()["n"] == 1
+
+
+def test_the_trace_names_every_stage(monkeypatch):
+    monkeypatch.setattr(ix, "EMBED_URL", "")
+    load_fixture()
+    trace = cat.searcher.run("merge pdf files", trace=True)["trace"]
+    assert [t["stage"] for t in trace] == ["filter", "keywords", "vectors", "fuse", "rerank", "shape"]
+    assert {t["stage"]: t["outcome"] for t in trace}["vectors"] == "failed"
+    assert "trace" not in cat.searcher.run("merge pdf files")
+
+
+def test_a_spent_budget_skips_the_slow_stages_and_still_answers(embedder, monkeypatch):
+    load_fixture()
+    monkeypatch.setattr(ranking, "RERANK_MODEL", "m")
+    monkeypatch.setattr(ranking, "rerank", lambda *a, **k: pytest.fail("the budget was spent"))
+    calls = len(embedder)
+    clock = iter(range(0, 10000, 100))   # this module only: the pool's threads share the real `time`
+    monkeypatch.setattr(retrieval, "time", types.SimpleNamespace(monotonic=lambda: next(clock)))
+    out = cat.searcher.run("merge pdf files", budget_ms=1)   # the clock passes the deadline at once
+    assert out["results"][0]["id"] == "skill:docs/pdf-merge"
+    assert len(embedder) == calls
+    assert sum("out of budget" in d for d in out["degraded"]) == 2
+
+
+def test_every_tool_is_registered():
+    names = {t.name for t in asyncio.run(cat.mcp.list_tools())}
+    assert {"search", "read", "list", "mcp_servers", "health", "usage", "sync", "embed"} <= names
+
+
+def test_the_rest_body_is_checked():
+    for body in ([], {}, {"query": " "}, {"query": "x", "nope": 1}, {"query": "x", "limit": 0},
+                 {"query": "x", "budget_ms": "5"}, {"query": "x", "kind": "nope"}):
+        with pytest.raises(ValueError):
+            cat.searcher.request(body)
 
 
 def test_a_failed_rerank_keeps_the_fused_order(monkeypatch):
@@ -204,7 +271,7 @@ def test_a_rerank_decides_the_order(monkeypatch):
     monkeypatch.setattr(ix, "EMBED_URL", "")
     load_fixture()
     monkeypatch.setattr(ranking, "RERANK_MODEL", "m")
-    monkeypatch.setattr(ranking, "rerank", lambda q, cands: [c["id"] for c in reversed(cands)])
+    monkeypatch.setattr(ranking, "rerank", lambda q, cands, **k: [c["id"] for c in reversed(cands)])
     plain = cat._keywords["index"].search("merge pdf files text", 20)
     assert search("merge pdf files text")["results"][0]["id"] == plain[-1]
 

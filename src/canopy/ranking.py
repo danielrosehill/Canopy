@@ -1,22 +1,19 @@
-"""Ranking for catalogue search: a keyword index in memory, fusion, and the hosted rerank step.
+"""Ranking for catalogue search: a keyword index, fusion, and the hosted rerank step.
 
-Pure code, apart from `rerank`'s one HTTP call, so it can be tested without a stack. Why each part
-has this shape is measured in docs/design.md, under "Retrieval pipeline".
+No stack needed to test it: the index is an embedded library and `rerank` makes the one HTTP call.
+Why each part has this shape is measured in docs/design.md, under "Retrieval pipeline".
 """
 from __future__ import annotations
 
-import math
 import os
 import re
-from collections import Counter, defaultdict
+from collections import Counter
 from collections.abc import Iterable
 
 import httpx
-import numpy as np
-import snowballstemmer
+import tantivy
 
 FIELD_WEIGHTS = {"name": 10.0, "description": 4.0, "plugin": 2.0, "body": 1.0}
-K1, B = 1.2, 0.75
 RRF_K = 60
 VECTOR_WEIGHT = float(os.environ.get("SEARCH_VECTOR_WEIGHT", "3"))
 
@@ -29,64 +26,51 @@ RERANK_CANDIDATES = 20
 _WORD = re.compile(r"[^\W_]+")
 
 
-class Tokenizer:
-    """Stems each distinct word once, which is most of the cost of a build."""
-
-    def __init__(self):
-        self._stemmer = snowballstemmer.stemmer("english")
-        self._stems: dict[str, str] = {}
-
-    def __call__(self, text: str | None) -> list[str]:
-        out = []
-        for word in _WORD.findall((text or "").lower()):
-            if len(word) > 1:
-                stem = self._stems.get(word)
-                if stem is None:
-                    stem = self._stems[word] = self._stemmer.stemWord(word)
-                out.append(stem)
-        return out
-
-
 class KeywordIndex:
-    """BM25 with weighted fields. Immutable once built: a sync builds a new one and swaps it in,
-    so search keeps using the previous one meanwhile."""
+    """BM25 with weighted fields and English stemming, on Tantivy, in RAM.
 
-    def __init__(self, records: Iterable[dict]):
-        self.tokenize = Tokenizer()
-        self.ids: list[str] = []
-        postings: dict[str, tuple[list[int], list[float]]] = defaultdict(lambda: ([], []))
-        lengths = []
-        for doc, r in enumerate(records):
-            self.ids.append(r["id"])
-            weighted: Counter = Counter()
-            for field, weight in FIELD_WEIGHTS.items():
-                for token in self.tokenize(r.get(field)):
-                    weighted[token] += weight
-            lengths.append(sum(weighted.values()))
-            for token, tf in weighted.items():
-                docs, tfs = postings[token]
-                docs.append(doc)
-                tfs.append(tf)
-        self.lengths = np.asarray(lengths, dtype=np.float32)
-        self.average = float(self.lengths.mean()) if lengths else 1.0
-        self.postings = {t: (np.asarray(d, dtype=np.int32), np.asarray(f, dtype=np.float32))
-                         for t, (d, f) in postings.items()}
+    `update` changes only the records it is given, and a search during it reads the last commit.
+    Tantivy does this work outside the Python lock, so a search does not wait for it. There is
+    nothing on disk to go stale: a restart builds it again from Postgres, in about a second."""
+
+    WRITER_HEAP = 30_000_000   # bytes; Tantivy's minimum is 15 MB per thread
+
+    def __init__(self, records: Iterable[dict] = ()):
+        schema = tantivy.SchemaBuilder()
+        schema.add_text_field("id", stored=True, tokenizer_name="raw")
+        for field in FIELD_WEIGHTS:
+            schema.add_text_field(field, stored=False, tokenizer_name="en_stem")
+        self.index = tantivy.Index(schema.build())
+        self.update(records)
 
     def __len__(self) -> int:
-        return len(self.ids)
+        return self.index.searcher().num_docs
+
+    def update(self, records: Iterable[dict] = (), removed: Iterable[str] = ()) -> None:
+        """Add or replace `records` and drop the ids in `removed`, in one commit. Callers take
+        turns: Tantivy allows one writer at a time."""
+        writer = self.index.writer(self.WRITER_HEAP, 1)
+        for rid in removed:
+            writer.delete_documents_by_term("id", rid)
+        for r in records:
+            writer.delete_documents_by_term("id", r["id"])
+            doc = tantivy.Document()
+            doc.add_text("id", r["id"])
+            for field in FIELD_WEIGHTS:
+                doc.add_text(field, r.get(field) or "")
+            writer.add_document(doc)
+        writer.commit()
+        writer.wait_merging_threads()
+        self.index.reload()
 
     def search(self, query: str, limit: int = 200) -> list[str]:
-        scores = np.zeros(len(self.ids), dtype=np.float32)
-        for token in set(self.tokenize(query)):
-            if token not in self.postings:
-                continue
-            docs, tfs = self.postings[token]
-            idf = math.log(1 + (len(self.ids) - len(docs) + 0.5) / (len(docs) + 0.5))
-            norm = K1 * (1 - B + B * self.lengths[docs] / self.average)
-            scores[docs] += idf * tfs * (K1 + 1) / (tfs + norm)
-        hits = np.flatnonzero(scores)
-        order = hits[np.argsort(-scores[hits], kind="stable")][:limit]
-        return [self.ids[i] for i in order]
+        # Bare lowercase words only, so nothing in a query can reach the query language.
+        words = [w for w in _WORD.findall(query.lower()) if len(w) > 1]
+        if not words:
+            return []
+        parsed = self.index.parse_query(" ".join(words), list(FIELD_WEIGHTS), field_boosts=FIELD_WEIGHTS)
+        searcher = self.index.searcher()
+        return [searcher.doc(address)["id"][0] for _, address in searcher.search(parsed, limit).hits]
 
 
 def fuse(keywords: list[str], vectors: list[str], vector_weight: float = VECTOR_WEIGHT,
@@ -105,12 +89,13 @@ def fuse(keywords: list[str], vectors: list[str], vector_weight: float = VECTOR_
     return dict(scores.most_common())
 
 
-def rerank(query: str, candidates: list[dict], post=httpx.post) -> list[str]:
+def rerank(query: str, candidates: list[dict], post=httpx.post, timeout: float | None = None) -> list[str]:
     """The candidates' ids, best first. Raises on any failure, and the caller keeps the fused
     order. Sends the query and each candidate's name and description to the provider."""
     docs = [f"{c['name']}: {c['description'] or ''}" for c in candidates]
     r = post(f"{RERANK_URL}/rerank", json={"model": RERANK_MODEL, "query": query, "documents": docs},
-             headers={"Authorization": f"Bearer {RERANK_KEY}"} if RERANK_KEY else {}, timeout=RERANK_TIMEOUT)
+             headers={"Authorization": f"Bearer {RERANK_KEY}"} if RERANK_KEY else {},
+             timeout=RERANK_TIMEOUT if timeout is None else timeout)
     r.raise_for_status()
     order = [candidates[x["index"]]["id"] for x in r.json()["results"]]
     if sorted(order) != sorted(c["id"] for c in candidates):

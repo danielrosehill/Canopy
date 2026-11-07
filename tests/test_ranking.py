@@ -33,6 +33,26 @@ def test_no_match_and_an_empty_index_return_nothing():
     assert ranking.KeywordIndex([]).search("zebra") == []
 
 
+def test_update_replaces_adds_and_removes_in_place():
+    index = ranking.KeywordIndex([doc("a", description="zebra"), doc("b", description="yak")])
+    index.update([doc("a", description="walrus"), doc("c", description="zebra")], removed=["b"])
+    assert len(index) == 2
+    assert index.search("zebra") == ["c"]
+    assert index.search("walrus") == ["a"]
+    assert index.search("yak") == []
+
+
+def test_a_query_cannot_reach_the_query_language():
+    index = ranking.KeywordIndex([doc("a", name="zebra")])
+    for query in ('zebra AND NOT', 'name:zebra', '"zebra', 'zebra^9 (', 'body:* OR zebra', 'zebra IN [a b]'):
+        assert index.search(query) == ["a"], query
+    assert index.search("?! -") == []
+
+
+def test_hebrew_is_searchable():
+    assert ranking.KeywordIndex([doc("a", description="שליחת דואר")]).search("דואר") == ["a"]
+
+
 def test_vectors_outweigh_keywords_three_to_one():
     fused = ranking.fuse(["k", "both"], ["v", "both"], vector_weight=3)
     assert list(fused) == ["both", "v", "k"]

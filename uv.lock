@@ -50,8 +50,8 @@ dependencies = [
     { name = "pgvector" },
     { name = "psycopg", extra = ["binary", "pool"] },
     { name = "pyyaml" },
-    { name = "snowballstemmer" },
     { name = "starlette" },
+    { name = "tantivy" },
     { name = "uvicorn" },
 ]
 
@@ -68,8 +68,8 @@ requires-dist = [
     { name = "pgvector", specifier = ">=0.4" },
     { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.2" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "snowballstemmer", specifier = ">=2.2" },
     { name = "starlette", specifier = ">=0.40" },
+    { name = "tantivy", specifier = ">=0.27,<0.28" },
     { name = "uvicorn", specifier = ">=0.30" },
 ]
 
@@ -944,15 +944,6 @@ wheels = [
 ]
 
 [[package]]
-name = "snowballstemmer"
-version = "3.1.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/43/f8/0a71edf031f03c40db17503cb8ca78a69a171254e568e7db241b0ab57ea1/snowballstemmer-3.1.1.tar.gz", hash = "sha256:e07bbc54a0d798fe6010a12398422e62a8bfbba95c394fd0956ef58cb4d3e260", size = 123314, upload-time = "2026-06-03T00:56:40.194Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/4c/07/2ebca9b11fb9be7340a818d8d6f63feaebb146be2c4afbd6061701d6df6e/snowballstemmer-3.1.1-py3-none-any.whl", hash = "sha256:7e207fa178741da09cdee59d3ecec3827ad5f92b1fc5c9ff3755b639f71f5752", size = 104164, upload-time = "2026-06-03T00:56:38.614Z" },
-]
-
-[[package]]
 name = "sse-starlette"
 version = "3.6.0"
 source = { registry = "https://pypi.org/simple" }
@@ -976,6 +967,21 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/48/bb/3d8757f21e9a53d9035c9eb039a777047139a16bfdbedfc7a58241c3d914/starlette-1.10.0.tar.gz", hash = "sha256:b8399098d4c1e3522734f7235dc79b1fc967f96cf139c81e0fa30479e0685f9b", size = 2734356, upload-time = "2026-10-24T15:04:12.342Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/88/2e/947cfe02def9371c07cd5bf5b6b61c829e9aecb9904db02a66cfafbc1eec/starlette-1.10.0-py3-none-any.whl", hash = "sha256:478c0ab3b4ced6e82719849c118fa406f0278a3499c1a898cd15cd31bdc38ce4", size = 80571, upload-time = "2026-10-24T15:04:10.371Z" },
+]
+
+[[package]]
+name = "tantivy"
+version = "0.27.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/37/ec/1b256e079d22d92b8f7db14c4d0755ae47c903bf117c07d4ee01c0b27c71/tantivy-0.27.0.tar.gz", hash = "sha256:871d0dc8d3b246d6b8cbf99a2f0ec929eb4e3341ecb3a63e3c7c11c6715cd03d", size = 218844, upload-time = "2026-10-22T01:18:42.749Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6f/aa/ba1120e3cf361572d345967a8402210e7379e1364112ee5b4b01ec3c4894/tantivy-0.27.0-cp311-abi3-macosx_10_12_x86_64.macosx_11_0_arm64.macosx_10_12_universal2.whl", hash = "sha256:86b660aaa8055a1b4e1bdc2ee88c57b05bc3639f65671cf8aa456208d957bd36", size = 9472904, upload-time = "2026-10-22T01:18:30.924Z" },
+    { url = "https://files.pythonhosted.org/packages/53/a4/3bdae5ded2362fad456bd9e6459b1959f9b724ebe226adca485f956ca04b/tantivy-0.27.0-cp311-abi3-macosx_10_12_x86_64.whl", hash = "sha256:c9618046910f3d22cd3d08c6561379cae025adcfb98f66e11255703a2b82d53f", size = 4881681, upload-time = "2026-10-22T01:18:32.991Z" },
+    { url = "https://files.pythonhosted.org/packages/25/73/68004d1ca5aa7d8965767f1e9eb1e7685f66625525b72c590d931d53f8c6/tantivy-0.27.0-cp311-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:7e3ba1f366e05a4ebf176cd549206fa25bdac9ea722637b21fa351582b65440e", size = 5427747, upload-time = "2026-10-22T01:18:34.474Z" },
+    { url = "https://files.pythonhosted.org/packages/70/e2/46f3bc38f47b1286b6d3a53cfc9419a726765978aff2f93784e164a128d6/tantivy-0.27.0-cp311-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:2d5d5ac2f16038b7ea4cfc10839d20dbec87b5a96076b0984b493e410c1a8415", size = 5208033, upload-time = "2026-10-22T01:18:36.002Z" },
+    { url = "https://files.pythonhosted.org/packages/1f/ca/9d9017cd64e2f17972d041d997a62c06d70ca411589d0f54c9ffcfd8a401/tantivy-0.27.0-cp311-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:16363e6ff420e35719729cc969cc271b26926c38023ebb75330322d14f9524e2", size = 5630748, upload-time = "2026-10-22T01:18:37.865Z" },
+    { url = "https://files.pythonhosted.org/packages/7b/9d/d80e07602a0dbee5e77d1ecb562c229a6cccd2760a4d0f7e7eb8db34026f/tantivy-0.27.0-cp311-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:36dfe98d54163c1ce13d4cc1b54f77a4b7f05f3dfa7fed28133eb946284dd6ea", size = 5784396, upload-time = "2026-10-22T01:18:39.582Z" },
+    { url = "https://files.pythonhosted.org/packages/59/48/a6e01953256815c01af81f8f7bbd17d72d1d1ae265861a0d734e09ae90bf/tantivy-0.27.0-cp311-abi3-win_amd64.whl", hash = "sha256:9af43cb75791ce8c57fb853f0366284a29959a4a4684f82f8480d8582516efad", size = 4292780, upload-time = "2026-10-22T01:18:41.105Z" },
 ]
 
 [[package]]

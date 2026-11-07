@@ -176,6 +176,13 @@ def create_app(control: Control, token: str, embedder: Embedder | None = None,
                                 headers={"Content-Type": "application/json"})
         return Response(r.content, status_code=r.status_code, media_type="application/json")
 
+    async def search(request: Request) -> Response:
+        """The catalogue's search pipeline, for anything that is not an MCP client."""
+        async with httpx.AsyncClient(timeout=30) as http:
+            r = await http.post(f"{CATALOGUE_URL}/search", content=await request.body(),
+                                headers={"Content-Type": "application/json"})
+        return Response(r.content, status_code=r.status_code, media_type="application/json")
+
     async def run(_: Request, fn, *args, status: int = 200) -> JSONResponse:
         return JSONResponse(await run_in_threadpool(fn, *args), status_code=status)
 
@@ -199,6 +206,7 @@ def create_app(control: Control, token: str, embedder: Embedder | None = None,
         Route("/v1/config/apply", apply, methods=["POST"]),
         Route("/v1/tokens/agent", agent_token),
         Route("/v1/embeddings", embeddings, methods=["POST"]),
+        Route("/v1/search", search, methods=["POST"]),
         Route("/v1/skills/mcp", skills_mcp, methods=["POST"]),
         Route("/v1/storage/stage", stage, methods=["POST"]),
         Route("/v1/storage/buckets", list_buckets),

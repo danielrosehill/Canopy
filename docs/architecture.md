@@ -166,13 +166,31 @@ version. `compat.json` records what has passed. Measured on 0.4.7, 2026-11-05.
 
 ## Search
 
-`catalogue__search` fuses two rankings with reciprocal rank fusion, vectors counted three times
-(`SEARCH_VECTOR_WEIGHT`):
+`canopy.retrieval.Search` is the search component, and the only way in. It runs inside `catalogue`, and
+`catalogue__search` and `POST /v1/search` are two doors onto the same `run`:
 
-- Keywords: `canopy.ranking.KeywordIndex`, BM25 in memory, with field weights name 10, description 4,
-  plugin 2, body 1, and Snowball stemming. It is rebuilt after a sync that changed a record, and search
-  uses the previous one meanwhile. On 5,162 synthetic records of about 500 words, a build took 4.8 s
-  and 250 MB at peak, and a query 0.2 ms, on a laptop, 2026-11-05.
+| Stage | Does | If it fails or the budget is spent |
+| --- | --- | --- |
+| `filter` | Applies `kind`, `plugin`, `marketplace` | The search fails: a bad `kind` is the caller's mistake |
+| `keywords` | BM25 from the keyword index | Says so in `degraded` if the index is not built yet |
+| `vectors` | Embeds the query, exact pgvector search | Keyword only, in `degraded` |
+| `fuse` | Reciprocal rank fusion, vectors counted three times (`SEARCH_VECTOR_WEIGHT`) | Cannot fail |
+| `rerank` | Hosted rerank, with `RERANK_MODEL` set | Fused order, in `degraded` |
+| `shape` | Builds the reply an agent reads | The search fails |
+
+After the stages, the query and the ids shown go to `system.search_log`, kept `SEARCH_LOG_DAYS`. A failed
+write is logged and costs the search nothing.
+
+`POST /v1/search` adds two things the MCP tool leaves out, so they cost an agent no schema tokens:
+`budget_ms`, a limit on the whole search that shortens the embedding and rerank timeouts and skips them when
+spent, and `trace: true`, which returns each stage's time and outcome. It needs the API token, so it serves
+the stack and its operators. The connector's hook stays on MCP: a client machine holds a gateway token, and
+the API token can change the stack.
+
+- Keywords: `canopy.ranking.KeywordIndex`, BM25 on [Tantivy](https://github.com/quickwit-oss/tantivy-py) in
+  RAM, with field weights name 10, description 4, plugin 2, body 1, and English stemming. `refresh_keywords`
+  compares each record's `hash` with what it indexed and changes only what differs, so a sync adding a skill
+  costs milliseconds. A restart builds it again from Postgres, in about a second.
 - Vectors: exact pgvector search over `catalogue.records.embedding`.
 
 With `RERANK_MODEL` set, the top 20 candidates that are not tools go to the provider's `/rerank` with their

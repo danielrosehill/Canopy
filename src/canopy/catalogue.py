@@ -18,7 +18,6 @@ import re
 import threading
 import time
 
-import numpy as np
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.concurrency import run_in_threadpool
@@ -29,6 +28,7 @@ from . import gateway as gw
 from . import index as ix
 from . import ranking
 from . import scheduler
+from .retrieval import SEARCH_LIMIT, Search, filters as _filters, summary as _summary
 from .skills_ext import Skills
 
 # Reachable only on the stack's internal network; the gateway is the front door.
@@ -37,25 +37,16 @@ _security = TransportSecuritySettings(
 mcp = FastMCP("catalogue", transport_security=_security)
 
 SYNC_INTERVAL = scheduler.interval("sync", 3600)   # only to judge overdue: `api` runs the jobs
-QUERY_EMBED_TIMEOUT = float(os.environ.get("QUERY_EMBED_TIMEOUT_SEC", "8"))
-# Cosine of the best result, below which a reply says the match is weak. Fused rank scores cannot
-# do this: every query has a first place. 0.60 is for bge-m3; see docs/design.md, "What the agent sees".
-CONFIDENCE_MIN = float(os.environ.get("SEARCH_CONFIDENCE_MIN", "0.6"))
-KINDS = ("plugin", "skill", "command", "agent", "mcp", "tool")
-TOOL_HITS = int(os.environ.get("SEARCH_TOOL_HITS", "3"))
-# Every result costs the agent context, so these are the levers on the size of a reply.
-SEARCH_LIMIT = int(os.environ.get("SEARCH_LIMIT", "6"))
-TOOL_MIN_COSINE = float(os.environ.get("SEARCH_TOOL_MIN_COSINE", "0"))   # drop unrelated tools; 0 keeps all
 EMBED_ON_SYNC = os.environ.get("EMBED_ON_SYNC", "false").lower() == "true"
-SEARCH_DESC_CHARS = int(os.environ.get("SEARCH_DESC_CHARS", "300"))   # a shortlist; `read` has the full text
 
 db = ix.connect()
 _sync_lock = threading.Lock()
 _embed_lock = threading.Lock()
 _job: dict = {"running": False, "started": None, "last": None, "queued": None}
 _embed_job: dict = {"running": False, "last": None}
-_keywords: dict = {"index": None, "signature": None}
+_keywords: dict = {"index": None, "hashes": {}}
 _keyword_lock = threading.Lock()
+searcher = Search(db, lambda: _keywords["index"])
 
 
 # --- sync scheduling -------------------------------------------------------------
@@ -88,39 +79,27 @@ def _run_sync(only: str | None = None, force: bool = False, recent: bool = False
 
 
 def refresh_keywords() -> None:
-    """Build a new keyword index if the records changed, then swap it in. Search keeps using the
-    previous one meanwhile."""
+    """Bring the keyword index up to date with the records: the first call builds it, and later
+    calls change only what differs, so a new skill costs milliseconds however large the catalogue."""
     if not _keyword_lock.acquire(blocking=False):
         return
     try:
-        signature = db.execute("SELECT COUNT(*), md5(string_agg(hash, '' ORDER BY id)) FROM records").fetchone()
-        if signature != _keywords["signature"]:
-            rows = db.execute("SELECT id, name, description, plugin, body FROM records").fetchall()
-            _keywords.update(index=ranking.KeywordIndex(rows), signature=signature)
+        seen = {r["id"]: r["hash"] for r in db.execute("SELECT id, hash FROM records")}
+        columns = "SELECT id, name, description, plugin, body FROM records"
+        known = _keywords["hashes"]
+        if _keywords["index"] is None:
+            _keywords.update(index=ranking.KeywordIndex(db.execute(columns).fetchall()), hashes=seen)
+            return
+        changed = [i for i, h in seen.items() if i not in known or known[i] != h]
+        removed = [i for i in known if i not in seen]
+        if changed or removed:
+            rows = db.execute(f"{columns} WHERE id = ANY(%s)", (changed,)).fetchall() if changed else []
+            _keywords["index"].update(rows, removed)
+            _keywords["hashes"] = seen
     except Exception as e:  # noqa: BLE001 - search says so through `degraded`
         ix.log(f"keyword index failed: {e!r}")
     finally:
         _keyword_lock.release()
-
-
-# --- helpers ----------------------------------------------------------------------
-
-def _filters(kind: str | None, plugin: str | None, marketplace: str | None) -> tuple[str, list]:
-    where, args = [], []
-    if kind:
-        if kind not in KINDS:
-            raise ValueError(f"kind must be one of {KINDS}")
-        where.append("r.kind = %s"); args.append(kind)
-    if plugin:
-        where.append("r.plugin = %s"); args.append(plugin)
-    if marketplace:
-        where.append("r.plugin IN (SELECT name FROM plugins WHERE marketplace = %s)"); args.append(marketplace)
-    return (" AND ".join(where) or "1=1"), args
-
-
-def _summary(r) -> dict:
-    return {"id": r["id"], "kind": r["kind"], "plugin": r["plugin"] or None,
-            "name": r["name"], "description": r["description"]}
 
 
 # --- tools ------------------------------------------------------------------------
@@ -141,98 +120,7 @@ def search(query: str, kind: str | None = None, plugin: str | None = None,
     Results are compact (id + description cut to 300 chars, best first); full=true adds
     kind/plugin/name/score and the whole description.
     """
-    where, args = _filters(kind, plugin, marketplace)
-    allowed = {r["id"] for r in db.execute(f"SELECT r.id FROM records r WHERE {where}", args)}
-    degraded = []
-
-    keyword_ids: list[str] = []
-    if _keywords["index"] is None:
-        degraded.append("keyword index is not built yet")
-    else:
-        keyword_ids = [i for i in _keywords["index"].search(query, 1000) if i in allowed][:200]
-
-    vector_ids: list[str] = []
-    cosine: dict[str, float] = {}
-    unembedded: set[str] = set()
-    try:
-        if not ix.EMBED_URL:
-            raise RuntimeError("no embedding provider configured")
-        # Short timeout: keyword-only with `degraded` beats a hung call.
-        qv = np.asarray(ix.embed([query], timeout=QUERY_EMBED_TIMEOUT)[0], dtype=np.float32)
-        qv /= np.linalg.norm(qv) or 1.0
-        hits = list(db.execute(
-            f"SELECT r.id, 1 - (r.embedding <=> %s) AS cosine FROM records r WHERE {where} "
-            "AND r.embedding IS NOT NULL AND r.embed_model = %s "
-            "ORDER BY r.embedding <=> %s LIMIT 200", [qv, *args, ix.EMBED_MODEL, qv]))
-        vector_ids = [r["id"] for r in hits]
-        cosine = {r["id"]: float(r["cosine"]) for r in hits}
-        unembedded = {r["id"] for r in db.execute(
-            "SELECT id FROM records WHERE embedding IS NULL OR embed_model IS DISTINCT FROM %s", (ix.EMBED_MODEL,))}
-        if not vector_ids and allowed:
-            raise RuntimeError("no embeddings stored")
-    except Exception as e:  # noqa: BLE001
-        degraded.append(f"semantic search unavailable, keyword only: {e}")
-
-    ranks = ranking.fuse(keyword_ids, vector_ids, unembedded=unembedded)
-
-    limit = max(1, min(limit, 50))
-    ordered = list(ranks)
-    if ranking.RERANK_MODEL:
-        ordered = _reranked(query, ordered, degraded)
-    if kind:
-        top, tool_ids = ordered[:limit], []
-    else:
-        # Tools rank in their own list so a large tool set cannot crowd skills out.
-        top = [r for r in ordered if not r.startswith("tool:")][:limit]
-        tool_ids = [r for r in ordered if r.startswith("tool:")
-                    and (not cosine or cosine.get(r, 0) >= TOOL_MIN_COSINE)][:TOOL_HITS]
-    want = top + tool_ids
-    rows = {r["id"]: r for r in db.execute(
-        "SELECT * FROM records WHERE id = ANY(%s)", (want,))} if want else {}
-
-    def item(rid: str) -> dict:
-        r = rows[rid]
-        if full:
-            d = _summary(r) | {"score": round(ranks.get(rid, 0) * 60, 3)}
-        else:
-            # The id already encodes kind, plugin and name; the score is only an ordering.
-            desc = " ".join((r["description"] or "").split())
-            d = {"id": rid, "description": desc if len(desc) <= SEARCH_DESC_CHARS
-                 else desc[:SEARCH_DESC_CHARS - 1] + "…"}
-        if r["kind"] == "tool":
-            native = r["body"].startswith("call: listed natively")
-            d["call"] = f"mcp__{ix.CLIENT_NAME}__{r['name']}" if native else "toolbox__call_tool"
-        return d
-
-    out = {"results": [item(rid) for rid in top]}
-    if tool_ids:
-        out["tools"] = [item(rid) for rid in tool_ids]
-    scored = [cosine[rid] for rid in top if rid in cosine]
-    if scored:   # absent when search is keyword only: there is nothing to measure
-        out["confidence"] = round(max(scored), 3)
-        if out["confidence"] < CONFIDENCE_MIN:
-            out["weak"] = True
-    if degraded:
-        out["degraded"] = degraded
-    if not top and not db.execute("SELECT 1 FROM records LIMIT 1").fetchone():
-        out["error"] = "the index is EMPTY - this is a fault, not a miss. Run health."
-    return _out(out)
-
-
-def _reranked(query: str, ordered: list[str], degraded: list[str]) -> list[str]:
-    """Rerank the best candidates that are not tools, which rank in their own list."""
-    head = [r for r in ordered if not r.startswith("tool:")][:ranking.RERANK_CANDIDATES]
-    if len(head) < 2:
-        return ordered
-    try:
-        rows = {r["id"]: r for r in db.execute(
-            "SELECT id, name, description FROM records WHERE id = ANY(%s)", (head,))}
-        best = ranking.rerank(query, [rows[r] for r in head])
-    except Exception as e:  # noqa: BLE001 - the fused order is a good answer
-        degraded.append(f"reranking unavailable, fused order: {e}")
-        return ordered
-    chosen = set(best)
-    return best + [r for r in ordered if r not in chosen]
+    return _out(searcher.run(query, kind=kind, plugin=plugin, marketplace=marketplace, limit=limit, full=full))
 
 
 README_CHARS = 1500
@@ -633,6 +521,15 @@ def _skill_row(plugin: str, name: str) -> dict | None:
 
 
 skills = Skills(_skill_rows, _skill_row, _plugin_root)
+
+
+@mcp.custom_route("/search", methods=["POST"])
+async def search_rest(request: Request) -> Response:
+    """`POST /v1/search` on the API forwards here: the same pipeline as the `search` tool."""
+    try:
+        return JSONResponse(await run_in_threadpool(searcher.request, await request.json()))
+    except ValueError as e:   # a body that is not JSON is a ValueError too
+        return JSONResponse({"error": str(e)}, status_code=400)
 
 
 @mcp.custom_route("/skills", methods=["POST"])

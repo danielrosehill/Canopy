@@ -119,8 +119,9 @@ database. Only a record whose hash changed is embedded again.
 its keyword position at full weight, so 3:1 cannot bury it:
 
 - Vectors: exact pgvector search. At this size no approximate index is needed.
-- Keywords: a small BM25 index the catalogue holds in memory, rebuilt from Postgres after a sync that
-  changed something, with field weights and stemming. If it is rebuilding, search uses the previous one.
+- Keywords: BM25 on Tantivy, embedded in the catalogue, in RAM, with field weights and stemming. A sync
+  changes only the records that differ. See "Keyword engine", below: the first tables here were measured
+  on the plain Python index it replaced.
 
 Measured on 2026-11-05: 50 labelled queries against a real index of 5,162 records, scored on where the
 right skill landed among skills. With 50 queries, one query is 2 points, so small gaps are noise.
@@ -145,6 +146,35 @@ What this shows:
   beside 40 to 80 ms for the query embedding.
 - The prototype's in-memory index took 30 s to build in plain Python. The shipped one stems each distinct
   word once, and took 4.8 s on 5,162 synthetic records. It runs in the background after a sync.
+
+**Keyword engine.** Tantivy replaced the plain Python index on 2026-11-07. Measured on a live index of 4,798
+real records, 49 hard labelled queries, in one process limited to 4 CPUs. The 19,192-record rows are those
+records four times over, so vocabulary did not grow as a real catalogue's would.
+
+| | Python BM25 | Tantivy in RAM | Tantivy on disk |
+| --- | --- | --- | --- |
+| Reranked: first / top 3 / top 6 / MRR | 44 / 49 / 49 / 0.946 | 44 / 49 / 49 / 0.946 | Not run |
+| Fused: first / top 3 / top 6 / MRR | 32 / 41 / 46 / 0.765 | 33 / 40 / 46 / 0.770 | Not run |
+| Keywords alone: MRR | 0.625 | 0.599 | Not run |
+| Build, 4,798 / 19,192 records | 1.6 s / 5.0 s | 0.5 s / 2.0 s | 0.6 s / 2.4 s |
+| Update 36 records, 4,798 / 19,192 | Full rebuild | 9 ms / 14 ms | 120 ms / 181 ms |
+| Keyword query, idle | 0.3 ms | 0.9 ms | 0.9 ms |
+| Keyword query during a rebuild or update | 157 ms, 272 ms at 19,192 | 1.6 ms, 2.3 ms at 19,192 | 4.7 ms, 6.9 ms at 19,192 |
+
+- **Why it changed:** not quality, which is the same once reranked. The Python build held the interpreter
+  lock, so every search slowed by 150 to 300 ms while it ran, and at a few dozen new skills a day it ran
+  often. Tantivy works outside that lock and updates in place.
+- **Embeddings were never the problem.** They have always been incremental, through `embed_key`. Only this
+  keyword index was rebuilt whole, and that costs no money.
+- **In RAM, not on disk:** a disk index is 13 times slower to update and leaves state to reconcile after a
+  crash, to save a one-second build at start.
+- **Ruled out: a separate `search` container.** It was proposed for memory, on a straight-line projection
+  of 900 MB at 18,000 records. That was wrong: the Python index peaked about 80 MB higher at 19,192 records,
+  and Tantivy about 20 MB. With the lock gone too, a container adds a service and a hop for nothing. The
+  stages are a module, so moving them out later is small.
+- **Ruled out: LanceDB,** a second store to keep in step with Postgres. **Haystack,** a framework around five
+  stages we would write as custom components anyway. **Meilisearch and Typesense,** servers that remove
+  neither of the two slow steps, which are query embedding and reranking.
 
 **Context cost.** A search reply is about 2,900 characters (roughly 700 tokens) for 9 items, and a median
 skill is 3,200 characters (800 tokens), so one find-and-load costs about 1,500 tokens. Better first-hit
@@ -253,8 +283,9 @@ The goal is the fewest tokens between a task and the right skill. In order of ex
    weak match reads as "nothing strong here" and the agent stops looking.
 4. **A skill loads in layers.** `read` returns the skill. Long reference files are fetched only if the
    skill asks for them.
-5. **Learning from use.** `system.search_log` records each query and what was then read. A search
-   followed by no read is a likely miss, which tunes the labelled queries and shows up on the dashboard.
+5. **Learning from use.** `system.search_log` records each query and what it showed, and `reads` what was
+   opened. A search followed by no read is a likely miss, which tunes the labelled queries. Nothing reads
+   the log yet: the dashboard view is not built.
 
 ## Storage
 

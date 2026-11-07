@@ -20,6 +20,7 @@ Every route except `/health` needs `Authorization: Bearer <token>`, from
 | `POST` | `/v1/config/apply` | Apply `servers.json`: registers what differs, and rebuilds groups when a server was registered or a group changed. |
 | `GET` | `/v1/tokens/agent` | The client token for agents, and the gateway's mode. |
 | `POST` | `/v1/embeddings` | Embed `input` with `model`, OpenAI style. Every embedding goes through here. |
+| `POST` | `/v1/search` | Search skills and tools: `query`, and optionally `kind`, `plugin`, `marketplace`, `limit`, `full`, `budget_ms`, `trace`. The same pipeline and reply as `catalogue__search`. |
 | `POST` | `/v1/skills/mcp` | The MCP Skills extension as JSON-RPC: `initialize`, `skills/list`, `skills/get`, `resources/read`. The gateway rejects these methods, so they are served here. |
 | `POST` | `/v1/storage/stage` | Stage a file and return a presigned URL. Needs the `storage` profile. |
 | `GET` | `/v1/storage/buckets` | Staging buckets. Needs the `storage` profile. |
