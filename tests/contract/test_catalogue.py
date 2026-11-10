@@ -406,3 +406,33 @@ def test_the_disk_count_is_kept_until_the_clone_moves(tmp_path, monkeypatch):
     (clone / ".git" / "FETCH_HEAD").write_text("bbb")
     assert ix.records_on_disk("p", clone) == 3 and len(calls) == 2
 
+
+
+def test_a_scoped_catalogue_sees_only_its_marketplaces_and_servers(monkeypatch):
+    cat.db.execute("INSERT INTO plugins (name, marketplace) VALUES ('house', 'shared'), ('mine', 'private')")
+    store(rec("skill:house/lights", plugin="house", description="Turn the lights on"), plugin="house")
+    store(rec("skill:mine/diary", plugin="mine", description="Turn the diary page"), plugin="mine")
+    with cat.db:
+        ix._store(cat.db, "", [
+            {"id": "tool:ha__lights_on", "kind": "tool", "plugin": "", "name": "ha__lights_on",
+             "description": "Turn lights on", "path": "", "body": "call: listed natively", "hash": "a"},
+            {"id": "tool:mail__send", "kind": "tool", "plugin": "", "name": "mail__send",
+             "description": "Turn a draft into mail", "path": "", "body": "call: toolbox", "hash": "b"}])
+    monkeypatch.setattr(retrieval, "SCOPE_MARKETPLACES", ["shared"])
+    monkeypatch.setattr(retrieval, "SCOPE_SERVERS", ["ha"])
+    monkeypatch.setattr(retrieval, "SCOPED", True)
+    monkeypatch.setattr(cat, "SCOPED", True)
+
+    ids = {r["id"] for r in json.loads(cat.list_records())["records"]}
+    assert ids == {"skill:house/lights", "tool:ha__lights_on"}
+
+    read = cat._read(["skill:house/lights", "skill:mine/diary", "file:mine/README.md",
+                                 "skill:mine/diary/references/x.md", "tool:mail__send"])
+    assert "error" not in read["skill:house/lights"]
+    for rid in ("skill:mine/diary", "file:mine/README.md", "skill:mine/diary/references/x.md", "tool:mail__send"):
+        assert read[rid] == {"error": "no such record; use list or search to find the id"}
+
+    reply = json.loads(cat.search("turn"))
+    shown = {r["id"] for r in reply.get("results", []) + reply.get("tools", [])}
+    assert shown <= {"skill:house/lights", "tool:ha__lights_on"}
+    assert all(t["call"] == "toolbox__call_tool" for t in reply.get("tools", []))

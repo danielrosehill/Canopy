@@ -28,7 +28,7 @@ from . import gateway as gw
 from . import index as ix
 from . import ranking
 from . import scheduler
-from .retrieval import SEARCH_LIMIT, Search, filters as _filters, summary as _summary
+from .retrieval import SCOPED, SEARCH_LIMIT, Search, filters as _filters, scope as _scope, summary as _summary
 from .skills_ext import Skills
 
 # Reachable only on the stack's internal network; the gateway is the front door.
@@ -49,13 +49,26 @@ _keyword_lock = threading.Lock()
 searcher = Search(db, lambda: _keywords["index"])
 
 
+# A scoped catalogue (retrieval.SCOPED) serves only these: the rest report on, or act on, the whole index.
+SCOPED_TOOLS = {"search", "read", "list"}
+
+
 def tool(name: str | None = None):
     """Register a tool to run off the event loop. Measured on a live index on 2026-11-07: a `list` that
     takes 10 ms took 1,555 ms behind a `health`. The function itself stays plain, for tests and callers."""
     def add(fn):
-        mcp.tool(name=name)(gw.offload(fn))
+        if not SCOPED or (name or fn.__name__) in SCOPED_TOOLS:
+            mcp.tool(name=name)(gw.offload(fn))
         return fn
     return add
+
+
+def _in_scope(rid: str) -> bool:
+    """Whether a scoped catalogue may show this record (always true unscoped)."""
+    sc = _scope()
+    if not sc:
+        return True
+    return db.execute(f"SELECT 1 FROM records r WHERE r.id = %s AND {sc[0]}", [rid, *sc[1]]).fetchone() is not None
 
 
 # --- sync scheduling -------------------------------------------------------------
@@ -271,9 +284,21 @@ def _render(out: dict) -> str:
     return "\n\n".join(parts)
 
 
+def _owner_id(rid: str) -> str:
+    """The record a read id belongs to: itself, or for a side file its skill or plugin."""
+    if m := re.fullmatch(r"file:([^/]+)/.+", rid):
+        return f"plugin:{m[1]}"
+    if m := re.fullmatch(r"skill:([^/]+)/([^/]+)/.+", rid):
+        return f"skill:{m[1]}/{m[2]}"
+    return rid
+
+
 def _read(ids: list[str], full_readme: bool = False) -> dict:
     out = {}
     for rid in ids:
+        if SCOPED and not _in_scope(_owner_id(rid)):
+            out[rid] = {"error": "no such record; use list or search to find the id"}
+            continue
         r = db.execute("SELECT * FROM records WHERE id = %s", (rid,)).fetchone()
         if not r:
             side = _side_file(rid)
@@ -302,7 +327,10 @@ def _read(ids: list[str], full_readme: bool = False) -> dict:
             item["call"] = r["body"].split("\n", 1)[0].removeprefix("call: ")
             item.pop("content"); item.pop("path")
         elif r["kind"] == "mcp":
-            item |= _mcp_servers(name=r["name"])["servers"][0]
+            srv = _mcp_servers(name=r["name"])["servers"][0]
+            if SCOPED:   # declaring and referencing records may be outside the scope
+                srv = {k: srv[k] for k in ("name", "on_gateway", "routes")}
+            item |= srv
             item.pop("content")
         else:
             item["mcp_referenced"] = sorted({f"{x['route']}/{x['server']}" for x in db.execute(

@@ -36,6 +36,30 @@ LOG_QUERY_CHARS = 500
 REQUEST_FIELDS = {"query", "kind", "plugin", "marketplace", "limit", "full", "budget_ms", "trace"}
 
 
+def _env_list(name: str) -> list[str]:
+    return [x.strip() for x in os.environ.get(name, "").split(",") if x.strip()]
+
+
+# A scoped catalogue: a second catalogue instance for another user, who must only see some of the
+# marketplaces and some of the gateway's servers. Either variable set turns scoping on, and then
+# anything not listed is invisible to search, list and read: plugin/skill/command/agent records
+# need their plugin in a CATALOGUE_MARKETPLACES marketplace, tool and mcp records need their server
+# in CATALOGUE_SERVERS. Unset (the default), the catalogue sees everything, as before.
+SCOPE_MARKETPLACES = _env_list("CATALOGUE_MARKETPLACES")
+SCOPE_SERVERS = _env_list("CATALOGUE_SERVERS")
+SCOPED = bool(SCOPE_MARKETPLACES or SCOPE_SERVERS)
+
+
+def scope() -> tuple[str, list] | None:
+    """The WHERE clause (on alias r) that keeps a scoped catalogue to its records; None when unscoped."""
+    if not SCOPED:
+        return None
+    return ("((r.kind NOT IN ('tool', 'mcp') AND r.plugin IN "
+            "(SELECT name FROM plugins WHERE marketplace = ANY(%s))) "
+            "OR (r.kind IN ('tool', 'mcp') AND split_part(r.name, '__', 1) = ANY(%s)))",
+            [SCOPE_MARKETPLACES, SCOPE_SERVERS])
+
+
 def filters(kind: str | None, plugin: str | None, marketplace: str | None) -> tuple[str, list]:
     where, args = [], []
     if kind:
@@ -46,6 +70,8 @@ def filters(kind: str | None, plugin: str | None, marketplace: str | None) -> tu
         where.append("r.plugin = %s"); args.append(plugin)
     if marketplace:
         where.append("r.plugin IN (SELECT name FROM plugins WHERE marketplace = %s)"); args.append(marketplace)
+    if sc := scope():
+        where.append(sc[0]); args.extend(sc[1])
     return (" AND ".join(where) or "1=1"), args
 
 
@@ -213,7 +239,8 @@ class Search:
                 d = {"id": rid, "description": desc if len(desc) <= SEARCH_DESC_CHARS
                      else desc[:SEARCH_DESC_CHARS - 1] + "…"}
             if r["kind"] == "tool":
-                native = r["body"].startswith("call: listed natively")
+                # "Listed natively" is about the main client group; a scoped user calls through a toolbox.
+                native = not SCOPED and r["body"].startswith("call: listed natively")
                 d["call"] = f"mcp__{ix.CLIENT_NAME}__{r['name']}" if native else "toolbox__call_tool"
             return d
 
