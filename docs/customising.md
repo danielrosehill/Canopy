@@ -83,3 +83,20 @@ Change one thing at a time. Move with `SERVER_MODE=development` first, so that a
 from the move, and compare search results with the old stack. Then turn on enterprise mode as its own
 step: hand a token to each client, and check every remote route. See the open question in
 [deployment patterns](deployment-patterns.md#4-cloudflare-mcp-server-portal-for-hosted-clients).
+
+## A scoped catalogue for a second user
+
+The catalogue indexes every configured marketplace. To give another person catalogue search without
+showing them the rest, run a second catalogue container from the same image and database with:
+
+- `CATALOGUE_MARKETPLACES=<name>,<name>`: plugins, skills, commands and agents are visible only if their
+  plugin comes from one of these marketplaces.
+- `CATALOGUE_SERVERS=<server>,<server>`: tool and mcp records are visible only for these gateway servers.
+  Match it to the group that person's toolbox calls into.
+
+Either variable turns scoping on; anything unlisted is absent from `search`, `list` and `read` (a read
+answers "no such record", the same as for an id that does not exist, and side files follow their skill
+or plugin). A scoped instance serves only those three tools: `health`, `usage`, `sync`, `embed` and
+`mcp_servers` describe or act on the whole index and are not registered. Tool hits always give
+`toolbox__call_tool` as the route, since "listed natively" refers to the main client group. Register the
+container as its own upstream and put it in that person's group only. Shared index, so no extra sync.
