@@ -100,3 +100,11 @@ or plugin). A scoped instance serves only those three tools: `health`, `usage`, 
 `mcp_servers` describe or act on the whole index and are not registered. Tool hits always give
 `toolbox__call_tool` as the route, since "listed natively" refers to the main client group. Register the
 container as its own upstream and put it in that person's group only. Shared index, so no extra sync.
+
+## Ops notebook
+
+Keep a log of what you change: updates, maintenance, incidents and decisions, across the stack and the
+systems around it. It is a separate **private** git repo of markdown (it will name your systems, so it can't
+live in a public fork), which also opens as an Obsidian vault.
+[`examples/ops-notebook/`](../examples/ops-notebook) is the skeleton, and the `canopy-manager` skill `ops-log`
+sets one up, writes entries and searches them.
