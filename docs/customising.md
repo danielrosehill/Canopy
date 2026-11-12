@@ -106,5 +106,6 @@ container as its own upstream and put it in that person's group only. Shared ind
 Keep a log of what you change: updates, maintenance, incidents and decisions, across the stack and the
 systems around it. It is a separate **private** git repo of markdown (it will name your systems, so it can't
 live in a public fork), which also opens as an Obsidian vault.
-[`examples/ops-notebook/`](../examples/ops-notebook) is the skeleton, and the `canopy-manager` skill `ops-log`
-sets one up, writes entries and searches them.
+The public template [`Ops-Notebook-Template`](https://github.com/danielrosehill/Ops-Notebook-Template) is the
+skeleton. The `canopy-manager` skill `ops-notebook-setup` creates your private copy and tailors its areas and
+sections to your setup; `ops-log` writes entries and searches them.
