@@ -335,7 +335,8 @@ def up(args: list[str]) -> int:
     if p.overlay:
         if not (p.source / "config").is_dir():
             sys.exit(f"the overlay has no config/ folder: {shown_url(p.overlay)}")
-        make_data_folders(p.data)
+        if not (p.data / "api").is_dir():
+            make_data_folders(p.data)
     elif not (p.source / "config").is_dir():
         init()
     code = compose("up", "-d", *args)
