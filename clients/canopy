@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """The Canopy command line. Python standard library only.
 
+    canopy [--no-hooks] COMMAND ...  --no-hooks skips env.sh, as CANOPY_NO_HOOKS=1 does
     canopy init                     make the folders and default config
     canopy up [compose args]        start the stack and wait for the seed
     canopy down [compose args]      stop it. Data stays in the folders
@@ -34,18 +35,23 @@
     canopy run CMD [ARGS...]        run a command in the cli container
     canopy clis ACTION [NAME...]    tools in the cli container: list, choose, add, remove, install, logins, check, all
     canopy compose [ARGS...]        docker compose, with Canopy's files
+    canopy overlay pull | status    the managed clone of CANOPY_OVERLAY
     canopy backup                   start a backup now, and wait for it
     canopy backups                  the snapshots at the target
     canopy backup-plan              what a restore would bring back and overwrite
     canopy restore [--replace]      bring back the latest backup, stopping the stack to do it
 
     CANOPY_AGENT_DATA   default ~/canopy/agent-data
+    CANOPY_OVERLAY      a git URL. Its clone, in $CANOPY_DATA/overlay, replaces CANOPY_AGENT_DATA
+    CANOPY_OVERLAY_REF  a branch, tag or commit of it. Default: the remote's default branch
     CANOPY_DATA         default ~/canopy/data
     CANOPY_API_URL      default http://127.0.0.1:8090
     CANOPY_API_TOKEN    default: read from $CANOPY_DATA/api/token
 """
 from __future__ import annotations
 
+import base64
+import functools
 import json
 import os
 import re
@@ -57,12 +63,16 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from typing import NamedTuple
 
 REPO = Path(__file__).resolve().parent.parent
 IN_CLI = os.environ.get("CANOPY_IN_CLI") == "1"
 AGENT_FOLDERS = ("config", "skills", "notes", "cli")
 BACKUP_WAIT = 4 * 3600   # as BACKUP_TIMEOUT_SEC
 DATA_FOLDERS = ("api", "admin", "tokens", "postgres", "catalogue", "backups", "storage", "storage-secrets")
+CONFIG_EDITS = ("add-server", "remove-server", "set-group", "remove-group", "add-marketplace", "remove-marketplace")
+KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+NOTICES: dict[str, bool] = {}   # each printed once
 
 
 def read_env_file(path: Path) -> dict[str, str]:
@@ -87,14 +97,198 @@ def folders() -> tuple[Path, Path]:
             Path(setting("CANOPY_DATA", str(home / "canopy/data"))).expanduser())
 
 
-def init() -> int:
+class Place(NamedTuple):
+    """Where each kind of thing lives. Without an overlay, `source` and `state` are both CANOPY_AGENT_DATA."""
+    source: Path   # read: config/, compose.override.yaml, settings.env, env.sh, skills/, notes/
+    state: Path    # written: secrets.env, and cli/ for CLI logins. Never in the overlay's git
+    data: Path     # Canopy's
+    overlay: str   # CANOPY_OVERLAY, or ""
+
+
+def places() -> Place:
     agent, data = folders()
-    for f in AGENT_FOLDERS:
-        (agent / f).mkdir(parents=True, exist_ok=True)
+    url = setting("CANOPY_OVERLAY", "")
+    if not url:
+        return Place(agent, agent, data, "")
+    if setting("CANOPY_AGENT_DATA", "") and not NOTICES.get("both"):
+        NOTICES["both"] = True
+        print(f"CANOPY_OVERLAY is set, so {agent} (CANOPY_AGENT_DATA) is not used", file=sys.stderr)
+    return Place(data / "overlay", data / "agent-state", data, url)
+
+
+# --- the overlay: a managed clone of a git repo -------------------------------------------
+
+def shown_url(url: str) -> str:
+    """A URL with any user or password in it masked."""
+    return re.sub(r"//[^/@]+@", "//***@", url)
+
+
+def overlay_git_env(p: Place) -> dict[str, str]:
+    """GITHUB_TOKEN reaches git for https://github.com/ only, through the environment of that one
+    call: never in its arguments, and never in the clone's .git/config."""
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    token = os.environ.get("GITHUB_TOKEN") or read_env_file(p.state / "secrets.env").get("GITHUB_TOKEN")
+    if token and p.overlay.startswith("https://github.com/"):
+        n = int(env.get("GIT_CONFIG_COUNT") or 0)
+        basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+        env.update({"GIT_CONFIG_COUNT": str(n + 1), f"GIT_CONFIG_KEY_{n}": "http.https://github.com/.extraHeader",
+                    f"GIT_CONFIG_VALUE_{n}": f"Authorization: Basic {basic}"})
+    return env
+
+
+def overlay_git(p: Place, *args: str, check: bool = True, env: dict | None = None) -> subprocess.CompletedProcess:
+    done = subprocess.run(["git", "-C", str(p.source), *args], env=env or {**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+                          capture_output=True, text=True)
+    if check and done.returncode:
+        sys.exit(f"overlay: git {args[0]} failed, so nothing was changed: {done.stderr.strip()}")
+    return done
+
+
+def overlay_sync() -> Place:
+    """Clone CANOPY_OVERLAY, or fetch it, and check out CANOPY_OVERLAY_REF. A clone with local changes
+    is not touched: the overlay repo is where changes go."""
+    p = places()
+    if not p.overlay or IN_CLI:
+        return p
+    clone, ref, env = p.source, setting("CANOPY_OVERLAY_REF", ""), overlay_git_env(p)
+    if not (clone / ".git").exists():
+        if clone.exists() and any(clone.iterdir()):
+            sys.exit(f"{clone} is not a git clone. Move it away, and canopy clones CANOPY_OVERLAY there.")
+        clone.parent.mkdir(parents=True, exist_ok=True)
+        done = subprocess.run(["git", "clone", "-q", p.overlay, str(clone)], env=env, capture_output=True, text=True)
+        if done.returncode:
+            sys.exit(f"cannot clone {shown_url(p.overlay)}: {done.stderr.strip()}\n"
+                     "See \"Overlay by git URL\" in docs/customising.md for access to a private repo.")
+        before = ""
+    else:
+        if overlay_git(p, "status", "--porcelain").stdout.strip():
+            sys.exit(f"{clone} has local changes, so it was not touched. It is a managed clone of "
+                     "CANOPY_OVERLAY: commit the change to the overlay repo instead, and delete the folder "
+                     "to clone it afresh.")
+        if overlay_git(p, "remote", "get-url", "origin").stdout.strip() != p.overlay:
+            overlay_git(p, "remote", "set-url", "origin", p.overlay)
+        before = overlay_git(p, "rev-parse", "HEAD", check=False).stdout.strip()
+        overlay_git(p, "fetch", "-q", "--prune", "--tags", "--force", "origin", env=env)
+    if not ref:
+        overlay_git(p, "remote", "set-head", "origin", "--auto", env=env)
+        ref = overlay_git(p, "symbolic-ref", "--short", "refs/remotes/origin/HEAD").stdout.strip()
+        ref = ref.removeprefix("origin/")
+
+    def found(name: str) -> str:
+        return overlay_git(p, "rev-parse", "--verify", "-q", name, check=False).stdout.strip()
+
+    if found(f"refs/remotes/origin/{ref}"):
+        if found(f"refs/heads/{ref}"):
+            ahead = overlay_git(p, "rev-list", "--count", f"refs/remotes/origin/{ref}..refs/heads/{ref}").stdout
+            if int(ahead.strip() or 0):
+                sys.exit(f"{clone} has commits that are not on the remote, so it was not touched. "
+                         "Push them to the overlay repo, and delete the folder to clone it afresh.")
+        overlay_git(p, "checkout", "-q", "--no-track", "-B", ref, f"refs/remotes/origin/{ref}")
+    else:
+        commit = found(f"refs/tags/{ref}^{{commit}}") or found(f"{ref}^{{commit}}")
+        if not commit:
+            overlay_git(p, "fetch", "-q", "origin", ref, check=False, env=env)   # a commit no branch has
+            commit = found(f"{ref}^{{commit}}")
+        if not commit:
+            sys.exit(f"CANOPY_OVERLAY_REF={ref} is no branch, tag or commit of {shown_url(p.overlay)}")
+        overlay_git(p, "checkout", "-q", "--detach", commit)
+    after = overlay_git(p, "rev-parse", "HEAD").stdout.strip()
+    if after != before:
+        print(f"overlay: {ref} at {after[:12]}", file=sys.stderr)
+    # The cli container mounts its home over /agent-data/cli, and cannot make that folder in a read-only
+    # mount. An empty folder is invisible to git.
+    (clone / "cli").mkdir(exist_ok=True)
+    (p.state / "cli").mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def overlay_status() -> int:
+    p = places()
+    if not p.overlay:
+        sys.exit("CANOPY_OVERLAY is not set")
+    print(f"url:    {shown_url(p.overlay)}")
+    print(f"ref:    {setting('CANOPY_OVERLAY_REF', '') or '(the remote default branch)'}")
+    if not (p.source / ".git").exists():
+        print(f"clone:  none yet at {p.source}. `canopy overlay pull` makes it")
+        return 0
+    print(f"clone:  {p.source}")
+    print(f"commit: {overlay_git(p, 'log', '-1', '--format=%h %s').stdout.strip()}")
+    dirty = overlay_git(p, "status", "--porcelain").stdout.strip()
+    print(f"state:  {'LOCAL CHANGES: the next pull refuses' if dirty else 'clean'}")
+    branch = overlay_git(p, "symbolic-ref", "-q", "--short", "HEAD", check=False).stdout.strip()
+    counts = overlay_git(p, "rev-list", "--left-right", "--count", f"refs/remotes/origin/{branch}...HEAD",
+                         check=False).stdout.split() if branch else []
+    if len(counts) == 2:
+        print(f"remote: {counts[0]} behind, {counts[1]} ahead of origin/{branch}, as of the last fetch")
+    return 1 if dirty else 0
+
+
+# --- settings.env, secrets.env and the env.sh hook ----------------------------------------
+
+def parse_hook_output(text: str) -> dict[str, str]:
+    """KEY=VALUE lines. A bad line is named by its number only: its value may be a secret."""
+    out = {}
+    for n, line in enumerate(text.splitlines(), 1):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, eq, value = line.removeprefix("export ").lstrip().partition("=")
+        if not eq or not KEY.fullmatch(key):
+            sys.exit(f"env.sh: line {n} of its output is not KEY=VALUE, so canopy stopped")
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+            value = value[1:-1]
+        out[key] = value
+    return out
+
+
+@functools.cache
+def hook_env() -> dict[str, str]:
+    """What an executable env.sh prints. Its values are held in memory only, and never printed."""
+    p = places()
+    hook = p.source / "env.sh"
+    if os.environ.get("CANOPY_NO_HOOKS") == "1" or IN_CLI or not hook.is_file():
+        return {}
+    if not os.access(hook, os.X_OK):
+        print(f"{hook} is not executable, so it was skipped", file=sys.stderr)
+        return {}
+    env = {**read_env_file(p.source / "settings.env"), **read_env_file(p.state / "secrets.env"), **os.environ}
+    done = subprocess.run([str(hook)], cwd=p.source, env=env, capture_output=True, text=True)
+    sys.stderr.write(done.stderr)
+    if done.returncode:
+        print(f"{hook} failed with exit code {done.returncode}, so canopy stopped", file=sys.stderr)
+        raise SystemExit(done.returncode)
+    return parse_hook_output(done.stdout)
+
+
+def hook_compose_file(p: Place, names: list[str]) -> Path:
+    """Names only, never values: compose passes each into `api` and `cli` from its own environment,
+    as `env_file` does for secrets.env. JSON is YAML."""
+    path = p.data / "agent-state" / "hook-env.yaml"
+    text = json.dumps({"services": {s: {"environment": sorted(names)} for s in ("api", "cli")}}, indent=1) + "\n"
+    if not path.is_file() or path.read_text() != text:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    return path
+
+
+def make_data_folders(data: Path) -> None:
     for f in DATA_FOLDERS:
         (data / f).mkdir(parents=True, exist_ok=True)
     for f in ("api", "admin", "tokens", "storage-secrets"):
         (data / f).chmod(0o700)
+
+
+def init() -> int:
+    p = overlay_sync()
+    if p.overlay:   # nothing is copied into the clone: the overlay repo holds the config
+        make_data_folders(p.data)
+        print(f"overlay:    {shown_url(p.overlay)}\nclone:      {p.source}\nstate:      {p.state}\n"
+              f"data:       {p.data}")
+        return 0
+    agent, data = folders()
+    for f in AGENT_FOLDERS:
+        (agent / f).mkdir(parents=True, exist_ok=True)
+    make_data_folders(data)
     for f in ("marketplaces.json", "servers.json"):
         if not (agent / "config" / f).exists():
             shutil.copy(REPO / "config" / f, agent / "config" / f)
@@ -107,22 +301,29 @@ def init() -> int:
 
 
 def compose_args() -> list[str]:
-    agent, _ = folders()
+    """Later env files win: settings.env, then secrets.env. env.sh's values win over both, as the
+    environment compose runs in."""
+    p = places()
     args = ["docker", "compose", "--project-directory", str(REPO)]
-    for env_file in (REPO / ".env", agent / "secrets.env"):
+    for env_file in (REPO / ".env", p.source / "settings.env", p.state / "secrets.env"):
         if env_file.is_file():
             args += ["--env-file", str(env_file)]
     args += ["-f", str(REPO / "compose.yaml")]
-    override = agent / "compose.override.yaml"
+    if p.overlay:
+        args += ["-f", str(REPO / "compose.overlay.yaml")]
+    override = p.source / "compose.override.yaml"
     if override.is_file():
         args += ["-f", str(override)]
+    names = list(hook_env())
+    if names:
+        args += ["-f", str(hook_compose_file(p, names))]
     return args
 
 
 def compose_env() -> dict[str, str]:
-    agent, data = folders()
-    return {**os.environ, "CANOPY_AGENT_DATA": str(agent), "CANOPY_DATA": str(data),
-            "CANOPY_UID": str(os.getuid()), "CANOPY_GID": str(os.getgid())}
+    p = places()
+    return {**os.environ, **hook_env(), "CANOPY_AGENT_DATA": str(p.source), "CANOPY_AGENT_STATE": str(p.state),
+            "CANOPY_DATA": str(p.data), "CANOPY_UID": str(os.getuid()), "CANOPY_GID": str(os.getgid())}
 
 
 def compose(*args: str) -> int:
@@ -130,8 +331,12 @@ def compose(*args: str) -> int:
 
 
 def up(args: list[str]) -> int:
-    agent, _ = folders()
-    if not (agent / "config").is_dir():
+    p = overlay_sync()
+    if p.overlay:
+        if not (p.source / "config").is_dir():
+            sys.exit(f"the overlay has no config/ folder: {shown_url(p.overlay)}")
+        make_data_folders(p.data)
+    elif not (p.source / "config").is_dir():
         init()
     code = compose("up", "-d", *args)
     if code:
@@ -281,7 +486,19 @@ def seed_exit_code() -> int:
 def restore(args: list[str]) -> int:
     """Files first, so the database starts with the restored passwords. Then the databases."""
     tool = ["run", "--rm", "--no-deps", "-T", "api", "python", "-m", "canopy.backup"]
-    return (compose("stop") or compose(*tool, "restore-files") or compose("up", "-d", "--wait", "db")
+
+    def restore_files() -> int:
+        p = places()
+        if not p.overlay:
+            return compose(*tool, "restore-files")
+        # The overlay is mounted read-only, and git holds its config: the backed-up copy goes beside it.
+        scratch = p.state / "restored"
+        (scratch / "config").mkdir(parents=True, exist_ok=True)
+        print(f"the backed-up agent data goes to {scratch}: your config comes from the overlay", file=sys.stderr)
+        return subprocess.call([*compose_args(), *tool, "restore-files"],
+                               env={**compose_env(), "CANOPY_AGENT_DATA": str(scratch), "CANOPY_OVERLAY_MOUNT": "rw"})
+
+    return (compose("stop") or restore_files() or compose("up", "-d", "--wait", "db")
             or compose(*tool, "restore-db", *args) or up([]))
 
 
@@ -355,7 +572,13 @@ def load_json(path: str) -> dict:
 
 def main() -> int:
     argv = sys.argv[1:]
+    if argv[:1] == ["--no-hooks"]:
+        os.environ["CANOPY_NO_HOOKS"] = "1"
+        argv = argv[1:]
     cmd, args = (argv[0], argv[1:]) if argv else ("help", [])
+    if cmd in CONFIG_EDITS and not IN_CLI and places().overlay:
+        sys.exit("CANOPY_OVERLAY is set, so the config is read-only here. Commit the change to the overlay "
+                 "repo, then run `canopy apply`.")
     if cmd in ("help", "-h", "--help"):
         print(__doc__)
         return 0
@@ -368,10 +591,20 @@ def main() -> int:
     if cmd == "down":
         return compose("down", *args)
     if cmd == "compose":
+        overlay_sync()
         return compose(*args)
+    if cmd == "overlay" and args == ["pull"]:
+        p = overlay_sync()
+        if not p.overlay:
+            sys.exit("CANOPY_OVERLAY is not set")
+        return overlay_status()
+    if cmd == "overlay" and args == ["status"]:
+        return overlay_status()
     if cmd == "clis":
         script = REPO / "plugins/canopy-manager/skills/manage-clis/scripts/clis.py"
-        return subprocess.call([sys.executable, str(script), "--agent-data", str(folders()[0]),
+        p = places()   # the choices are config, read from the source. Logins go to the state folder
+        return subprocess.call([sys.executable, str(script), "--agent-data", str(p.state),
+                                "--list", str(p.source / "config/cli.json"),
                                 "--canopy", str(Path(__file__).resolve()), *args])
     if cmd == "run":
         return run(args)
@@ -429,6 +662,7 @@ def main() -> int:
         print(reply.get("text") or json.dumps(reply, indent=2, ensure_ascii=False))
         return 0 if code < 400 else 1
     if cmd == "apply":
+        overlay_sync()
         return show("POST", "/v1/config/apply")
     if cmd in ("validate", "diff"):
         code, reply = call("GET", f"/v1/config/{cmd}")
