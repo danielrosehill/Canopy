@@ -136,6 +136,7 @@ sent to `github.com` only: use a credential helper for other hosts.
 | `/agent-data` in `api` (backups read it) | `agent-data`, read-write | the clone, read-only |
 | `/agent-data` in `cli` | `agent-data`, read-write | the clone, read-only |
 | `/agent-data/cli` in `cli` (its home: CLI logins) | inside the above | `agent-state/cli`, read-write |
+| `/agent-state` in `api` (backups: the export and `secrets.env`) | not mounted | `agent-state`, read-write |
 | `secrets.env` | `agent-data/secrets.env` | `agent-state/secrets.env`, optional |
 
 `compose.overlay.yaml` in the checkout holds that mapping, and `canopy` adds it only with an overlay.
@@ -146,10 +147,12 @@ Because the config is read-only:
   `remove-marketplace` are refused by `canopy`, and fail in the API.
 - `canopy clis choose`, `add` and `remove` edit `config/cli.json` in the clone, so the next pull stops.
   Edit `cli.json` in the overlay repo instead. `canopy clis install` and `logins` work.
-- The `backup-config` job fails, because it writes `config/export.json`. Your config is in git. The
-  `backup-data` job works, without `secrets.env`, which is not in the clone.
-- `canopy restore` puts the backed-up agent data in `$CANOPY_DATA/agent-state/restored`, and the data
-  tier back where it was. Your config comes from the overlay.
+
+Backups still cover everything. The `api` container sets `CANOPY_CONFIG_EXPORT=/agent-state/export.json`
+and `CANOPY_AGENT_STATE_DIR=/agent-state`, so the `backup-config` job writes its export there and backs it
+up with the clone's config, and `backup-data` includes `agent-state/secrets.env` as it includes
+`agent-data/secrets.env`. `canopy restore` puts those two back in `agent-state`, and the backed-up copy of
+the clone in `$CANOPY_DATA/agent-state/restored`, for reference: your config comes from the overlay.
 
 ## Updating
 

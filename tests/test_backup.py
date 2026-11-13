@@ -132,3 +132,41 @@ def test_the_target_is_described_with_no_secrets(tmp_path, monkeypatch):
     assert out["password_set"] is True and out["keep"] == {"daily": 3, "weekly": 8}
     assert "topsecret" not in json.dumps(out)
 
+
+
+# --- a read-only git overlay: the export and a local secrets.env live in the state folder ---------
+
+class NoRows:
+    def execute(self, *_):
+        return []
+
+
+def test_without_a_state_folder_nothing_moves(tmp_path):
+    bk = make(tmp_path)
+    assert bk.export_path == tmp_path / "config" / "export.json"
+    assert bk.secrets_files == [tmp_path / "agent" / "secrets.env"]
+
+
+def test_overlay_backups_use_the_state_folder(tmp_path, monkeypatch):
+    monkeypatch.setenv("RESTIC_PASSWORD", "x")
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "backup.json").write_text(json.dumps({"repository": "/r"}))
+    agent, state = tmp_path / "agent", tmp_path / "state"
+    (agent / "config").mkdir(parents=True)
+    state.mkdir()
+    (state / "secrets.env").write_text("LOCAL_KEY=hunter2\n")
+    tools = Tools()
+    bk = b.Backups(NoRows(), config=tmp_path / "config", backups=tmp_path / "backups", agent_data=agent,
+                   state=[], run=tools, agent_state=state, export_path=state / "export.json")
+    monkeypatch.setattr(bk, "dump", lambda name, path: {})
+
+    bk.backup_config()
+    assert json.loads((state / "export.json").read_text())["secrets"] == ["LOCAL_KEY"]
+    assert not (tmp_path / "config" / "export.json").exists()   # the read-only config is not written
+    config_run = next(c for c, _ in tools.calls if c[1] == "backup")
+    assert str(state / "export.json") in config_run and str(agent / "config") in config_run
+
+    tools.calls.clear()
+    bk.backup_data()
+    data_run = next(c for c, _ in tools.calls if c[1] == "backup")
+    assert str(state / "secrets.env") in data_run

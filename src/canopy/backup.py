@@ -8,6 +8,9 @@
 RESTIC_PASSWORD and, for S3, AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY come from the environment.
 Keep a copy of RESTIC_PASSWORD outside the stack: `secrets.env` is inside the backup it unlocks.
 
+With a git overlay, agent-data is read-only: CANOPY_CONFIG_EXPORT moves the export, and
+CANOPY_AGENT_STATE_DIR adds the local secrets.env, both in the writable state folder.
+
 Two tiers in one repository, told apart by tag. `config` rebuilds the install, `data` restores it
 exactly. Each database is dumped from an exported snapshot, with its row counts read from the same
 snapshot, so `restore-test` can demand exact counts from a backup of a stack that was busy.
@@ -37,6 +40,10 @@ from . import store
 
 BACKUPS = Path(os.environ.get("CANOPY_BACKUP_DIR", "/backups"))
 AGENT_DATA = Path(os.environ.get("CANOPY_AGENT_DATA_DIR", "/agent-data"))
+# With a git overlay, agent-data is read-only. Its local, writable side holds a secrets.env of its own,
+# and the export that would otherwise go in config/. Unset: both stay in agent-data, as before.
+AGENT_STATE = os.environ.get("CANOPY_AGENT_STATE_DIR", "")
+CONFIG_EXPORT = os.environ.get("CANOPY_CONFIG_EXPORT", "")   # default: config/export.json
 STATE = [Path(p) for p in ("/api", "/admin", "/tokens")]
 DB_HOST = os.environ.get("BACKUP_DB_HOST", "db")
 OWNERS = {"mcpjungle": "mcpjungle", "canopy": "canopy"}   # database: role, as in db-init.sh
@@ -83,10 +90,21 @@ def secret_names(path: Path) -> list[str]:
 class Backups:
     def __init__(self, db: store.Db | None = None, config: Path = sched.CONFIG, backups: Path = BACKUPS,
                  agent_data: Path = AGENT_DATA, state: list[Path] = STATE,
-                 run: Callable[..., subprocess.CompletedProcess] = subprocess.run):
+                 run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+                 agent_state: Path | None = Path(AGENT_STATE) if AGENT_STATE else None,
+                 export_path: Path | None = Path(CONFIG_EXPORT) if CONFIG_EXPORT else None):
         self.db, self.config, self.backups, self.agent_data = db, config, backups, agent_data
+        self.agent_state, self.export_path = agent_state, export_path or config / "export.json"
         self.state, self._run = state, run
         self.lock = threading.Lock()   # restic's prune wants the repository to itself
+
+    @property
+    def secrets_files(self) -> list[Path]:
+        """Where a secrets.env can be: agent-data, and the local state beside a read-only overlay."""
+        found = [self.agent_data / "secrets.env"]
+        if self.agent_state and self.agent_state != self.agent_data:
+            found.append(self.agent_state / "secrets.env")
+        return found
 
     # --- the tools -------------------------------------------------------------------
 
@@ -153,8 +171,7 @@ class Backups:
             shutil.rmtree(self.stage, ignore_errors=True)
             self.stage.mkdir(mode=0o700, parents=True)
             try:
-                secrets = self.agent_data / "secrets.env"
-                state = [p for p in [*self.state, secrets] if p.exists()]
+                state = [p for p in [*self.state, *self.secrets_files] if p.exists()]
                 manifest = {"databases": {n: self.dump(n, self.stage / f"{n}.dump") for n in OWNERS},
                             "files": {str(f): sha256(f) for f in files_under(state)}}
                 (self.stage / "manifest.json").write_text(json.dumps(manifest, indent=1))
@@ -176,10 +193,11 @@ class Backups:
         """What lives only in the database, plus the names of the secrets but not their values."""
         doc = {"sources": [dict(r) for r in self.db.execute("SELECT * FROM workspace.sources ORDER BY name")],
                "namespaces": [dict(r) for r in self.db.execute("SELECT * FROM workspace.namespaces ORDER BY name")],
-               "secrets": secret_names(self.agent_data / "secrets.env")}
-        path = self.config / "export.json"
+               "secrets": sorted({n for f in self.secrets_files for n in secret_names(f)})}
+        path = self.export_path
         text = json.dumps(doc, indent=1, sort_keys=True, default=str) + "\n"
         if not path.is_file() or path.read_text() != text:
+            path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text)
 
     def backup_config(self) -> str:
@@ -189,6 +207,8 @@ class Backups:
             self.export()
             names = ("config", "skills", "notes", "compose.override.yaml")
             paths = [self.agent_data / n for n in names if (self.agent_data / n).exists()]
+            if self.export_path.exists() and not any(self.export_path.is_relative_to(p) for p in paths):
+                paths.append(self.export_path)
             if not paths:
                 raise BackupError(f"nothing to back up in {self.agent_data}")
             done = self.restic("backup", "--tag", "config", "--host", HOST, "--skip-if-unchanged",
@@ -223,7 +243,7 @@ class Backups:
             raise BackupError("no `data` snapshot to restore")
         return {"data": data, "config": next((s for s in found if "config" in s["tags"]), None),
                 "replaces": [*(f"database {n}" for n in OWNERS), *map(str, self.state),
-                             str(self.agent_data / "secrets.env"), str(self.config)],
+                             *map(str, self.secrets_files), str(self.config)],
                 "rebuilds": ["catalogue clones", "Ollama models"],
                 "command": "canopy restore --replace", "stops_the_stack": True}
 
