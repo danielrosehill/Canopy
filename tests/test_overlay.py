@@ -15,6 +15,7 @@ spec = importlib.util.spec_from_loader("canopy_cli_overlay", loader)
 cli = importlib.util.module_from_spec(spec)
 loader.exec_module(cli)
 
+REAL_SETTING = cli.setting   # the autouse fixture swaps it for an env-only stub
 SECRET = "s3cr3t-value-never-shown"
 
 
@@ -357,3 +358,15 @@ def test_settings_env_never_reaches_a_container_environment():
             files = spec.get("env_file") or []
             paths = [f["path"] if isinstance(f, dict) else f for f in (files if isinstance(files, list) else [files])]
             assert not any(p.endswith("settings.env") for p in paths), f"{name}: {service} loads settings.env"
+
+
+def test_the_cli_reads_its_own_settings_from_settings_env(agent, monkeypatch):
+    """canopy talks to the API on CANOPY_API_PORT; with no wrapper exporting it, settings.env must supply it."""
+    (agent / "settings.env").write_text("CANOPY_API_PORT=8825\nCANOPY_DATA=/should/not/be/used\n")
+    monkeypatch.delenv("CANOPY_API_PORT", raising=False)
+    monkeypatch.setattr(cli, "setting", REAL_SETTING)
+    monkeypatch.setattr(cli, "REPO", agent.parent)   # no checkout .env in play
+    assert cli.setting("CANOPY_API_PORT", "8090") == "8825"
+    monkeypatch.setenv("CANOPY_API_PORT", "9000")
+    assert cli.setting("CANOPY_API_PORT", "8090") == "9000"            # the process environment still wins
+    assert cli.setting("CANOPY_DATA", "default") != "/should/not/be/used"   # locating names never come from it
