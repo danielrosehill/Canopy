@@ -18,6 +18,7 @@ jobs:
       - run: uv run pytest
       - run: docker compose config --quiet
       - run: docker compose -f compose.yaml -f examples/overlay/compose.override.yaml config --quiet
+      - run: docker compose -f compose.yaml -f compose.overlay.yaml config --quiet
 
   contract:
     runs-on: ubuntu-latest

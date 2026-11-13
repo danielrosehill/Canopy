@@ -126,7 +126,9 @@ services:
       CANOPY_STAGE_MAX_MB: ${CANOPY_STAGE_MAX_MB:-256}
       CANOPY_ALERT_WEBHOOK: ${CANOPY_ALERT_WEBHOOK:-}
       CANOPY_TOOL_REFRESH: ${CANOPY_TOOL_REFRESH:-false}
-    env_file:
+    env_file:   # later files win: settings.env is committed, secrets.env is not
+      - path: ${CANOPY_AGENT_DATA:-${HOME}/canopy/agent-data}/settings.env
+        required: false
       - path: ${CANOPY_AGENT_DATA:-${HOME}/canopy/agent-data}/secrets.env
         required: false
     ports:
@@ -169,7 +171,9 @@ services:
       dockerfile: cli/Dockerfile
     init: true
     user: "${CANOPY_UID:-1000}:${CANOPY_GID:-1000}"
-    env_file:
+    env_file:   # later files win: settings.env is committed, secrets.env is not
+      - path: ${CANOPY_AGENT_DATA:-${HOME}/canopy/agent-data}/settings.env
+        required: false
       - path: ${CANOPY_AGENT_DATA:-${HOME}/canopy/agent-data}/secrets.env
         required: false
     volumes:
