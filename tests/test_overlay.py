@@ -241,7 +241,9 @@ def test_compose_sees_settings_then_secrets_then_hook(agent):
         pytest.skip("no docker compose plugin")
     assert done.returncode == 0, done.stderr
     env = json.loads(done.stdout)["services"]["api"]["environment"]
-    assert (env["A"], env["B"], env["C"]) == ("settings", "secrets", "hook-yes")
+    # settings.env feeds compose substitution only: a name set only there never reaches the container
+    assert "A" not in env
+    assert (env["B"], env["C"]) == ("secrets", "hook-yes")
 
 
 def test_the_overlay_hook_runs_in_the_clone(tmp_path, remote):
@@ -342,3 +344,16 @@ def test_the_hook_runs_once_in_a_real_canopy_compose_config(agent, tmp_path):
         pytest.skip("no docker compose plugin")
     assert done.returncode == 0, done.stderr
     assert counter.read_text().count("run") == 1
+
+
+def test_settings_env_never_reaches_a_container_environment():
+    """settings.env is for compose substitution only. A host-side name such as CANOPY_API_PORT (the published
+    port) means the listen port inside the api container, so passing the file in broke the health check (v1.02)."""
+    import yaml
+    root = Path(__file__).resolve().parents[1]
+    for name in ("compose.yaml", "compose.overlay.yaml"):
+        doc = yaml.safe_load((root / name).read_text())
+        for service, spec in (doc.get("services") or {}).items():
+            files = spec.get("env_file") or []
+            paths = [f["path"] if isinstance(f, dict) else f for f in (files if isinstance(files, list) else [files])]
+            assert not any(p.endswith("settings.env") for p in paths), f"{name}: {service} loads settings.env"

@@ -150,7 +150,7 @@ In `agent-data/config`:
 
 Settings that are not secret go in `settings.env`, which you commit. Secrets go in `secrets.env`, which
 you never commit, or come from a secrets manager through an executable `env.sh` that prints them. Later
-wins: `settings.env`, then `secrets.env`, then `env.sh`. All settings are described in `.env.example`.
+wins: `settings.env`, then `secrets.env`, then `env.sh`. `settings.env` feeds compose only, not the containers. All settings are described in `.env.example`.
 
 Keep the folder in a private git repo. Set `CANOPY_OVERLAY` to that repo's URL instead of
 `CANOPY_AGENT_DATA`, and `canopy` keeps its own read-only clone in `CANOPY_DATA` and pulls it on `up` and
