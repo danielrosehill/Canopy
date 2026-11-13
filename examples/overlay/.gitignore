@@ -1,1 +1,4 @@
+# Secrets never go in git. env.sh prints them at start instead, or keep them here, on one machine.
 secrets.env
+# Written by the cli container: CLI logins, when this folder is CANOPY_AGENT_DATA.
+cli/

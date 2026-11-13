@@ -1,0 +1,26 @@
+# Added by `canopy` on top of compose.yaml when CANOPY_OVERLAY is set. Do not use it by hand.
+# CANOPY_AGENT_DATA is then the overlay's managed clone, in $CANOPY_DATA/overlay. It is git's, so it is
+# mounted read-only. What containers write goes to CANOPY_AGENT_STATE, in $CANOPY_DATA/agent-state.
+# Volumes with the same container path replace those in compose.yaml; env_file entries are added.
+# `canopy restore` sets CANOPY_OVERLAY_MOUNT=rw, and points CANOPY_AGENT_DATA at a scratch folder.
+# /agent-state in `api` is restored in place.
+services:
+  api:
+    env_file:
+      - path: ${CANOPY_AGENT_STATE:-${CANOPY_DATA:-${HOME}/canopy/data}/agent-state}/secrets.env
+        required: false
+    environment:   # backups: the export, and the local secrets.env, live in the state folder
+      CANOPY_AGENT_STATE_DIR: /agent-state
+      CANOPY_CONFIG_EXPORT: /agent-state/export.json
+    volumes:
+      - ${CANOPY_AGENT_STATE:-${CANOPY_DATA:-${HOME}/canopy/data}/agent-state}:/agent-state
+      - ${CANOPY_AGENT_DATA:-${HOME}/canopy/agent-data}/config:/config:${CANOPY_OVERLAY_MOUNT:-ro}
+      - ${CANOPY_AGENT_DATA:-${HOME}/canopy/agent-data}:/agent-data:${CANOPY_OVERLAY_MOUNT:-ro}
+
+  cli:
+    env_file:
+      - path: ${CANOPY_AGENT_STATE:-${CANOPY_DATA:-${HOME}/canopy/data}/agent-state}/secrets.env
+        required: false
+    volumes:
+      - ${CANOPY_AGENT_DATA:-${HOME}/canopy/agent-data}:/agent-data:ro
+      - ${CANOPY_AGENT_STATE:-${CANOPY_DATA:-${HOME}/canopy/data}/agent-state}/cli:/agent-data/cli

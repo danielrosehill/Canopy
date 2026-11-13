@@ -346,7 +346,8 @@ yet: a plain file is what people edit, and the config backup already covers it. 
 Canopy reads secrets from the environment, and `CANOPY_SECRETS` chooses how they get there: `env`, the
 default, reads `secrets.env`. `infisical` fetches them at start, so nothing is written to disk. `op`
 (1Password) works the same way. A provider is a small script that prints variables, so adding one
-needs no change to Canopy. CLIs in the `cli` container are logged in on the server, so clients hold no credentials.
+needs no change to Canopy. As built, that script is `env.sh` in the agent-data folder or overlay: see
+[Settings and secrets](customising.md#settings-and-secrets). CLIs in the `cli` container are logged in on the server, so clients hold no credentials.
 
 An optional `OPENROUTER_MANAGEMENT_KEY` lets the `manage` skill create and revoke scoped keys, so each
 purpose (embeddings, reranking) has its own key and spending limit.

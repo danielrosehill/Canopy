@@ -138,7 +138,7 @@ it. Setup then offers a short CLAUDE.md snippet that reinforces searching first.
 Two folders, kept outside the checkout. `CANOPY_AGENT_DATA` is yours, and `CANOPY_DATA` is Canopy's:
 
 ```
-~/canopy/agent-data/   config/  skills/  notes/  cli/  secrets.env
+~/canopy/agent-data/   config/  skills/  notes/  cli/  settings.env  secrets.env  env.sh
 ~/canopy/data/         postgres/  catalogue/  api/  admin/  tokens/  backups/
 ```
 
@@ -148,8 +148,16 @@ In `agent-data/config`:
 - `servers.json` lists MCP upstreams and groups, with `${VAR}` placeholders filled from `secrets.env`.
   See `config/servers.example.json`. Run `canopy apply` after changing it.
 
-All settings are described in `.env.example`. [Add your own things](docs/customising.md) is the whole
-formula for private skills and MCP servers, with a working folder to copy in `examples/overlay/`.
+Settings that are not secret go in `settings.env`, which you commit. Secrets go in `secrets.env`, which
+you never commit, or come from a secrets manager through an executable `env.sh` that prints them. Later
+wins: `settings.env`, then `secrets.env`, then `env.sh`. All settings are described in `.env.example`.
+
+Keep the folder in a private git repo. Set `CANOPY_OVERLAY` to that repo's URL instead of
+`CANOPY_AGENT_DATA`, and `canopy` keeps its own read-only clone in `CANOPY_DATA` and pulls it on `up` and
+`apply`. The machine then needs only read access to the repo, and whatever credential `env.sh` uses.
+
+[Add your own things](docs/customising.md) is the whole formula for private skills, MCP servers, settings
+and secrets, with a working folder to copy in `examples/overlay/`.
 
 ## Manage it
 
