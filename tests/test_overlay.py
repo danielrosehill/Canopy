@@ -27,10 +27,10 @@ def clean(tmp_path, monkeypatch):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(cli, "setting", lambda name, default: cli.os.environ.get(name) or default)
     monkeypatch.setenv("CANOPY_DATA", str(tmp_path / "data"))
-    cli.hook_env.cache_clear()
+    cli.HOOK_RUNS.clear()
     cli.NOTICES.clear()
     yield
-    cli.hook_env.cache_clear()
+    cli.HOOK_RUNS.clear()
 
 
 def git(cwd: Path, *args: str) -> str:
@@ -312,3 +312,33 @@ def test_github_token_is_sent_to_github_https_only(tmp_path, monkeypatch):
     assert env["GIT_CONFIG_VALUE_0"].startswith("Authorization: Basic ") and SECRET not in env["GIT_CONFIG_VALUE_0"]
     for url in ("git@github.com:you/overlay.git", "https://example.com/you/overlay.git", "file:///x"):
         assert "GIT_CONFIG_COUNT" not in cli.overlay_git_env(place._replace(overlay=url))
+
+
+COUNTING_HOOK = """#!/bin/sh
+echo run >> "$COUNTER"
+echo "C=hook"
+"""
+
+
+def test_the_hook_runs_once_per_canopy_call(agent, tmp_path, monkeypatch):
+    hook(agent, COUNTING_HOOK)
+    counter = tmp_path / "runs"
+    monkeypatch.setenv("COUNTER", str(counter))
+    ran = []
+    monkeypatch.setattr(cli.subprocess, "call", lambda cmd, env=None: ran.append((cmd, env)) or 0)
+    monkeypatch.setattr(sys, "argv", ["canopy", "compose", "config"])
+    assert cli.main() == 0
+    assert counter.read_text().count("run") == 1
+    assert ran[0][1]["C"] == "hook" and ran[0][0][-1] == "config"
+
+
+@pytest.mark.skipif(not shutil.which("docker"), reason="needs docker compose, which only reads files here")
+def test_the_hook_runs_once_in_a_real_canopy_compose_config(agent, tmp_path):
+    hook(agent, COUNTING_HOOK)
+    counter = tmp_path / "runs"
+    env = {**cli.os.environ, "COUNTER": str(counter)}
+    done = subprocess.run([str(PATH), "compose", "config", "--quiet"], env=env, capture_output=True, text=True)
+    if done.returncode and "not a docker command" in done.stderr:
+        pytest.skip("no docker compose plugin")
+    assert done.returncode == 0, done.stderr
+    assert counter.read_text().count("run") == 1
