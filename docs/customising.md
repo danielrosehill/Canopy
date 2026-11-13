@@ -10,15 +10,19 @@ Canopy is the public skeleton. Your skills, MCP servers, secrets and settings li
 | A hosted MCP server | `config/servers.json` | `canopy apply` |
 | Your own MCP server | A service in `compose.override.yaml`, and `config/servers.json` | `canopy up`, then `canopy apply` |
 | Which tools agents see directly | `groups` in `config/servers.json` | `canopy apply` |
-| A secret or a setting | `secrets.env` | `canopy up` |
+| A setting that is not secret | `settings.env`, committed | `canopy up` |
+| A secret | `secrets.env`, never committed, or a secrets manager through `env.sh` | `canopy up` |
 | Command-line tools for agents | `config/cli.json`, through `canopy clis` | `canopy clis install` |
 
 ## The formula
 
 1. **Make the folder a private repo.** Copy `examples/overlay/` to a new private git repo, and copy
-   `secrets.env.example` to `secrets.env`. Its `.gitignore` keeps `secrets.env` out of git.
+   `settings.env.example` to `settings.env`. Secrets go in `secrets.env`, which its `.gitignore` keeps out
+   of git, or come from a secrets manager through `env.sh`: see [Settings and secrets](#settings-and-secrets).
 2. **Point Canopy at it,** with `export CANOPY_AGENT_DATA=~/my-canopy` in your shell profile. `canopy up`
-   and `canopy compose ...` then pick up everything in it, including the override file.
+   and `canopy compose ...` then pick up everything in it, including the override file. Or point
+   `CANOPY_OVERLAY` at the repo's URL, and Canopy keeps its own clone: see
+   [Overlay by git URL](#overlay-by-git-url).
 3. **Add your skills.** Put them in a plugin marketplace repo, which can be private, and add it to
    `config/marketplaces.json` as `{ "name": "...", "repo": "owner/repo" }`. A private repo needs
    `GITHUB_TOKEN` in `secrets.env`. `canopy compose up -d catalogue` loads a new token, and
@@ -37,6 +41,115 @@ Canopy is the public skeleton. Your skills, MCP servers, secrets and settings li
 
 Commit the folder after each change: it is your whole deployment, apart from the data, and it is what you
 restore from. For anything `canopy` should run beyond this, wrap it in a script in the same repo.
+
+## Settings and secrets
+
+Three sources, read in this order. A later one wins over an earlier one.
+
+| File | Holds | In git |
+| --- | --- | --- |
+| `settings.env` | Settings that are not secret: `CANOPY_TAG`, `CANOPY_CLIENT_NAME`, `CORE_GROUP`, ports and binds, `EMBED_*`, `SEARCH_*` | Yes |
+| `secrets.env` | Secrets: `GITHUB_TOKEN`, API keys, `RESTIC_PASSWORD`, the values behind `${VAR}` in `servers.json` | Never |
+| `env.sh` | A script that prints secrets from a secrets manager | Yes: it holds no values |
+
+All three reach compose's `${VAR}` substitution, and the `api` and `cli` containers, so the API can
+expand `${VAR}` in `servers.json`. A variable exported in your shell wins over both files, and `env.sh`
+wins over everything. `.env.example` describes every setting.
+
+### The `env.sh` hook
+
+If the folder has an executable `env.sh`, `canopy` runs it before any `docker compose` call, in that
+folder, with your environment plus `settings.env` and `secrets.env`. It prints `KEY=VALUE` lines on
+stdout. Blank lines and lines starting with `#` are skipped, `export ` is allowed, and one pair of quotes
+around a value is removed. Anything else stops `canopy` with the number of the bad line, never its value.
+
+The values stay in memory. `canopy` writes only their names, to `$CANOPY_DATA/agent-state/hook-env.yaml`,
+so compose passes each into `api` and `cli` from its own environment. If the script fails, `canopy` stops
+with its exit code and shows its stderr. Its stdout is never shown.
+
+`canopy --no-hooks ...`, or `CANOPY_NO_HOOKS=1`, skips the hook while you debug.
+
+The hook needs one credential of its own, such as a machine identity's secret. Keep it in your shell
+environment or in `secrets.env` on that machine, never in git.
+
+Infisical, with a machine identity that uses universal auth:
+
+```sh
+#!/bin/sh
+set -eu
+# INFISICAL_CLIENT_ID and INFISICAL_PROJECT_ID can be in settings.env.
+# INFISICAL_CLIENT_SECRET stays local: your shell environment, or secrets.env.
+INFISICAL_TOKEN=$(infisical login --method=universal-auth --client-id="$INFISICAL_CLIENT_ID" \
+  --client-secret="$INFISICAL_CLIENT_SECRET" --silent --plain)
+export INFISICAL_TOKEN
+infisical export --projectId="$INFISICAL_PROJECT_ID" --env=prod --format=dotenv
+```
+
+1Password, with a service account (`OP_SERVICE_ACCOUNT_TOKEN` stays local). `secrets.tpl` is committed,
+and holds references, not values, as `MY_TOKEN={{ op://my-vault/my-item/credential }}`:
+
+```sh
+#!/bin/sh
+set -eu
+op inject --in-file secrets.tpl
+```
+
+`op run --env-file secrets.tpl -- sh -c 'printf "MY_TOKEN=%s\n" "$MY_TOKEN"'` works too, if you would
+rather name each variable. Check that the tool prints nothing else on stdout, or the hook fails.
+
+## Overlay by git URL
+
+Instead of a folder you keep in sync yourself, give Canopy the URL of your overlay repo:
+
+```bash
+export CANOPY_OVERLAY=git@github.com:you/my-canopy.git     # or https://github.com/you/my-canopy.git
+export CANOPY_OVERLAY_REF=main                             # optional: a branch, tag or commit
+```
+
+`canopy` keeps a clone in `$CANOPY_DATA/overlay`. `canopy up`, `canopy apply`, `canopy compose ...`,
+`canopy init` and `canopy overlay pull` clone it if it is missing, or fetch it, then check out the ref:
+a branch is fast-forwarded, a tag or commit is checked out detached. With no ref it follows the remote's
+default branch. `canopy overlay status` shows the URL, ref, commit, whether the clone is clean, and how
+far it is behind or ahead, as of the last fetch.
+
+Never edit the clone. To change something, commit to the overlay repo and run `canopy apply` (or
+`canopy up` for compose changes). A clone with local changes or local commits is not touched: `canopy`
+stops and says so. Delete the folder to clone it afresh.
+
+With `CANOPY_OVERLAY` set, the clone replaces `CANOPY_AGENT_DATA` as the source of `config/`,
+`compose.override.yaml`, `settings.env`, `env.sh`, `skills/` and `notes/`. If both are set, `canopy` says
+once that `CANOPY_AGENT_DATA` is not used. Unset, nothing changes.
+
+**Access.** The one thing the machine needs is read access to the repo. Either git already has it (an
+SSH key or deploy key, or a credential helper), or, for an `https://github.com/` URL, `GITHUB_TOKEN` is in
+the environment or in the local `secrets.env`. The token is passed to that one git call through its
+environment. It is not written to disk or to the clone's `.git/config`, and it is never printed. It is
+sent to `github.com` only: use a credential helper for other hosts.
+
+**What lives where.** The clone is git's, so containers get it read-only. What they write goes to
+`$CANOPY_DATA/agent-state`:
+
+| Mount | Without an overlay | With an overlay |
+| --- | --- | --- |
+| `/config` in `catalogue` | `agent-data/config`, read-only | the clone's `config/`, read-only |
+| `/config` in `api` | `agent-data/config`, read-write | the clone's `config/`, read-only |
+| `/agent-data` in `api` (backups read it) | `agent-data`, read-write | the clone, read-only |
+| `/agent-data` in `cli` | `agent-data`, read-write | the clone, read-only |
+| `/agent-data/cli` in `cli` (its home: CLI logins) | inside the above | `agent-state/cli`, read-write |
+| `secrets.env` | `agent-data/secrets.env` | `agent-state/secrets.env`, optional |
+
+`compose.overlay.yaml` in the checkout holds that mapping, and `canopy` adds it only with an overlay.
+
+Because the config is read-only:
+
+- `add-server`, `remove-server`, `set-group`, `remove-group`, `add-marketplace` and
+  `remove-marketplace` are refused by `canopy`, and fail in the API.
+- `canopy clis choose`, `add` and `remove` edit `config/cli.json` in the clone, so the next pull stops.
+  Edit `cli.json` in the overlay repo instead. `canopy clis install` and `logins` work.
+- The `backup-config` job fails, because it writes `config/export.json`. Your config is in git. The
+  `backup-data` job works, without `secrets.env`, which is not in the clone.
+- `canopy restore` puts the backed-up agent data in `$CANOPY_DATA/agent-state/restored`, and the data
+  tier back where it was. Your config comes from the overlay.
 
 ## Updating
 
