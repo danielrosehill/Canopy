@@ -56,7 +56,10 @@ All three reach compose's `${VAR}` substitution. Only `secrets.env` and `env.sh`
 `api` and `cli` containers, so the API can expand `${VAR}` in `servers.json`. `settings.env` stays out of the
 containers on purpose: some names mean one thing to compose and another inside, such as `CANOPY_API_PORT` (the
 published port outside, the listen port inside). Every setting a container needs is passed by name in
-`compose.yaml`. A non-secret value that `servers.json` uses goes in `secrets.env` or comes from `env.sh`. A variable exported in your shell wins over both files, and `env.sh`
+`compose.yaml`. A non-secret value that `servers.json` uses goes in `secrets.env` or comes from `env.sh`.
+`canopy` itself also reads `settings.env` for its own settings, such as `CANOPY_API_PORT` and `CANOPY_API_BIND`,
+after your shell and the checkout's `.env`. The names that locate the folders (`CANOPY_OVERLAY`, `CANOPY_DATA`,
+`CANOPY_AGENT_DATA`) come only from the shell or the checkout's `.env`. A variable exported in your shell wins over both files, and `env.sh`
 wins over everything. `.env.example` describes every setting.
 
 ### The `env.sh` hook

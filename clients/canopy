@@ -85,9 +85,29 @@ def read_env_file(path: Path) -> dict[str, str]:
     return out
 
 
+BOOTSTRAP = ("CANOPY_OVERLAY", "CANOPY_OVERLAY_REF", "CANOPY_DATA", "CANOPY_AGENT_DATA")
+
+
 def setting(name: str, default: str) -> str:
-    """The process environment wins, then the checkout's .env."""
-    return os.environ.get(name) or read_env_file(REPO / ".env").get(name) or default
+    """The process environment wins, then the checkout's .env, then settings.env in the overlay (or agent
+    data). So `canopy` itself sees what compose sees, such as CANOPY_API_PORT, without a wrapper exporting
+    it. The names that locate those folders come only from the first two."""
+    found = os.environ.get(name) or read_env_file(REPO / ".env").get(name)
+    if found or name in BOOTSTRAP:
+        return found or default
+    return own_settings().get(name) or default
+
+
+def own_settings() -> dict[str, str]:
+    """settings.env from the overlay clone when CANOPY_OVERLAY is set, else from CANOPY_AGENT_DATA."""
+    def boot(n: str, d: str) -> str:
+        return os.environ.get(n) or read_env_file(REPO / ".env").get(n) or d
+    home = Path.home()
+    if boot("CANOPY_OVERLAY", ""):
+        folder = Path(boot("CANOPY_DATA", str(home / "canopy/data"))).expanduser() / "overlay"
+    else:
+        folder = Path(boot("CANOPY_AGENT_DATA", str(home / "canopy/agent-data"))).expanduser()
+    return read_env_file(folder / "settings.env")
 
 
 def folders() -> tuple[Path, Path]:
