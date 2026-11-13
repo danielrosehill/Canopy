@@ -243,6 +243,35 @@ worse: descriptions are the right input. It is a setting (`RERANK_MODEL`), off b
 needs no cloud account, and if it fails or times out, search returns the fused order. It sends the query
 and candidate descriptions to the provider, so a user who wants nothing to leave the host leaves it off.
 
+**Tools are reranked too** (2026-11-14). Tools rank in their own list so a large tool set cannot crowd
+skills out, and until then that list kept the fused order, cut by an absolute cosine floor
+(`SEARCH_TOOL_MIN_COSINE`). Two faults followed: a near-namesake from another server ranked first
+(`endpoints__run_command` over `box-control__run_command` for "run shell command on home server"), and a
+vague query lost its right tool to the floor ("recall what I said before" returned no tools, though
+`memory__recall` was the first fused tool). Now the best `RERANK_TOOL_CANDIDATES` (10) tools join the same
+rerank call. A provider bills per call, so this costs nothing extra. A reranked tool is shown when its
+score reaches `SEARCH_TOOL_MIN_RERANK`, and the cosine floor judges only the tools the reranker did not see.
+
+Measured offline on a live index of about 4,800 records and 942 tools, with `cohere/rerank-5-pro`, on 37
+tool queries labelled from tool names:
+
+| Tool order | First | Top 3 | MRR |
+| --- | --- | --- | --- |
+| Fused, cosine floor 0.55 (before) | 26 | 29 | 0.739 |
+| Fused, no floor | 29 | 31 | 0.832 |
+| **Reranked** | 32 | 35 | 0.908 |
+
+Floor, on the same 37, plus the 49 hard skill queries, where most tools shown are noise. Right tools in the
+top 3 kept, and tools shown on the skill queries (68 before, at cosine 0.55):
+
+| `SEARCH_TOOL_MIN_RERANK` | 0.10 | **0.15** | 0.20 | 0.25 | 0.30 |
+| --- | --- | --- | --- | --- | --- |
+| Right tools kept, of 35 | 35 | 35 | 35 | 33 | 33 |
+| Tools shown on skill queries | 64 | 45 | 34 | 25 | 20 |
+
+0.20 sits on the edge: "how many shekels is 100 dollars" scored `fx__convert` at 0.20. The floor's scale
+belongs to the reranker, so it defaults to 0 (keep all) and each install sets its own.
+
 **Checked on the shipped code,** 2026-11-05: Canopy 4098852 from the published image, a real sync of 6
 marketplaces (295 plugins, 3,884 records, no tool records as the test stack had no private upstreams),
 and 3,848 vectors imported from an older index. 50 labelled queries, ranked among all kinds, limit 6.

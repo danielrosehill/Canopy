@@ -276,6 +276,29 @@ def test_a_rerank_decides_the_order(monkeypatch):
     assert search("merge pdf files text")["results"][0]["id"] == plain[-1]
 
 
+def test_tools_join_the_rerank_call_and_its_score_decides_which_show(monkeypatch):
+    monkeypatch.setattr(ix, "EMBED_URL", "")
+    store(rec("skill:p/notes", description="Remember a note"))
+    with cat.db:
+        ix._store(cat.db, "", [
+            {"id": f"tool:{n}", "kind": "tool", "plugin": "", "name": n, "description": "Remember a fact",
+             "path": "", "body": "call: toolbox", "hash": n} for n in ("a__remember", "b__remember", "c__remember")])
+    cat.refresh_keywords()
+    monkeypatch.setattr(ranking, "RERANK_MODEL", "m")
+    monkeypatch.setattr(retrieval, "TOOL_MIN_RERANK", 0.15)
+    seen = []
+
+    def fake(q, cands, scores=None, **k):
+        seen.append([c["id"] for c in cands])
+        scores.update({"tool:c__remember": 0.9, "tool:a__remember": 0.5, "tool:b__remember": 0.05,
+                       "skill:p/notes": 0.4})
+        return sorted((c["id"] for c in cands), key=lambda i: -scores[i])
+    monkeypatch.setattr(ranking, "rerank", fake)
+    out = search("remember")
+    assert {"tool:a__remember", "tool:b__remember", "tool:c__remember"} <= set(seen[0])
+    assert [t["id"] for t in out["tools"]] == ["tool:c__remember", "tool:a__remember"]
+
+
 def test_read_list_usage_servers_and_health_run_on_postgres(monkeypatch):
     monkeypatch.setattr(ix, "EMBED_URL", "")
     load_fixture()

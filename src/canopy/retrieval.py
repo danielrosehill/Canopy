@@ -30,6 +30,9 @@ TOOL_HITS = int(os.environ.get("SEARCH_TOOL_HITS", "3"))
 # Reranked, the top 3 holds almost everything the top 6 does. Fused alone it does not: docs/design.md.
 SEARCH_LIMIT = int(os.environ.get("SEARCH_LIMIT") or (3 if ranking.RERANK_MODEL else 6))
 TOOL_MIN_COSINE = float(os.environ.get("SEARCH_TOOL_MIN_COSINE", "0"))   # drop unrelated tools; 0 keeps all
+# The same for a tool the reranker scored, which then skips the cosine floor: its score is the better
+# judge. The scale is the reranker's own; 0.15 suits cohere/rerank-5-pro (docs/design.md).
+TOOL_MIN_RERANK = float(os.environ.get("SEARCH_TOOL_MIN_RERANK", "0"))
 SEARCH_DESC_CHARS = int(os.environ.get("SEARCH_DESC_CHARS", "300"))   # a shortlist; `read` has the full text
 LOG_DAYS = int(os.environ.get("SEARCH_LOG_DAYS", "90"))   # 0 turns the log off
 LOG_QUERY_CHARS = 500
@@ -103,6 +106,7 @@ class State:
     unembedded: set[str] = field(default_factory=set)
     ranks: dict[str, float] = field(default_factory=dict)
     ordered: list[str] = field(default_factory=list)
+    rerank_scores: dict[str, float] = field(default_factory=dict)
     degraded: list[str] = field(default_factory=list)
     trace: list[dict] = field(default_factory=list)
     reply: dict = field(default_factory=dict)
@@ -205,17 +209,21 @@ class Search:
         s.ordered = list(s.ranks)
 
     def _rerank(self, s: State) -> None:
-        """Rerank the best candidates that are not tools, which rank in their own list."""
+        """Rerank the best candidates, and the best tools, which rank in their own list, in one call."""
         if not ranking.RERANK_MODEL:
             return
         head = [r for r in s.ordered if not r.startswith("tool:")][:ranking.RERANK_CANDIDATES]
+        head += [r for r in s.ordered if r.startswith("tool:")][:ranking.RERANK_TOOL_CANDIDATES]
         if len(head) < 2:
             return
         rows = {r["id"]: r for r in self.db.execute(
             "SELECT id, name, description FROM records WHERE id = ANY(%s)", (head,))}
-        best = ranking.rerank(s.query, [rows[r] for r in head], timeout=s.left(ranking.RERANK_TIMEOUT))
+        scores: dict[str, float] = {}
+        best = ranking.rerank(s.query, [rows[r] for r in head], timeout=s.left(ranking.RERANK_TIMEOUT),
+                              scores=scores)
         chosen = set(best)
         s.ordered = best + [r for r in s.ordered if r not in chosen]
+        s.rerank_scores = scores
 
     def _shape(self, s: State) -> None:
         if s.kind:
@@ -223,8 +231,7 @@ class Search:
         else:
             # Tools rank in their own list so a large tool set cannot crowd skills out.
             top = [r for r in s.ordered if not r.startswith("tool:")][:s.limit]
-            tool_ids = [r for r in s.ordered if r.startswith("tool:")
-                        and (not s.cosine or s.cosine.get(r, 0) >= TOOL_MIN_COSINE)][:TOOL_HITS]
+            tool_ids = [r for r in s.ordered if r.startswith("tool:") and self._tool_fits(s, r)][:TOOL_HITS]
         want = top + tool_ids
         rows = {r["id"]: r for r in self.db.execute(
             "SELECT * FROM records WHERE id = ANY(%s)", (want,))} if want else {}
@@ -255,6 +262,14 @@ class Search:
         if not top and not self.db.execute("SELECT 1 FROM records LIMIT 1").fetchone():
             out["error"] = "the index is EMPTY - this is a fault, not a miss. Run health."
         s.reply = out
+
+    @staticmethod
+    def _tool_fits(s: State, rid: str) -> bool:
+        """A tool is shown only if it is related to the query. A reranked tool is judged on its rerank
+        score: cosine dropped right answers to vague queries ("recall what I said before")."""
+        if rid in s.rerank_scores:
+            return s.rerank_scores[rid] >= TOOL_MIN_RERANK
+        return not s.cosine or s.cosine.get(rid, 0) >= TOOL_MIN_COSINE
 
     def _log(self, s: State) -> None:
         """What was asked and shown, so a real miss can be found later. Never fails a search."""

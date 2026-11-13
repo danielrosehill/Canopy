@@ -72,6 +72,9 @@ CANDIDATES = [{"id": "a", "name": "a", "description": "x"}, {"id": "b", "name": 
 def test_rerank_returns_the_new_order():
     post = reply({"results": [{"index": 1, "relevance_score": 0.9}, {"index": 0, "relevance_score": 0.1}]})
     assert ranking.rerank("q", CANDIDATES, post=post) == ["b", "a"]
+    scores = {}
+    ranking.rerank("q", CANDIDATES, post=post, scores=scores)
+    assert scores == {"b": 0.9, "a": 0.1}
 
 
 def test_rerank_raises_on_a_partial_answer_or_an_error():

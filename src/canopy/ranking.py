@@ -22,6 +22,9 @@ RERANK_URL = os.environ.get("RERANK_URL", "https://openrouter.ai/api/v1").rstrip
 RERANK_KEY = os.environ.get("RERANK_API_KEY", "")
 RERANK_TIMEOUT = float(os.environ.get("RERANK_TIMEOUT_SEC", "2"))
 RERANK_CANDIDATES = 20
+# Tools rank in their own list, so the best of them join the same rerank call. A provider bills per call,
+# not per document, so this adds no cost: docs/design.md, "Tools are reranked too".
+RERANK_TOOL_CANDIDATES = int(os.environ.get("RERANK_TOOL_CANDIDATES", "10"))
 
 _WORD = re.compile(r"[^\W_]+")
 
@@ -89,15 +92,21 @@ def fuse(keywords: list[str], vectors: list[str], vector_weight: float = VECTOR_
     return dict(scores.most_common())
 
 
-def rerank(query: str, candidates: list[dict], post=httpx.post, timeout: float | None = None) -> list[str]:
+def rerank(query: str, candidates: list[dict], post=httpx.post, timeout: float | None = None,
+           scores: dict[str, float] | None = None) -> list[str]:
     """The candidates' ids, best first. Raises on any failure, and the caller keeps the fused
-    order. Sends the query and each candidate's name and description to the provider."""
+    order. Sends the query and each candidate's name and description to the provider. Pass a dict
+    as `scores` to get each id's relevance score, where the provider gives one."""
     docs = [f"{c['name']}: {c['description'] or ''}" for c in candidates]
     r = post(f"{RERANK_URL}/rerank", json={"model": RERANK_MODEL, "query": query, "documents": docs},
              headers={"Authorization": f"Bearer {RERANK_KEY}"} if RERANK_KEY else {},
              timeout=RERANK_TIMEOUT if timeout is None else timeout)
     r.raise_for_status()
-    order = [candidates[x["index"]]["id"] for x in r.json()["results"]]
+    results = r.json()["results"]
+    order = [candidates[x["index"]]["id"] for x in results]
     if sorted(order) != sorted(c["id"] for c in candidates):
         raise RuntimeError(f"reranker returned {len(order)} of {len(candidates)} candidates")
+    if scores is not None:
+        scores.update({candidates[x["index"]]["id"]: float(x["relevance_score"])
+                       for x in results if x.get("relevance_score") is not None})
     return order
