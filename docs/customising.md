@@ -52,8 +52,11 @@ Three sources, read in this order. A later one wins over an earlier one.
 | `secrets.env` | Secrets: `GITHUB_TOKEN`, API keys, `RESTIC_PASSWORD`, the values behind `${VAR}` in `servers.json` | Never |
 | `env.sh` | A script that prints secrets from a secrets manager | Yes: it holds no values |
 
-All three reach compose's `${VAR}` substitution, and the `api` and `cli` containers, so the API can
-expand `${VAR}` in `servers.json`. A variable exported in your shell wins over both files, and `env.sh`
+All three reach compose's `${VAR}` substitution. Only `secrets.env` and `env.sh`'s output also reach the
+`api` and `cli` containers, so the API can expand `${VAR}` in `servers.json`. `settings.env` stays out of the
+containers on purpose: some names mean one thing to compose and another inside, such as `CANOPY_API_PORT` (the
+published port outside, the listen port inside). Every setting a container needs is passed by name in
+`compose.yaml`. A non-secret value that `servers.json` uses goes in `secrets.env` or comes from `env.sh`. A variable exported in your shell wins over both files, and `env.sh`
 wins over everything. `.env.example` describes every setting.
 
 ### The `env.sh` hook
