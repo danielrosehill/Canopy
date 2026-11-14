@@ -172,7 +172,10 @@ def search(query: str, kind: str | None = None, plugin: str | None = None,
     Describe the task in plain words. `results` holds skills, commands, agents,
     plugins and MCP servers; `tools` holds the best-matching gateway tools, each with
     how to call it (its native name, or toolbox__call_tool for tools not in your list). Prefer a matching skill: it wraps the tool with the right conventions.
-    kind: plugin | skill | command | agent | mcp | tool.  marketplace: a configured marketplace name.
+    `results` can also hold the user's standing instructions (kind habit, sop or preference): a matching
+    one is a rule for this task, so `read` it and follow it.
+    kind: plugin | skill | command | agent | mcp | tool | habit | sop | preference.
+    marketplace: a configured marketplace name (`context` for the standing instructions).
     `read` an id for full text; for a tool it returns the input schema.
     Hybrid keyword (BM25) and semantic ranking; `degraded` says if semantic is off.
     `confidence` is how close the best result is, and `weak: true` means nothing strong matched:
@@ -476,7 +479,7 @@ def health() -> str:
         if not root.exists():
             problems.append(f"{n}: clone missing on disk")
             continue
-        on_disk = ix.records_on_disk(n, root)
+        on_disk = ix.records_on_disk(n, root, manifest.get(n))
         if on_disk != indexed.get(n, 0):
             problems.append(f"{n}: {indexed.get(n, 0)} records indexed, {on_disk} in clone")
 

@@ -7,6 +7,7 @@ Canopy is the public skeleton. Your skills, MCP servers, secrets and settings li
 | You want to add | Put it in | Then run |
 | --- | --- | --- |
 | Skills, private or public | A plugin marketplace repo, listed in `config/marketplaces.json` | `canopy jobs run sync` |
+| Standing instructions (habits, SOPs, preferences) | A git repo, listed under `context` in `config/marketplaces.json` | `canopy jobs run sync` |
 | A hosted MCP server | `config/servers.json` | `canopy apply` |
 | Your own MCP server | A service in `compose.override.yaml`, and `config/servers.json` | `canopy up`, then `canopy apply` |
 | Which tools agents see directly | `groups` in `config/servers.json` | `canopy apply` |
@@ -41,6 +42,34 @@ Canopy is the public skeleton. Your skills, MCP servers, secrets and settings li
 
 Commit the folder after each change: it is your whole deployment, apart from the data, and it is what you
 restore from. For anything `canopy` should run beyond this, wrap it in a script in the same repo.
+
+## Standing instructions
+
+Rules you want every agent to follow, but only when they apply ("repos about X go in org Y", a procedure for a
+recurring job), do not belong in a user-level CLAUDE.md that loads in full every session. Keep them in a git repo
+and list it as a context source. The catalogue indexes them beside the skills, so the search an agent runs before
+a task returns the rule with the skill, and every device sees the same copy.
+
+```json
+{
+  "marketplaces": [ { "name": "my-skills", "repo": "me/my-skills" } ],
+  "context": [ { "name": "my-context", "repo": "me/my-context", "ref": "", "path": "" } ]
+}
+```
+
+In that repo, each `.md` file under a top-level `habits/`, `sops/` or `preferences/` is one record, of kind
+`habit`, `sop` or `preference`, with id `<kind>:<source>/<name>`:
+
+| Field | From | Note |
+| --- | --- | --- |
+| name | frontmatter `name` or `id`, else the file stem | |
+| description | frontmatter `description`, `summary` or `title`, else the first paragraph | What search matches: state the trigger and the rule |
+| skipped | `README.md`, `INDEX.md`, `archive/` and `templates/` folders, frontmatter `status` archived, retired, superseded, inactive or draft | |
+
+Every source is listed as a plugin in the marketplace `context`, so `search(kind="preference")` or
+`list(marketplace="context")` narrows to them. A source whose name is already a plugin's is skipped with an
+error. A scoped catalogue sees them only if `CATALOGUE_MARKETPLACES` includes `context`. Rules that must hold in
+every session whatever the task (tone, how to report) have no trigger to search on: keep those in CLAUDE.md.
 
 ## Settings and secrets
 

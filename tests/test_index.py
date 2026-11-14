@@ -180,3 +180,43 @@ def test_a_failed_graphql_call_falls_back_to_git(monkeypatch):
     monkeypatch.setattr(ix, "_graphql_heads", down)
     monkeypatch.setattr(ix, "remote_head", lambda repo, ref=None: "f" * 40)
     assert ix.remote_heads({("o/a", None)}) == ({("o/a", None): "f" * 40}, {})
+
+
+def test_extract_context_kinds_names_and_skips(tmp_path):
+    make_plugin(tmp_path, {
+        "habits/agent-first.md": "---\nid: agent-first\nsummary: Write for an agent\n---\nBody",
+        "habits/index.json": "{}",
+        "sops/README.md": "about",
+        "sops/archive/old.md": "---\nname: old\n---\n",
+        "sops/consolidate.md": "---\ntitle: Consolidate plugins\n---\nSteps",
+        "preferences/hebrew-repos.md": "---\ndescription: Hebrew repos go to the Hebrish org\n---\nRule",
+        "preferences/gone.md": "---\nstatus: retired\n---\n",
+        "skills/x/SKILL.md": "not context",
+    })
+    recs = {r["id"]: r for r in ix.extract_context("me", tmp_path)}
+    assert set(recs) == {"habit:me/agent-first", "sop:me/consolidate", "preference:me/hebrew-repos"}
+    assert recs["habit:me/agent-first"]["description"] == "Write for an agent"
+    assert recs["sop:me/consolidate"]["description"] == "Consolidate plugins"
+    assert recs["preference:me/hebrew-repos"]["path"] == "preferences/hebrew-repos.md"
+
+
+def test_context_sources_join_the_manifest_under_the_context_marketplace(tmp_path, monkeypatch):
+    monkeypatch.setattr(ix, "CONFIG", tmp_path)
+    monkeypatch.setattr(ix, "market_dir", lambda: tmp_path / "m")
+    (tmp_path / "marketplaces.json").write_text(json.dumps(
+        {"marketplaces": [], "context": [{"repo": "o/User-Data"}]}))
+    plugins, errors, healthy = ix.read_manifests(fetch=False)
+    assert errors == [] and "context" in healthy
+    assert plugins["User-Data"]["marketplace"] == "context" and plugins["User-Data"]["context"] is True
+    assert ix.records_in("User-Data", tmp_path, plugins["User-Data"]) == []
+
+
+def test_a_context_source_may_not_shadow_a_plugin(tmp_path, monkeypatch):
+    monkeypatch.setattr(ix, "CONFIG", tmp_path)
+    monkeypatch.setattr(ix, "market_dir", lambda: tmp_path / "m")
+    make_plugin(tmp_path / "m" / "mk", {".claude-plugin/marketplace.json": json.dumps(
+        {"plugins": [{"name": "dup", "source": "./dup"}]})})
+    (tmp_path / "marketplaces.json").write_text(json.dumps(
+        {"marketplaces": [{"repo": "o/mk"}], "context": [{"repo": "o/x", "name": "dup"}]}))
+    plugins, errors, _ = ix.read_manifests(fetch=False)
+    assert plugins["dup"]["marketplace"] == "mk" and any("context/dup" in e for e in errors)

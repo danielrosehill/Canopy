@@ -144,7 +144,8 @@ Two folders, kept outside the checkout. `CANOPY_AGENT_DATA` is yours, and `CANOP
 
 In `agent-data/config`:
 
-- `marketplaces.json` lists the marketplaces to index. The catalogue reads it on every sync.
+- `marketplaces.json` lists the marketplaces to index, and optional `context` sources (repos of habits, SOPs and
+  preferences, see [docs/customising.md](docs/customising.md#standing-instructions)). The catalogue reads it on every sync.
 - `servers.json` lists MCP upstreams and groups, with `${VAR}` placeholders filled from `secrets.env`.
   See `config/servers.example.json`. Run `canopy apply` after changing it.
 

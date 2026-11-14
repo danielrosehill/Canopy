@@ -1,7 +1,8 @@
 """The index: marketplaces -> shallow clones -> Postgres.
 
-Records are plugins, the skills, commands and agents inside them, and the MCP
-servers and tools known to the gateway. The `catalogue` schema is a cache: everything in
+Records are plugins, the skills, commands and agents inside them, the MCP
+servers and tools known to the gateway, and context records (habits, SOPs and
+preferences) from the context sources in `marketplaces.json`. The `catalogue` schema is a cache: everything in
 it except `reads` (usage history) comes from git and the gateway, so deleting it and
 syncing rebuilds it. Vectors are the costly part, so a record keeps its vector while the
 text that was embedded stays the same.
@@ -165,6 +166,15 @@ def plugin_root(name: str, meta: dict | None) -> Path:
 
 # --- extraction ----------------------------------------------------------------
 
+# A context source is a git repo of standing instructions, indexed beside the skills so that the search an
+# agent runs before a task also returns the rules that apply to it. Its top-level directories name the kind.
+CONTEXT_DIRS = {"habits": "habit", "sops": "sop", "preferences": "preference"}
+CONTEXT_KINDS = tuple(CONTEXT_DIRS.values())
+CONTEXT_MARKET = "context"   # the marketplace every context source is listed under
+_CONTEXT_SKIP_FILES = {"readme.md", "index.md"}
+_CONTEXT_SKIP_DIRS = {"archive", "archived", "templates"}
+_CONTEXT_INACTIVE = {"archived", "retired", "superseded", "inactive", "draft"}
+
 _FM = re.compile(r"\A---\s*\n(.*?)\n---\s*\n?", re.S)
 
 
@@ -236,21 +246,61 @@ def extract(plugin: str, root: Path) -> list[dict]:
     return out
 
 
+def extract_context(source: str, root: Path) -> list[dict]:
+    """Records in one context source: every .md under `habits/`, `sops/` or `preferences/`, one record each.
+    The name is frontmatter `name` or `id`, else the file stem; the description is frontmatter `description`,
+    `summary` or `title`, else the first paragraph. README.md, INDEX.md, `archive/` folders and files whose
+    frontmatter `status` is archived, retired, superseded, inactive or draft are skipped."""
+    out: list[dict] = []
+    seen: set[str] = set()
+    for top, kind in CONTEXT_DIRS.items():
+        d = root / top
+        if not d.is_dir():
+            continue
+        for f in sorted(d.rglob("*.md")):
+            rel = f.relative_to(root)
+            if f.name.lower() in _CONTEXT_SKIP_FILES or any(
+                    p.startswith(".") or p.lower() in _CONTEXT_SKIP_DIRS for p in rel.parts[:-1]):
+                continue
+            text = f.read_text(errors="replace")
+            fm, body = frontmatter(text)
+            if str(fm.get("status") or "").strip().lower() in _CONTEXT_INACTIVE:
+                continue
+            name = str(fm.get("name") or fm.get("id") or f.stem).strip()
+            rid = f"{kind}:{source}/{name}"
+            if rid in seen:
+                rid = f"{kind}:{source}/{rel.as_posix()}"
+            seen.add(rid)
+            desc = fm.get("description") or fm.get("summary") or fm.get("title") or _first_para(body)
+            out.append({
+                "id": rid, "kind": kind, "plugin": source, "name": name,
+                "description": re.sub(r"\s+", " ", str(desc)).strip(),
+                "path": rel.as_posix(), "body": text[:BODY_CAP],
+                "hash": hashlib.sha256(text.encode()).hexdigest(),
+            })
+    return out
+
+
+def records_in(plugin: str, root: Path, meta: dict | None = None) -> list[dict]:
+    """The records below a plugin's own record: a context source's, or a plugin's skills, commands and agents."""
+    return extract_context(plugin, root) if (meta or {}).get("context") else extract(plugin, root)
+
+
 _disk_counts: dict[str, tuple[bytes, Path, int]] = {}
 
 
-def records_on_disk(plugin: str, root: Path) -> int:
+def records_on_disk(plugin: str, root: Path, meta: dict | None = None) -> int:
     """How many records a clone holds, the plugin's own included. Parsing every clone took 1.6 s on
     293 plugins, and health runs every 5 minutes, so the count is kept until the clone moves.
     FETCH_HEAD is written by the fetch itself, so this follows the clone, not sync's bookkeeping."""
     try:
         fetched = (clones() / plugin / ".git" / "FETCH_HEAD").read_bytes()
     except OSError:
-        return len(extract(plugin, root)) + 1
+        return len(records_in(plugin, root, meta)) + 1
     known = _disk_counts.get(plugin)
     if known and known[:2] == (fetched, root):
         return known[2]
-    count = len(extract(plugin, root)) + 1
+    count = len(records_in(plugin, root, meta)) + 1
     _disk_counts[plugin] = (fetched, root, count)
     return count
 
@@ -397,6 +447,21 @@ def load_marketplaces() -> list[dict]:
     return out
 
 
+def load_context_sources() -> list[dict]:
+    """`context` in `marketplaces.json`: [{"repo": "owner/name", "name": "optional", "ref": "", "path": "",
+    "description": ""}]. Each is indexed as one plugin in the `context` marketplace."""
+    doc = json.loads((CONFIG / "marketplaces.json").read_text())
+    out = []
+    for c in doc.get("context", []):
+        repo = c["repo"]
+        git_url(repo)
+        out.append({"repo": repo, "ref": clean_ref(c.get("ref")), "path": clean_subpath(c.get("path")),
+                    "name": safe_name(c.get("name") or repo.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git")),
+                    "description": c.get("description") or "Standing instructions: habits, SOPs and preferences.",
+                    "marketplace": CONTEXT_MARKET, "context": True})
+    return out
+
+
 def parse_source(src: object, market_repo: str) -> dict | None:
     """{repo, ref, path} for the plugin source shapes marketplaces use: a relative
     "./path" inside the marketplace repo, `github`, `git-subdir` and `url`."""
@@ -454,6 +519,18 @@ def read_manifests(fetch: bool | set[str] = True) -> tuple[dict[str, dict], list
                 errors.append(f"{name}/{pname}: name also listed in "
                               f"{plugins[pname]['marketplace']}; indexing the {name} entry")
             plugins[pname] = {**loc, "marketplace": name, "description": p.get("description", "")}
+    try:
+        sources = load_context_sources()
+    except (OSError, ValueError, KeyError) as e:
+        errors.append(f"marketplaces.json context: {e}")
+        return plugins, errors, healthy
+    healthy.add(CONTEXT_MARKET)   # the list is the config itself, so a source not in it is gone
+    for c in sources:
+        if c["name"] in plugins:
+            errors.append(f"context/{c['name']}: name also used by a plugin in "
+                          f"{plugins[c['name']]['marketplace']}; skipped")
+            continue
+        plugins[c["name"]] = {k: c[k] for k in ("repo", "ref", "path", "marketplace", "description", "context")}
     return plugins, errors, healthy
 
 
@@ -500,7 +577,7 @@ def _index_plugin(db: store.Db, name: str, meta: dict, head: str, gateway: set[s
     root = plugin_root(name, meta)
     if not root.is_dir():
         raise RuntimeError(f"path {meta.get('path')!r} not found in {meta['repo']}")
-    recs = [plugin_record(name, meta, root), *extract(name, root)]
+    recs = [plugin_record(name, meta, root), *records_in(name, root, meta)]
     decls = mcp_declarations(root)
     with write_lock, db:
         _store(db, name, recs)
@@ -803,7 +880,7 @@ def sync(db: store.Db, only: str | None = None, force: bool = False, full: bool 
 
     removed = []
     if not only:
-        configured = {m["name"] for m in markets} if config_ok else None
+        configured = {m["name"] for m in markets} | {CONTEXT_MARKET} if config_ok else None
         for name, row in known.items():
             # A failed fetch must not look like every plugin was deleted, so a plugin
             # goes only if its marketplace was read, or was removed from the config.
