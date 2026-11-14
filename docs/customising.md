@@ -73,7 +73,7 @@ Its copy in the cloud is a git remote:
 | Setting | Effect |
 | --- | --- |
 | `CONTEXT_REMOTE` | `owner/repo` or an https URL. An empty volume starts as a clone of it, and the `context-push` job pulls with rebase and pushes every hour. A private repo, normally |
-| `CONTEXT_REMOTE_REF` | The branch, `main` by default |
+| `CONTEXT_REMOTE_REF` | The branch. By default, the remote's default branch |
 | `GITHUB_TOKEN` | Needs write access to that repo |
 
 The API is the only writer. If the remote has changes that do not rebase, `context-push` fails and `/v1/status`

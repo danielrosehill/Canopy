@@ -544,3 +544,24 @@ def test_the_opt_out_hands_admin_tools_back(monkeypatch):
     monkeypatch.setattr(seed.gw, "ADMIN_TOOLS", ())
     assert "excluded_tools" not in seed.merged_groups([])[0]
 
+
+
+def test_apply_refreshes_a_builtin_whose_tools_changed_with_an_update(applied, jungle, monkeypatch):
+    served = {"http://catalogue:3000/mcp": ["search", "context_write"], "http://toolbox:3000/mcp": ["call_tool"]}
+
+    class Client:
+        def __init__(self, url, **_):
+            self.url = url
+
+        def tools(self):
+            return [{"name": n} for n in served[self.url]]
+
+    monkeypatch.setattr("canopy.control.gw.McpClient", Client)
+    jungle.tools.update({"catalogue__search": {"name": "catalogue__search", "enabled": True},
+                         "toolbox__call_tool": {"name": "toolbox__call_tool", "enabled": True}})
+    jungle.upstream["catalogue"] = ["catalogue__search", "catalogue__context_write"]
+    out = applied.apply()
+    assert out["ok"] and "refreshed catalogue: +1 -0" in out["log"], out
+    assert "catalogue__context_write" in jungle.tools
+    assert "refreshed toolbox" not in out["log"]   # its list already matched
+    assert "refreshed" not in applied.apply()["log"]   # and now nothing differs

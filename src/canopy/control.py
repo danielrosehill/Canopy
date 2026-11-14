@@ -411,6 +411,14 @@ class Control:
                 continue
             d = digest(server)
             if state.get(name) == d and name in live:
+                if not builtin or self._builtin_current(g, server):
+                    continue
+                try:   # an update changed a built-in's tools: the gateway re-reads them only on registration
+                    r = self._refresh(g, name)
+                    changed = True
+                    say(f"refreshed {name}: +{len(r['added'])} -{len(r['removed'])}")
+                except (ControlError, RuntimeError, httpx.HTTPError) as e:
+                    failures.append(f"{name}: {e}")
                 continue
             for attempt in range(20 if builtin else 1):   # built-ins may still be starting
                 try:
@@ -425,6 +433,18 @@ class Control:
                     else:
                         time.sleep(3)
         return changed, failures
+
+    @staticmethod
+    def _builtin_current(g: Gateway, server: dict) -> bool:
+        """Whether the gateway lists the tools a built-in serves now. Measured on 2026-11-14: v1.09 added two
+        catalogue tools, and after `canopy update` the gateway still had the old list until a manual refresh.
+        If either side cannot answer, it counts as current, so a slow start never churns a registration."""
+        try:
+            served = {f"{server['name']}__{t['name']}" for t in gw.McpClient(server["url"], timeout=20).tools()}
+            listed = {t["name"] for t in g.tools(server["name"])}
+        except Exception:  # noqa: BLE001
+            return True
+        return not served or served == listed
 
     @staticmethod
     def _prunable(doc: dict, state: dict) -> tuple[list[str], dict[str, str]]:

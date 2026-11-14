@@ -70,14 +70,14 @@ def test_delete_commits_and_history_keeps_it(ctx):
 
 def test_push_rebases_onto_the_remote_and_pushes(tmp_path, monkeypatch):
     remote = tmp_path / "remote.git"
-    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True)
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "master", str(remote)], check=True)
     seed = tmp_path / "seed"
     subprocess.run(["git", "clone", "-q", str(remote), str(seed)], check=True)
     (seed / "habits").mkdir()
     (seed / "habits/a.md").write_text("---\ndescription: A\n---\n")
     (seed / "tools-data").mkdir()
     (seed / "tools-data/x.json").write_text("{}")
-    git(seed, "add", "-A"); git(seed, "commit", "-qm", "seed"); git(seed, "push", "-q", "origin", "HEAD:main")
+    git(seed, "add", "-A"); git(seed, "commit", "-qm", "seed"); git(seed, "push", "-q", "origin", "HEAD:master")
     monkeypatch.setattr(ix, "git_url", lambda repo: str(remote))
     ctx = UserContext(root=tmp_path / "context", remote="me/User-Data")
     assert ctx.prepare() == "cloned"
@@ -85,9 +85,12 @@ def test_push_rebases_onto_the_remote_and_pushes(tmp_path, monkeypatch):
     ctx.write("habit", "b", "B", "B rule")
     # Someone else pushed meanwhile: the push rebases onto it.
     (seed / "habits/c.md").write_text("---\ndescription: C\n---\n")
-    git(seed, "add", "-A"); git(seed, "commit", "-qm", "other"); git(seed, "push", "-q", "origin", "HEAD:main")
-    assert "pushed" in ctx.push()
-    log = subprocess.run(["git", "--git-dir", str(remote), "log", "--format=%s", "main"],
+    git(seed, "add", "-A"); git(seed, "commit", "-qm", "other"); git(seed, "push", "-q", "origin", "HEAD:master")
+    assert ctx.push().endswith("master")   # the remote's default branch, not a new `main`
+    branches = subprocess.run(["git", "--git-dir", str(remote), "branch", "--format=%(refname:short)"],
+                              capture_output=True, text=True).stdout.split()
+    assert branches == ["master"], branches
+    log = subprocess.run(["git", "--git-dir", str(remote), "log", "--format=%s", "master"],
                          capture_output=True, text=True).stdout
     assert log.splitlines()[0] == "Add habit b" and "other" in log
 

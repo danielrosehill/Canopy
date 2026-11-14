@@ -101,8 +101,9 @@ class UserContext:
             self.root.mkdir(parents=True, exist_ok=True)
             if self.remote and not any(self.root.iterdir()):
                 self.git("init", "-q")
-                self.git("fetch", "-q", self.url(), self.ref or "HEAD", timeout=300)
-                self.git("checkout", "-q", "-B", self.ref or "main", "FETCH_HEAD")
+                branch = self.ref or self.remote_default()
+                self.git("fetch", "-q", self.url(), branch, timeout=300)
+                self.git("checkout", "-q", "-B", branch, "FETCH_HEAD")
                 made = "cloned"
             else:
                 self.git("init", "-q", "-b", "main")
@@ -118,6 +119,21 @@ class UserContext:
             self.git("commit", "-q", "-m", "Canopy: context folders", ok=(0, 1))
         self.on_change()
         return made
+
+    def remote_default(self) -> str:
+        """The remote's default branch: `main` is only a guess, and pushing to it made a second branch on a
+        repo whose default was `master` (seen 2026-11-14)."""
+        p = subprocess.run(["git", "ls-remote", "--symref", self.url(), "HEAD"], capture_output=True, text=True,
+                           timeout=60, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+        m = re.search(r"^ref: refs/heads/(\S+)\s+HEAD", p.stdout, re.M)
+        return m.group(1) if m else "main"
+
+    def branch(self) -> str:
+        """Where pushes go: CONTEXT_REMOTE_REF, else the branch the clone checked out."""
+        if self.ref:
+            return self.ref
+        p = self.git("symbolic-ref", "--short", "HEAD", ok=(0, 128))
+        return p.stdout.strip() or "main"
 
     def head(self) -> str | None:
         p = self.git("rev-parse", "HEAD", ok=(0, 128))
@@ -184,8 +200,8 @@ class UserContext:
         """Pull with rebase, then push. Without CONTEXT_REMOTE there is nothing to do."""
         if not self.remote:
             return "no CONTEXT_REMOTE: the context is local, and backup-config covers it"
-        branch = self.ref or "main"
         with self.lock:
+            branch = self.branch()
             before = self.head()
             p = self.git("fetch", "-q", self.url(), branch, ok=(0, 128), timeout=300)
             if p.returncode == 0:
