@@ -305,10 +305,12 @@ def wait_for_gateway(seconds: int = 120) -> None:
 
 
 def ask_catalogue_to_sync(attempts: int = 5) -> str | None:
-    """The error, if the catalogue could not be reached."""
+    """Ask the catalogue to refresh its copy of the gateway's servers and tools, which is what a
+    change made here moves. The error, if the catalogue could not be reached."""
     for attempt in range(attempts):
         try:
-            gw.McpClient(f"{gw.GATEWAY_URL}/mcp", timeout=30, name="canopy-api").call("catalogue__sync")
+            gw.McpClient(f"{gw.GATEWAY_URL}/mcp", timeout=30, name="canopy-api").call(
+                "catalogue__sync", {"gateway": True})
             return None
         except Exception as e:  # noqa: BLE001
             if attempt == attempts - 1:
@@ -742,7 +744,7 @@ class Control:
             raise ControlError(502, f"catalogue: {e}") from None
 
     def catalogue_sync(self, doc: dict) -> dict:
-        args = {k: doc[k] for k in ("plugin", "force", "full") if k in doc}
+        args = {k: doc[k] for k in ("plugin", "force", "full", "gateway") if k in doc}
         if extra := set(doc) - set(args):
             raise ControlError(400, f"unknown fields: {sorted(extra)}")
         return json.loads(self._catalogue("sync", args))
@@ -782,8 +784,8 @@ class Control:
         return out
 
     def add_marketplace(self, doc: dict) -> dict:
-        """Only a full pass reads the marketplace list, so that is the sync this asks for. It runs in the
-        background: a repo that cannot be read shows in `last_sync` and in /v1/status."""
+        """A quick pass fetches a marketplace it has no clone of, so that is the sync this asks for. It
+        runs in the background: a repo that cannot be read shows in `last_sync` and in /v1/status."""
         if extra := set(doc) - {"repo", "name", "ref"}:
             raise ControlError(400, f"unknown fields: {sorted(extra)}")
         try:
@@ -798,7 +800,7 @@ class Control:
                 raise ControlError(409, f"{name} is already listed")
             current["marketplaces"].append(doc)
             write_json(self.marketplaces_path, current)
-        return {"added": name, "sync": self.catalogue_sync({"full": True})}
+        return {"added": name, "sync": self.catalogue_sync({})}
 
     def remove_marketplace(self, name: str) -> dict:
         with self.lock:
@@ -807,7 +809,7 @@ class Control:
             if len(kept) == len(current["marketplaces"]):
                 raise ControlError(404, f"no marketplace {name}")
             write_json(self.marketplaces_path, {**current, "marketplaces": kept})
-        return {"removed": name, "sync": self.catalogue_sync({"full": True})}
+        return {"removed": name, "sync": self.catalogue_sync({})}
 
     # --- status --------------------------------------------------------------------
 

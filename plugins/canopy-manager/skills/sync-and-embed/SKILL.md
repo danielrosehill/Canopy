@@ -5,9 +5,9 @@ description: Trigger a Canopy sync or an incremental embedding run, and check th
 
 # Sync and embed
 
-**Sync** pulls marketplaces and refreshes the gateway's tools. It runs by itself: a full pass every hour (`sync`), and recent pushes every 5 minutes (`sync-recent`).
+**Sync** pulls marketplaces and reindexes the plugins that moved. It runs by itself: a quick pass every minute (`sync-recent`), which touches only what changed, and a full pass every hour (`sync`). The gateway's tools are refreshed separately, every 15 minutes (`gateway-refresh`) and after any change through the control API.
 
-- Run `canopy sync`. Add a plugin name for just one, `--full` for every plugin, and `--force` to reindex unchanged commits.
+- Run `canopy sync`. Add a plugin name for just one, `--full` for every plugin, `--force` to reindex unchanged commits, and `--gateway` for the gateway's servers and tools.
 - Poll `catalogue__health` until `sync_running` is false.
 
 **Embedding** is a separate step, so that a sync never spends money by surprise. It needs `EMBED_PROVIDER`

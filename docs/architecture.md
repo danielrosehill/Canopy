@@ -237,11 +237,35 @@ embedding runs after the queue is empty and outside the sync lock, so a long fir
 next sync, and an embed asked for during another runs once more afterwards. The keyword index works the same
 way: a refresh asked for during another is not dropped.
 
-**Freshness.** `sync-recent` runs every 5 minutes, and `canopy sync` with no arguments does the same: one
-GitHub call lists recent pushes, and only marketplaces and plugin repos pushed since the last pass are checked.
-A marketplace push is how a plugin arrives or leaves, so pruning always runs. With no token, a failed call, or
-a list that cannot cover the gap, it becomes a full pass. The hourly `sync` checks every plugin as the backstop.
-A description changed only in a marketplace also reindexes that plugin.
+**Freshness.** `sync-recent` runs every minute, and `canopy sync` with no arguments does the same. One pass
+(`index.sync`) does this:
+
+1. Looks up the latest commit of every marketplace and plugin repo at once (`remote_heads`). With
+   `GITHUB_TOKEN`, GitHub repos go in GraphQL calls of 50 repos each, so about 300 plugins cost a few
+   calls. Other hosts, and anything GraphQL cannot resolve, go through `git ls-remote`. Both resolve an
+   annotated tag to its commit, so they never disagree about a head.
+2. Fetches a marketplace again only when its commit moved. `catalogue.marketplaces` holds the commit each
+   clone is at. The list of marketplaces itself stays in `marketplaces.json`.
+3. Reindexes a plugin that is new, whose commit moved, whose marketplace entry changed or whose clone is gone,
+   and drops one its marketplace no longer lists. Within a plugin, a record whose hash and path are
+   unchanged is not written, and only changed text loses its vector.
+4. Rebuilds the mcp records only if a plugin changed.
+
+A pass that finds nothing moved fetches nothing, writes nothing (no `runs` row either) and leaves the keyword
+index alone. A plugin that failed at a commit is retried when the commit moves or by the full pass, not every
+minute. Without a token, a quick pass checks only the marketplaces' own repos and the plugins inside them;
+other plugin repos wait for the hourly `sync`, which fetches every marketplace, checks every repo and retries
+failed plugins.
+
+The gateway's servers and tools are not part of this pass: they change when the gateway does, not when a repo
+is pushed. `gateway-refresh` (`catalogue__sync` with `gateway: true`) snapshots them every 15 minutes, and
+every change through the control API asks for one at once. It writes only the tool and mcp records whose text
+changed, and its last result is `gateway_refresh` in `catalogue.meta`; a failed one fails `health`.
+
+Before 2026-11-14 a quick pass listed recent pushes with one call to `/user/repos`. That covered only repos
+the token owns or belongs to, so a third-party marketplace or plugin waited up to an hour. And every pass
+that found anything re-fetched every marketplace and re-snapshotted the gateway's ~940 tools (about 10 s).
+The batched head check replaced the push list.
 
 `scripts/eval-search.py <queries.json>` scores a running stack. `tests/fixtures/search.json` is the generic
 labelled set. Queries that name private skills stay in the operator's own `agent-data`.

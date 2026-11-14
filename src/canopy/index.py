@@ -47,7 +47,7 @@ CORE_GROUP = os.environ.get("CORE_GROUP", "core")
 # The name clients give this gateway, which is the `<client>` in mcp__<client>__<tool>.
 CLIENT_NAME = os.environ.get("CANOPY_CLIENT_NAME", "canopy")
 BODY_CAP = 200_000   # bytes kept per record
-RECENT_LIMIT = 100   # repos in the push list, which is GitHub's page size
+GRAPHQL_BATCH = 50   # repositories per GraphQL head query
 
 write_lock = threading.Lock()
 
@@ -134,10 +134,12 @@ def remote_head(repo: str, ref: str | None = None) -> str:
     """The commit a plugin resolves to: HEAD, or a pinned branch, tag or sha."""
     if ref and _SHA.fullmatch(ref):
         return ref
-    out = _git("ls-remote", git_url(repo), ref or "HEAD", timeout=60).stdout.split()
+    # An annotated tag lists the tag object, and `<commit> <ref>^{}` only if asked for by that
+    # pattern too. Prefer the commit, which is what GraphQL returns, so the two never disagree.
+    pattern = ref or "HEAD"
+    out = _git("ls-remote", git_url(repo), pattern, f"{pattern}^{{}}", timeout=60).stdout.split()
     if not out:
-        raise RuntimeError(f"ls-remote {repo} {ref or 'HEAD'}: empty response")
-    # An annotated tag lists the tag object, then `<commit> <ref>^{}`; prefer the commit.
+        raise RuntimeError(f"ls-remote {repo} {pattern}: empty response")
     pairs = dict(zip(out[1::2], out[0::2]))
     return next((v for k, v in pairs.items() if k.endswith("^{}")), out[0])
 
@@ -414,9 +416,10 @@ def parse_source(src: object, market_repo: str) -> dict | None:
             "path": clean_subpath(src.get("path"))}
 
 
-def read_manifests(fetch: bool = True) -> tuple[dict[str, dict], list[str], set[str]]:
+def read_manifests(fetch: bool | set[str] = True) -> tuple[dict[str, dict], list[str], set[str]]:
     """(plugins, errors, marketplaces read). fetch=False reads the local clones as the
-    last sync left them, which is what health compares against."""
+    last sync left them, which is what health compares against. A set fetches only the
+    marketplaces it names, and any whose clone is missing."""
     plugins: dict[str, dict] = {}
     errors: list[str] = []
     healthy: set[str] = set()
@@ -427,7 +430,7 @@ def read_manifests(fetch: bool = True) -> tuple[dict[str, dict], list[str], set[
     for mk in markets:
         name, d = mk["name"], market_dir() / mk["name"]
         try:
-            if fetch:
+            if fetch is True or (isinstance(fetch, set) and (name in fetch or not (d / ".git").exists())):
                 fetch_clone(mk["repo"], d, mk["ref"])
             manifest = json.loads((d / ".claude-plugin" / "marketplace.json").read_text())
         except Exception as e:  # noqa: BLE001
@@ -453,11 +456,19 @@ def read_manifests(fetch: bool = True) -> tuple[dict[str, dict], list[str], set[
 
 # --- sync ----------------------------------------------------------------------
 
-def _store(db: store.Db, plugin: str, recs: list[dict]) -> None:
-    """Replace every record of one plugin, keeping a vector whose text has not changed. The
-    caller holds the transaction."""
-    db.execute("DELETE FROM records WHERE plugin = %s AND NOT (id = ANY(%s))", (plugin, [r["id"] for r in recs]))
+def _store(db: store.Db, plugin: str, recs: list[dict]) -> int:
+    """Replace every record of one plugin, keeping a vector whose text has not changed. A record
+    whose hash and path are unchanged is not written at all. Returns the rows written or deleted.
+    The caller holds the transaction."""
+    gone = db.execute("DELETE FROM records WHERE plugin = %s AND NOT (id = ANY(%s)) RETURNING id",
+                      (plugin, [r["id"] for r in recs])).fetchall()
+    have = {r["id"]: (r["hash"], r["path"]) for r in
+            db.execute("SELECT id, hash, path FROM records WHERE plugin = %s", (plugin,))}
+    written = len(gone)
     for r in recs:
+        if have.get(r["id"]) == (r["hash"], r["path"]):
+            continue
+        written += 1
         key = hashlib.sha256(embed_text(r).encode()).hexdigest()
         db.execute(
             "INSERT INTO records (id, kind, plugin, name, description, path, body, hash, embed_key) "
@@ -470,6 +481,7 @@ def _store(db: store.Db, plugin: str, recs: list[dict]) -> None:
             [v.replace("\x00", "") if isinstance(v, str) else v   # Postgres text cannot hold NUL
              for v in (r["id"], r["kind"], r["plugin"], r["name"], r["description"], r["path"],
                        r["body"], r["hash"], key)])
+    return written
 
 
 def _drop_plugin(db: store.Db, plugin: str) -> None:
@@ -505,13 +517,16 @@ def _index_plugin(db: store.Db, name: str, meta: dict, head: str, gateway: set[s
     return len(recs)
 
 
-def _mark_failed(db: store.Db, name: str, meta: dict, err: str) -> None:
+def _mark_failed(db: store.Db, name: str, meta: dict, err: str, head: str | None = None) -> None:
+    """`head` is the commit that failed to index, so a quick pass does not retry it every minute.
+    None (the commit could not be looked up) keeps whatever head was there."""
     with write_lock, db:
         db.execute(
             "INSERT INTO plugins (name, marketplace, repo, description, head, status, error, synced_at) "
-            "VALUES (%s,%s,%s,%s,NULL,'error',%s,%s) ON CONFLICT(name) DO UPDATE SET "
-            "status='error', error=excluded.error, synced_at=excluded.synced_at",
-            (name, meta["marketplace"], meta["repo"], meta["description"], err, time.time()))
+            "VALUES (%s,%s,%s,%s,%s,'error',%s,%s) ON CONFLICT(name) DO UPDATE SET "
+            "status='error', error=excluded.error, synced_at=excluded.synced_at, "
+            "head=COALESCE(excluded.head, plugins.head)",
+            (name, meta["marketplace"], meta["repo"], meta["description"], head, err, time.time()))
 
 
 def refresh_gateway(db: store.Db) -> set[str]:
@@ -591,123 +606,197 @@ def rebuild_mcp_records(db: store.Db) -> int:
     for t in db.execute("SELECT * FROM gateway_tools"):
         recs.append(tool_record(t["name"], t["description"], json.loads(t["schema"]), bool(t["core"])))
     with write_lock, db:
-        _store(db, "", recs)
-    return len(recs)
+        written = _store(db, "", recs)
+    return len(recs), written
 
 
-def stale(row: dict, name: str, meta: dict, head: str) -> bool:
-    """A restored database remembers heads whose clones were never backed up, so the disk counts too."""
+def refresh_gateway_records(db: store.Db) -> dict:
+    """The gateway's servers and tools, and the mcp and tool records built from them. Not part of the
+    plugin pass: these change when the gateway does, not when a repo is pushed. Only records whose
+    text changed are written. The summary is kept in meta as `gateway_refresh` for health."""
+    started, errors = time.time(), []
+    try:
+        refresh_gateway(db)
+    except Exception as e:  # noqa: BLE001 — keep the last list, but say so
+        errors.append(f"gateway server list: {e}")
+    try:
+        refresh_tools(db)
+    except Exception as e:  # noqa: BLE001 — keep the last snapshot, but say so
+        errors.append(f"gateway tool list: {e}")
+    count, written = rebuild_mcp_records(db)
+    summary = {"ok": not errors, "mode": "gateway", "mcp_and_tool_records": count, "records_written": written,
+               "changed": written > 0, "errors": errors, "at": time.time(),
+               "seconds": round(time.time() - started, 1)}
+    with write_lock, db:
+        db.execute("INSERT INTO meta VALUES ('gateway_refresh', %s) "
+                   "ON CONFLICT (key) DO UPDATE SET value = excluded.value", (json.dumps(summary),))
+    if written or errors:
+        log(f"gateway refresh: {json.dumps(summary)[:1000]}")
+    return summary
+
+
+def stale(row: dict, name: str, meta: dict, head: str, full: bool = False) -> bool:
+    """A restored database remembers heads whose clones were never backed up, so the disk counts too.
+    A plugin that failed at this same commit waits for the commit to move, or for a full pass."""
+    if row.get("status") == "error" and row.get("head") == head and not full:
+        return False
     return (row.get("head") != head or row.get("status") != "ok" or not plugin_root(name, meta).exists()
             or (row.get("description") or "") != (meta.get("description") or ""))   # edited in the marketplace only
 
 
-def pushed_repos(token: str = GIT_TOKEN, get=httpx.get) -> list[tuple[str, str]]:
-    """(owner/repo in lower case, pushed_at), newest first, for what the token can see. One call
-    stands in for a head check on every plugin."""
-    r = get("https://api.github.com/user/repos", timeout=30,
-            params={"affiliation": "owner,organization_member", "sort": "pushed", "direction": "desc",
-                    "per_page": RECENT_LIMIT},
-            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"})
-    r.raise_for_status()
-    return [(x["full_name"].lower(), x["pushed_at"]) for x in r.json() if x.get("pushed_at")]
+# --- change detection ------------------------------------------------------------
+
+Key = tuple[str, "str | None"]   # (repo, ref)
+
+_TARGET = "target { oid ... on Tag { target { oid } } }"
 
 
-def moved_since(pushes: list[tuple[str, str]], mark: str | None) -> set[str] | None:
-    """Repos pushed at or after `mark`. None if the list cannot vouch for the whole gap: no mark yet, or
-    a full page that never reaches back to it. `pushed_at` is ISO UTC, so strings sort as times, and
-    GitHub's own clock means no local one is involved. `>=` rechecks the newest repo rather than risk
-    losing a push in the same second."""
-    if mark is None or (len(pushes) >= RECENT_LIMIT and pushes[-1][1] >= mark):
-        return None
-    return {repo for repo, at in pushes if at >= mark}
+def _graphql_heads(keys: list[Key], token: str = GIT_TOKEN, post=httpx.post) -> dict[Key, str]:
+    """The commit for each (owner/repo, ref) GitHub resolves, GRAPHQL_BATCH repositories per call. A
+    repository or ref it cannot resolve is left out, for the caller to ask git. An annotated tag
+    resolves to its commit, as `remote_head` does, so the two never disagree about a head."""
+    out: dict[Key, str] = {}
+    for i in range(0, len(keys), GRAPHQL_BATCH):
+        chunk = keys[i:i + GRAPHQL_BATCH]
+        fields = []
+        for j, (repo, ref) in enumerate(chunk):
+            owner, name = repo.split("/")
+            sel = f"ref(qualifiedName: {json.dumps(ref)}) {{ {_TARGET} }}" if ref else f"defaultBranchRef {{ {_TARGET} }}"
+            fields.append(f"r{j}: repository(owner: {json.dumps(owner)}, name: {json.dumps(name)}) {{ {sel} }}")
+        r = post("https://api.github.com/graphql", json={"query": "{ " + " ".join(fields) + " }"}, timeout=30,
+                 headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"})
+        r.raise_for_status()
+        data = r.json().get("data") or {}
+        for j, (repo, ref) in enumerate(chunk):
+            target = ((data.get(f"r{j}") or {}).get("ref" if ref else "defaultBranchRef") or {}).get("target") or {}
+            oid = (target.get("target") or {}).get("oid") or target.get("oid")
+            if oid:
+                out[(repo, ref)] = oid
+    return out
 
 
-def _set_mark(db: store.Db, mark: str | None) -> None:
-    if mark:
-        with write_lock, db:
-            db.execute("INSERT INTO meta VALUES ('recent_push_mark', %s) "
-                       "ON CONFLICT (key) DO UPDATE SET value = excluded.value", (mark,))
-
-
-def sync_recent(db: store.Db) -> dict:
-    """Quick pass: only what was pushed since the last one, so a new skill arrives in minutes. A
-    marketplace push counts, since that is how a plugin is added or removed. Anything that stops
-    this pass vouching for the gap, including no token or a failed call, becomes a full pass."""
-    started = time.time()
-    try:
-        pushes = pushed_repos()
-    except Exception as e:  # noqa: BLE001 - the full pass needs no list
-        log(f"quick pass unavailable, running a full one: {e!r}")
-        return {**sync(db), "mode": "full"}
-    row = db.execute("SELECT value FROM meta WHERE key = 'recent_push_mark'").fetchone()
-    moved = moved_since(pushes, row[0] if row else None)
-    mark = pushes[0][1] if pushes else None
-    if moved is None:
-        summary = sync(db)
-    else:
-        watched = {r["repo"].lower() for r in db.execute("SELECT repo FROM plugins")}
-        watched |= {m["repo"].lower() for m in load_marketplaces()}
-        relevant = moved & watched
-        if not relevant:
-            _set_mark(db, mark)
-            return {"ok": True, "mode": "recent", "pushed": len(moved), "reindexed_plugins": 0,
-                    "errors": [], "seconds": round(time.time() - started, 1)}
-        summary = sync(db, repos=relevant)
-    if summary["ok"]:
-        _set_mark(db, mark)
-    return {**summary, "mode": "recent" if moved is not None else "full"}
-
-
-def sync(db: store.Db, only: str | None = None, force: bool = False, repos: set[str] | None = None) -> dict:
-    """One pass. `ok` in the summary is False if anything at all failed. `repos` limits the head
-    checks to those repos, plus plugins that are new or changed in a marketplace. Pruning still covers everything."""
-    started = time.time()
-    plugins, errors, healthy = read_manifests()
-    try:
-        gateway = refresh_gateway(db)
-    except Exception as e:  # noqa: BLE001 — keep the last list, but say so
-        errors.append(f"gateway server list: {e}")
-        gateway = {r["name"] for r in db.execute("SELECT name FROM gateway_servers")}
-
-    known = {r["name"]: dict(r) for r in db.execute("SELECT * FROM plugins")}
-    targets = {only: plugins[only]} if only and only in plugins else ({} if only else plugins)
-    if repos is not None:
-        targets = {n: p for n, p in targets.items() if p["repo"].lower() in repos or n not in known
-                   or (known[n].get("description") or "") != (p.get("description") or "")}
-    if only and not targets:
-        errors.append(f"{only}: not in any marketplace manifest")
-
-    heads: dict[str, str] = {}
-
-    def head(name: str) -> None:
+def remote_heads(keys: set[Key]) -> tuple[dict[Key, str], dict[Key, str]]:
+    """(heads, errors) for many repos at once. A pinned sha needs no lookup. GitHub repos go in batched
+    GraphQL calls when there is a token, a few calls for hundreds of repos. The rest, and anything
+    GraphQL did not resolve, go through `ls-remote`."""
+    heads: dict[Key, str] = {}
+    errors: dict[Key, str] = {}
+    github = []
+    for repo, ref in keys:
+        if ref and _SHA.fullmatch(ref):
+            heads[(repo, ref)] = ref
+        elif GIT_TOKEN and _REPO.fullmatch(repo):
+            github.append((repo, ref))
+    if github:
         try:
-            heads[name] = remote_head(targets[name]["repo"], targets[name].get("ref"))
+            heads |= _graphql_heads(sorted(github, key=str))
+        except Exception as e:  # noqa: BLE001 - git can still answer, one repo at a time
+            log(f"GraphQL head check failed, asking git instead: {e!r}")
+
+    def one(key: Key) -> None:
+        try:
+            heads[key] = remote_head(*key)
         except Exception as e:  # noqa: BLE001
-            errors.append(f"{name}: {e}")
-            _mark_failed(db, name, targets[name], str(e))
+            errors[key] = str(e)
 
     with ThreadPoolExecutor(16) as ex:
-        list(ex.map(head, targets))
+        list(ex.map(one, [k for k in keys if k not in heads]))
+    return heads, errors
 
-    todo = [n for n, h in heads.items() if force or stale(known.get(n, {}), n, targets[n], h)]
+
+def _key(meta: dict) -> Key:
+    return (meta["repo"], meta.get("ref"))
+
+
+# --- the pass --------------------------------------------------------------------
+
+def sync(db: store.Db, only: str | None = None, force: bool = False, full: bool = False) -> dict:
+    """One pass over the marketplaces and their plugins. `ok` in the summary is False if anything failed.
+
+    1. Look up the latest commit of every marketplace and plugin repo, batched (`remote_heads`).
+    2. Fetch a marketplace again only if its commit moved, and read every manifest.
+    3. Reindex a plugin that is new, whose commit moved, whose marketplace entry changed or whose clone
+       is gone. Drop one its marketplace no longer lists.
+    4. Rebuild the mcp records only if a plugin changed.
+
+    A quick pass (the default) with nothing to do writes nothing, not even a `runs` row. Without a
+    GitHub token it checks only the marketplaces' own repos, and the plugins in them; other plugin
+    repos wait for the full pass. `full` fetches every marketplace, checks every repo and retries
+    plugins in error. `force` reindexes whatever it checks. `only` checks one plugin.
+    The gateway's servers and tools are not part of this: see `refresh_gateway_records`."""
+    started = time.time()
+    mode = "plugin" if only else "full" if full else "quick"
+    errors: list[str] = []
+    try:
+        markets, config_ok = load_marketplaces(), True
+    except (OSError, ValueError, KeyError):
+        markets, config_ok = [], False   # read_manifests reports it; an unreadable config must not prune anything
+    local, _, _ = read_manifests(fetch=False)
+    known = {r["name"]: dict(r) for r in db.execute("SELECT * FROM plugins")}
+    market_heads = {r["name"]: r["head"] for r in db.execute("SELECT name, head FROM marketplaces")}
+
+    def checked(meta: dict) -> bool:
+        return bool(GIT_TOKEN) or full or bool(only) or any(meta["repo"] == m["repo"] for m in markets)
+
+    keys = {_key(m) for m in markets}
+    keys |= {_key(p) for n, p in local.items() if (n == only if only else checked(p))}
+    heads, head_errors = remote_heads(keys)
+
+    moved = {m["name"] for m in markets
+             if full or only or (_key(m) in heads and heads[_key(m)] != market_heads.get(m["name"]))}
+    plugins, merr, healthy = read_manifests(fetch=moved)
+    errors += merr
+    fetched = [m for m in markets if m["name"] in moved and m["name"] in healthy]
+    unlisted_state = config_ok and bool(market_heads.keys() - {m["name"] for m in markets})
+    if fetched or unlisted_state:
+        with write_lock, db:
+            for m in fetched:
+                db.execute("INSERT INTO marketplaces VALUES (%s,%s,%s,%s,%s) ON CONFLICT (name) DO UPDATE SET "
+                           "repo = excluded.repo, ref = excluded.ref, head = excluded.head, "
+                           "fetched_at = excluded.fetched_at",
+                           (m["name"], m["repo"], m["ref"], heads.get(_key(m)), time.time()))
+            if unlisted_state:
+                db.execute("DELETE FROM marketplaces WHERE NOT (name = ANY(%s))", ([m["name"] for m in markets],))
+    for m in markets:
+        if _key(m) in head_errors:
+            errors.append(f"marketplace {m['name']}: {head_errors[_key(m)]}")
+
+    targets = {only: plugins[only]} if only and only in plugins else ({} if only else plugins)
+    if only and not targets:
+        errors.append(f"{only}: not in any marketplace manifest")
+    # A plugin is checked if its repo is, or if it is new, or its entry changed in the marketplace.
+    targets = {n: p for n, p in targets.items()
+               if checked(p) or n not in known or (known[n].get("description") or "") != (p.get("description") or "")}
+    missing = {_key(p) for p in targets.values()} - heads.keys() - head_errors.keys()
+    if missing:
+        more, more_errors = remote_heads(missing)
+        heads |= more
+        head_errors |= more_errors
+    for n, p in targets.items():
+        if _key(p) in head_errors:
+            errors.append(f"{n}: {head_errors[_key(p)]}")
+            if mode != "quick" or known.get(n, {}).get("status") != "error":   # no write every minute
+                _mark_failed(db, n, p, head_errors[_key(p)])
+
+    todo = [n for n, p in targets.items()
+            if _key(p) in heads and (force or stale(known.get(n, {}), n, p, heads[_key(p)], full))]
     written: list[int] = []
+    gateway = {r["name"] for r in db.execute("SELECT name FROM gateway_servers")}
 
     def work(name: str) -> None:
+        head = heads[_key(targets[name])]
         try:
-            written.append(_index_plugin(db, name, targets[name], heads[name], gateway))
+            written.append(_index_plugin(db, name, targets[name], head, gateway))
         except Exception as e:  # noqa: BLE001
             errors.append(f"{name}: {e}")
-            _mark_failed(db, name, targets[name], str(e))
+            _mark_failed(db, name, targets[name], str(e), head)
 
     with ThreadPoolExecutor(8) as ex:
         list(ex.map(work, todo))
 
     removed = []
     if not only:
-        try:
-            configured = {m["name"] for m in load_marketplaces()}
-        except (OSError, ValueError, KeyError):
-            configured = None   # an unreadable config must not look like an empty one
+        configured = {m["name"] for m in markets} if config_ok else None
         for name, row in known.items():
             # A failed fetch must not look like every plugin was deleted, so a plugin
             # goes only if its marketplace was read, or was removed from the config.
@@ -722,19 +811,19 @@ def sync(db: store.Db, only: str | None = None, force: bool = False, repos: set[
                 if d.name not in configured:
                     shutil.rmtree(d, ignore_errors=True)
 
-    try:
-        refresh_tools(db)
-    except Exception as e:  # noqa: BLE001 — keep the last snapshot, but say so
-        errors.append(f"gateway tool list: {e}")
-    mcp_count = rebuild_mcp_records(db)
-
-    summary = {"ok": not errors, "manifest_plugins": len(plugins), "checked": len(targets),
-               "reindexed_plugins": len(todo), "records_written": sum(written),
-               "removed_plugins": removed, "mcp_and_tool_records": mcp_count,
-               "embed_pending": pending_estimate(db), "errors": errors,
+    changed = bool(todo or removed)
+    _, mcp_written = rebuild_mcp_records(db) if changed or full else (0, 0)
+    summary = {"ok": not errors, "mode": mode, "manifest_plugins": len(plugins), "checked": len(targets),
+               "marketplaces_fetched": sorted(moved & healthy), "reindexed_plugins": len(todo),
+               "records_written": sum(written), "removed_plugins": removed,
+               "mcp_records_written": mcp_written, "changed": changed or mcp_written > 0,
+               "embed_pending": pending_estimate(db) if changed else None, "errors": errors,
                "seconds": round(time.time() - started, 1)}
-    with write_lock, db:
-        db.execute("INSERT INTO runs (started, finished, ok, summary) VALUES (%s,%s,%s,%s)",
-                   (started, time.time(), not errors, json.dumps(summary)))
-    log(f"sync: {json.dumps(summary)[:1000]}")
+    if mode != "quick" or changed or fetched:
+        with write_lock, db:
+            db.execute("INSERT INTO runs (started, finished, ok, summary) VALUES (%s,%s,%s,%s)",
+                       (started, time.time(), not errors, json.dumps(summary)))
+        log(f"sync: {json.dumps(summary)[:1000]}")
+    elif errors:
+        log(f"quick pass, nothing changed, errors left for the full pass: {errors[:5]}")
     return summary

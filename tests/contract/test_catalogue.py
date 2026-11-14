@@ -318,9 +318,106 @@ def test_gateway_snapshot_and_mcp_records(g, uid):
     g.register(server(f"s{uid}"))
     assert f"s{uid}" in ix.refresh_gateway(cat.db)
     ix.refresh_tools(cat.db)
-    assert ix.rebuild_mcp_records(cat.db) >= 3
+    count, _ = ix.rebuild_mcp_records(cat.db)
+    assert count >= 3
+    assert ix.rebuild_mcp_records(cat.db) == (count, 0)   # unchanged: nothing written
     assert stored(f"mcp:s{uid}") and stored(f"tool:s{uid}__s{uid}_a")
     assert stored(f"tool:s{uid}__s{uid}_a")["kind"] == "tool"
+
+
+# --- the pass ---------------------------------------------------------------------
+
+def test_a_pass_reindexes_only_what_moved_and_writes_nothing_when_nothing_did(tmp_path, monkeypatch):
+    """Git is stood in for: each repo is a folder, and its head is whatever the test says."""
+    import shutil
+    cat.db.execute("TRUNCATE marketplaces, mcp_decls, mcp_refs")
+    upstream, heads, fetched = tmp_path / "upstream", {}, []
+
+    def market(*plugins: str, head: str) -> None:
+        d = upstream / "o/market/.claude-plugin"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "marketplace.json").write_text(json.dumps({"plugins": [
+            {"name": p, "source": {"source": "github", "repo": f"o/{p}"}} for p in plugins]}))
+        heads["o/market"] = head
+
+    def skill(plugin: str, text: str, head: str) -> None:
+        d = upstream / f"o/{plugin}/skills/s"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "SKILL.md").write_text(f"---\nname: s\ndescription: {text}\n---\n{text}\n")
+        heads[f"o/{plugin}"] = head
+
+    def fetch_clone(repo, dest, ref=None):
+        fetched.append(repo)
+        shutil.rmtree(dest, ignore_errors=True)
+        shutil.copytree(upstream / repo, dest)
+        (dest / ".git").mkdir(exist_ok=True)
+
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "marketplaces.json").write_text(
+        json.dumps({"marketplaces": [{"repo": "o/market", "name": "market"}]}))
+    monkeypatch.setattr(ix, "CONFIG", tmp_path / "config")
+    monkeypatch.setattr(ix, "DATA", tmp_path / "data")
+    monkeypatch.setattr(ix, "GIT_TOKEN", "t")
+    monkeypatch.setattr(ix, "fetch_clone", fetch_clone)
+    monkeypatch.setattr(ix, "remote_heads", lambda keys: ({k: heads[k[0]] for k in keys if k[0] in heads}, {}))
+    runs = lambda: cat.db.execute("SELECT COUNT(*) FROM runs").fetchone()[0]  # noqa: E731
+
+    market("a", head="m1")
+    skill("a", "first", head="a1")
+    first = ix.sync(cat.db)
+    assert first["ok"] and first["reindexed_plugins"] == 1 and first["marketplaces_fetched"] == ["market"]
+    assert stored("skill:a/s")["description"] == "first" and runs() == 1
+
+    fetched.clear()
+    idle = ix.sync(cat.db)
+    assert idle["ok"] and not idle["changed"] and fetched == [] and runs() == 1   # nothing fetched or written
+
+    skill("a", "edited", head="a2")
+    edited = ix.sync(cat.db)
+    assert edited["reindexed_plugins"] == 1 and fetched == ["o/a"]   # the marketplace did not move
+    assert stored("skill:a/s")["description"] == "edited"
+
+    fetched.clear()
+    market("a", "b", head="m2")
+    skill("b", "new", head="b1")
+    added = ix.sync(cat.db)
+    assert added["reindexed_plugins"] == 1 and sorted(fetched) == ["o/b", "o/market"]
+    assert stored("skill:b/s")
+
+    market("b", head="m3")
+    removed = ix.sync(cat.db)
+    assert removed["removed_plugins"] == ["a"] and stored("skill:a/s") is None and stored("skill:b/s")
+
+
+def test_a_plugin_that_fails_is_not_retried_until_its_commit_moves(tmp_path, monkeypatch):
+    cat.db.execute("TRUNCATE marketplaces, mcp_decls, mcp_refs")
+    market = tmp_path / "data" / "marketplaces" / "market" / ".claude-plugin"
+    market.mkdir(parents=True)
+    (market / "marketplace.json").write_text(json.dumps({"plugins": [
+        {"name": "a", "source": {"source": "github", "repo": "o/a"}}]}))
+    (tmp_path / "data" / "marketplaces" / "market" / ".git").mkdir()
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "marketplaces.json").write_text(json.dumps({"marketplaces": [{"repo": "o/market"}]}))
+    heads, tries = {"o/market": "m1", "o/a": "a1"}, []
+
+    def broken(repo, dest, ref=None):
+        if repo == "o/a":
+            tries.append(repo)
+            raise RuntimeError("cannot fetch")
+
+    monkeypatch.setattr(ix, "CONFIG", tmp_path / "config")
+    monkeypatch.setattr(ix, "DATA", tmp_path / "data")
+    monkeypatch.setattr(ix, "GIT_TOKEN", "t")
+    monkeypatch.setattr(ix, "fetch_clone", broken)
+    monkeypatch.setattr(ix, "remote_heads", lambda keys: ({k: heads[k[0]] for k in keys if k[0] in heads}, {}))
+    assert not ix.sync(cat.db)["ok"] and tries == ["o/a"]
+    ix.sync(cat.db)
+    assert tries == ["o/a"]                      # same commit: the quick pass leaves it
+    ix.sync(cat.db, full=True)
+    assert tries == ["o/a", "o/a"]               # the full pass retries it
+    heads["o/a"] = "a2"
+    ix.sync(cat.db)
+    assert tries == ["o/a", "o/a", "o/a"]        # and so does a new commit
 
 
 # --- import from an older SQLite index ------------------------------------------

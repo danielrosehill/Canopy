@@ -36,7 +36,7 @@ ROUTES = {
     "GET /v1/catalogue/marketplaces": "Marketplaces in `marketplaces.json`, with how many plugins each has indexed.",
     "POST /v1/catalogue/marketplaces": "Add a marketplace: `repo`, and optionally `name` and `ref`. Starts a full sync, so a repo that cannot be read shows in `/v1/status`.",
     "DELETE /v1/catalogue/marketplaces/{name}": "Remove a marketplace. Starts a full sync, which drops its plugins from the index.",
-    "POST /v1/catalogue/sync": "Start a sync in the background. An empty body is a quick pass over recent pushes. Optional: `plugin`, `force`, `full`.",
+    "POST /v1/catalogue/sync": "Start a sync in the background. An empty body is a quick pass: only what moved is reindexed. Optional: `plugin`, `force`, `full`, and `gateway` to refresh the gateway's servers and tools instead.",
     "GET /v1/catalogue/records/{id:path}": "One record in full, by id, such as `skill:my-plugin/my-skill`.",
     "GET /v1/embeddings/pending": "Records with no vector, roughly how many tokens they would cost, and the last run.",
     "POST /v1/embeddings/run": "Start embedding what is pending, in the background. This can spend money: read `/v1/embeddings/pending` first.",

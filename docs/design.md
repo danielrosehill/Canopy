@@ -413,7 +413,9 @@ result and output, which is what the dashboard shows.
 
 | Job | Default | Does |
 | --- | --- | --- |
-| `sync` | Hourly | Index marketplaces and gateway tools |
+| `sync` | Hourly | Full pass: fetch every marketplace, check every plugin repo, retry failed plugins |
+| `sync-recent` | 1 min | Quick pass: reindex only what moved (see "Freshness" in `architecture.md`) |
+| `gateway-refresh` | 15 min | Snapshot the gateway's servers and tools into tool and mcp records |
 | `embed` | After `sync` | Embed pending records |
 | `health` | 5 min | Refresh `/v1/status`, flag upstreams that stopped answering |
 | `tool-refresh` | Daily | Re-read upstream tool lists, which the gateway freezes at registration |
@@ -433,7 +435,7 @@ restart, which would otherwise turn an update landing mid-job into a rollback. T
 `CANOPY_ALERT_WEBHOOK` when the set of failing components changes: found on 2026-11-06, when the live `health`
 job failed for two hours and only a table knew.
 
-Built so far: `sync`, `sync-recent`, `embed`, `health`, `storage-expiry`, `tool-refresh`, `backup-data`, `backup-config`, and `restore-test`, which runs after
+Built so far: `sync`, `sync-recent`, `gateway-refresh`, `embed`, `health`, `storage-expiry`, `tool-refresh`, `backup-data`, `backup-config`, and `restore-test`, which runs after
 `backup-data`. `tool-refresh` ships off, unlike the table above: the gateway has no refresh, so each server is deleted and registered
 again, and its tools vanish for a moment. Set `CANOPY_TOOL_REFRESH=true`, or use `canopy refresh NAME` for one server. The backup jobs start once `backup.json` exists. The rest of the table arrives with what each one does, and a job
 named in `jobs.json` with nothing behind it is listed as not `runnable` and left alone. `every` takes a

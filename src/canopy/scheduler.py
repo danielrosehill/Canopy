@@ -35,7 +35,8 @@ TOOL_REFRESH = os.environ.get("CANOPY_TOOL_REFRESH", "false").lower() == "true"
 def defaults(config: Path) -> list[dict]:
     """Backups start once `backup.json` names a target. `backup-config` pushes only what changed."""
     target = (config / "backup.json").is_file()
-    return [{"name": "sync", "every": "1h"}, {"name": "sync-recent", "every": "5m"}, {"name": "embed", "after": "sync", "enabled": EMBED_ON_SYNC},
+    return [{"name": "sync", "every": "1h"}, {"name": "sync-recent", "every": "1m"},
+            {"name": "gateway-refresh", "every": "15m"}, {"name": "embed", "after": "sync", "enabled": EMBED_ON_SYNC},
             {"name": "health", "every": "5m"}, {"name": "backup-data", "every": "1d", "enabled": target},
             {"name": "backup-config", "every": "1h", "enabled": target},
             {"name": "restore-test", "after": "backup-data", "enabled": target},
@@ -277,6 +278,10 @@ class CatalogueJobs:
     def sync_recent(self) -> str:
         """Fire and forget. With nothing pushed a quick pass writes no `runs` row to wait for."""
         return self.call("catalogue__sync", {})
+
+    def gateway_refresh(self) -> str:
+        """Fire and forget: the gateway's servers and tools, apart from the plugin pass."""
+        return self.call("catalogue__sync", {"gateway": True})
 
     def embed(self) -> str:
         state = json.loads(self.call("catalogue__embed", {"dry_run": True}))

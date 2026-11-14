@@ -19,9 +19,10 @@
     canopy enable-tool | disable-tool NAME
     canopy refresh NAME             re-read an upstream's tools
     canopy marketplaces             the marketplaces in the config
-    canopy add-marketplace REPO [NAME]    owner/name or an https URL, then a full sync
+    canopy add-marketplace REPO [NAME]    owner/name or an https URL, then a sync
     canopy remove-marketplace NAME
-    canopy sync [PLUGIN] [--full] [--force]    start a sync. Alone: recent pushes only
+    canopy sync [PLUGIN] [--full] [--force] [--gateway]    start a sync. Alone: only what moved.
+                                    --gateway: the gateway's servers and tools instead
     canopy embed [--run]            what is pending and its cost. --run starts it
     canopy read ID                  one record in full, such as skill:my-plugin/my-skill
     canopy jobs                     the scheduler's jobs and their last runs
@@ -680,7 +681,7 @@ def main() -> int:
     if cmd == "remove-marketplace" and args:
         return show("DELETE", f"/v1/catalogue/marketplaces/{args[0]}")
     if cmd == "sync":
-        flags = {f.removeprefix("--"): True for f in args if f in ("--full", "--force")}
+        flags = {f.removeprefix("--"): True for f in args if f in ("--full", "--force", "--gateway")}
         names = [a for a in args if not a.startswith("--")]
         return show("POST", "/v1/catalogue/sync", {**flags, **({"plugin": names[0]} if names else {})})
     if cmd == "embed":

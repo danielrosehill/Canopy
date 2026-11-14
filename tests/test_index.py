@@ -103,7 +103,7 @@ def test_a_missing_clone_is_stale_even_at_the_same_head(tmp_path, monkeypatch):
     (tmp_path / "p").mkdir()
     assert ix.stale(row, "p", {}, "abc") is False
     assert ix.stale(row, "p", {}, "def") is True
-    assert ix.stale({**row, "status": "error"}, "p", {}, "abc") is True
+    assert ix.stale({**row, "status": "error"}, "p", {}, "abc", full=True) is True
 
 
 def test_a_description_changed_in_the_marketplace_is_stale(tmp_path, monkeypatch):
@@ -113,22 +113,70 @@ def test_a_description_changed_in_the_marketplace_is_stale(tmp_path, monkeypatch
     assert not ix.stale(row, "p", {"description": "old"}, "h")
 
 
-def test_moved_since_returns_what_was_pushed_from_the_mark():
-    pushes = [("o/a", "2026-11-05T12:00:00Z"), ("o/b", "2026-11-05T11:00:00Z"), ("o/c", "2026-11-05T10:00:00Z")]
-    assert ix.moved_since(pushes, "2026-11-05T11:00:00Z") == {"o/a", "o/b"}
+def test_a_plugin_that_failed_at_this_commit_waits_for_it_to_move_or_a_full_pass(tmp_path, monkeypatch):
+    monkeypatch.setattr(ix, "clones", lambda: tmp_path)
+    (tmp_path / "p").mkdir()
+    failed = {"head": "abc", "status": "error"}
+    assert ix.stale(failed, "p", {}, "abc") is False
+    assert ix.stale(failed, "p", {}, "abc", full=True) is True
+    assert ix.stale(failed, "p", {}, "def") is True
 
 
-def test_moved_since_refuses_to_vouch_without_a_mark_or_past_a_full_page(monkeypatch):
-    monkeypatch.setattr(ix, "RECENT_LIMIT", 2)
-    pushes = [("o/a", "2026-11-05T12:00:00Z"), ("o/b", "2026-11-05T11:00:00Z")]
-    assert ix.moved_since(pushes, None) is None
-    assert ix.moved_since(pushes, "2026-11-05T10:00:00Z") is None
-    assert ix.moved_since(pushes, "2026-11-05T11:30:00Z") == {"o/a"}
+class Reply:
+    def __init__(self, doc):
+        self.doc = doc
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self.doc
 
 
-def test_a_failed_push_list_becomes_a_full_pass(monkeypatch):
-    def down():
-        raise RuntimeError("no token")
-    monkeypatch.setattr(ix, "pushed_repos", down)
-    monkeypatch.setattr(ix, "sync", lambda db: {"ok": True})
-    assert ix.sync_recent(None) == {"ok": True, "mode": "full"}
+def test_graphql_heads_batches_and_resolves_tags_to_commits(monkeypatch):
+    monkeypatch.setattr(ix, "GRAPHQL_BATCH", 2)
+    queries = []
+
+    def post(url, json, **kw):
+        queries.append(json["query"])
+        if len(queries) == 1:
+            return Reply({"data": {
+                "r0": {"defaultBranchRef": {"target": {"oid": "c" * 40}}},
+                "r1": {"ref": {"target": {"oid": "t" * 40, "target": {"oid": "d" * 40}}}}}})
+        return Reply({"data": {"r0": None}, "errors": [{"type": "NOT_FOUND"}]})
+
+    keys = [("o/a", None), ("o/b", "v1"), ("o/gone", None)]
+    heads = ix._graphql_heads(keys, token="t", post=post)
+    assert len(queries) == 2
+    assert 'repository(owner: "o", name: "b") { ref(qualifiedName: "v1")' in queries[0]
+    assert heads == {("o/a", None): "c" * 40, ("o/b", "v1"): "d" * 40}   # the gone repo is left to git
+
+
+def test_remote_heads_asks_git_for_what_graphql_left_and_needs_no_lookup_for_a_sha(monkeypatch):
+    monkeypatch.setattr(ix, "GIT_TOKEN", "t")
+    monkeypatch.setattr(ix, "_graphql_heads", lambda keys: {("o/a", None): "a" * 40})
+    asked = []
+
+    def git(repo, ref=None):
+        asked.append(repo)
+        if repo == "o/gone":
+            raise RuntimeError("not found")
+        return "b" * 40
+
+    monkeypatch.setattr(ix, "remote_head", git)
+    pinned = ("o/c", "e" * 40)
+    heads, errors = ix.remote_heads({("o/a", None), ("https://example.org/x.git", None), ("o/gone", None), pinned})
+    assert heads == {("o/a", None): "a" * 40, ("https://example.org/x.git", None): "b" * 40, pinned: "e" * 40}
+    assert errors == {("o/gone", None): "not found"}
+    assert sorted(asked) == ["https://example.org/x.git", "o/gone"]
+
+
+def test_a_failed_graphql_call_falls_back_to_git(monkeypatch):
+    monkeypatch.setattr(ix, "GIT_TOKEN", "t")
+
+    def down(keys):
+        raise RuntimeError("401")
+
+    monkeypatch.setattr(ix, "_graphql_heads", down)
+    monkeypatch.setattr(ix, "remote_head", lambda repo, ref=None: "f" * 40)
+    assert ix.remote_heads({("o/a", None)}) == ({("o/a", None): "f" * 40}, {})

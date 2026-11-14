@@ -488,7 +488,7 @@ def tools(ctl):
 def test_a_new_marketplace_is_saved_and_gets_a_full_sync(ctl, tools):
     (ctl.config / "marketplaces.json").write_text(json.dumps({"marketplaces": [{"repo": "a/one"}]}))
     assert ctl.add_marketplace({"repo": "a/two"})["added"] == "two"
-    assert ("catalogue__sync", {"full": True}) in tools
+    assert ("catalogue__sync", {}) in tools
     assert [m["name"] for m in ctl.marketplaces()] == ["one", "two"]
     assert ctl.marketplaces()[0]["plugins"] == 4
 
@@ -510,7 +510,7 @@ def test_removing_a_marketplace_syncs_and_a_stranger_is_a_404(ctl, tools):
         ctl.remove_marketplace("ghost")
     assert e.value.status == 404
     ctl.remove_marketplace("n")
-    assert ctl.marketplaces() == [] and ("catalogue__sync", {"full": True}) in tools
+    assert ctl.marketplaces() == [] and ("catalogue__sync", {}) in tools
 
 
 def test_marketplaces_still_list_with_the_catalogue_down(ctl):

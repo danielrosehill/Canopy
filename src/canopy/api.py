@@ -336,7 +336,8 @@ def main() -> None:
     storage.prepare()
     control.extra_checks["storage"] = storage.check
     jobs = sched.CatalogueJobs(db, control._tool_text)
-    scheduler = sched.Scheduler(db, {"sync": jobs.sync, "sync-recent": jobs.sync_recent, "embed": jobs.embed, "health": control.health_job,
+    scheduler = sched.Scheduler(db, {"sync": jobs.sync, "sync-recent": jobs.sync_recent,
+                                     "gateway-refresh": jobs.gateway_refresh, "embed": jobs.embed, "health": control.health_job,
                                      "tool-refresh": control.refresh_job,
                                      **backups.actions(), **storage.actions()})
     control.extra_checks["jobs"] = scheduler.check

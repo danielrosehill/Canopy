@@ -38,12 +38,13 @@ _security = TransportSecuritySettings(
 mcp = FastMCP("catalogue", transport_security=_security)
 
 SYNC_INTERVAL = scheduler.interval("sync", 3600)   # only to judge overdue: `api` runs the jobs
+GATEWAY_INTERVAL = scheduler.interval("gateway-refresh", 900)
 EMBED_ON_SYNC = os.environ.get("EMBED_ON_SYNC", "false").lower() == "true"
 
 db = ix.connect()
 _sync_lock = threading.Lock()
 _embed_lock = threading.Lock()
-_job: dict = {"running": False, "started": None, "last": None, "queued": 0}
+_job: dict = {"running": False, "started": None, "last": None, "gateway": None, "queued": 0}
 _queue: collections.deque = collections.deque()   # sync requests waiting for the worker
 _queue_lock = threading.Lock()
 _embed_job: dict = {"running": False, "last": None}
@@ -76,14 +77,14 @@ def _in_scope(rid: str) -> bool:
 
 # --- sync scheduling -------------------------------------------------------------
 
-def _request_sync(only: str | None = None, force: bool = False, recent: bool = False) -> bool:
+def _request_sync(only: str | None = None, force: bool = False, mode: str = "full") -> bool:
     """Queue a pass, and start the worker if none is running. Returns whether one was running already.
 
     Requests wait in order, and one identical to a request still waiting is dropped, so a busy stack
     neither loses a request nor runs the same pass twice. The queue and the `running` flag change
     together under `_queue_lock`, so a request cannot land after the worker's last look and be left."""
     with _queue_lock:
-        req = (only, force, recent)
+        req = (only, force, mode)
         if req not in _queue:
             _queue.append(req)
         _job["queued"] = len(_queue) if _job["running"] else 0
@@ -100,25 +101,33 @@ def _sync_worker() -> None:
             if not _queue:
                 _job.update(running=False, queued=0)
                 break
-            only, force, recent = _queue.popleft()
+            only, force, mode = _queue.popleft()
             _job["queued"] = len(_queue)
         with _sync_lock:
-            _run_pass(only, force, recent)
+            _run_pass(only, force, mode)
     if EMBED_ON_SYNC and ix.EMBED_URL:
         _kick_embed()   # after the lock: a long first embed must not hold up the next sync
 
 
-def _run_pass(only: str | None, force: bool, recent: bool) -> None:
+def _run_pass(only: str | None, force: bool, mode: str) -> None:
+    """`mode` is quick, full or gateway. A pass that changed nothing leaves the keyword index alone."""
     _job["started"] = time.time()
     try:
-        _job["last"] = ix.sync_recent(db) if recent else ix.sync(db, only=only, force=force)
+        if mode == "gateway":
+            _job["gateway"] = ix.refresh_gateway_records(db)
+            changed = _job["gateway"]["changed"]
+        else:
+            _job["last"] = ix.sync(db, only=only, force=force, full=mode == "full")
+            changed = _job["last"]["changed"]
     except Exception as e:  # noqa: BLE001 — a crashed pass must show in health
+        changed = True
         _job["last"] = {"ok": False, "errors": [f"sync crashed: {e!r}"]}
         with ix.write_lock, db:
             db.execute("INSERT INTO runs (started, finished, ok, summary) VALUES (%s,%s,FALSE,%s)",
                        (_job["started"], time.time(), json.dumps(_job["last"])))
         ix.log(f"sync crashed: {e!r}")
-    refresh_keywords()   # first: a new record is findable by keyword before it has a vector
+    if changed:
+        refresh_keywords()   # first: a new record is findable by keyword before it has a vector
 
 
 def refresh_keywords() -> None:
@@ -482,8 +491,11 @@ def health() -> str:
     if not ix.EMBED_URL:
         warnings.append("no embedding provider configured: keyword search only")
     gw_at = db.execute("SELECT value FROM meta WHERE key = 'gateway_fetched_at'").fetchone()
-    if not gw_at or time.time() - float(gw_at[0]) > 2 * SYNC_INTERVAL + 600:
+    if not gw_at or time.time() - float(gw_at[0]) > 2 * GATEWAY_INTERVAL + 600:
         warnings.append("gateway server list is stale; mcp registration status may be wrong")
+    gw_last = db.execute("SELECT value FROM meta WHERE key = 'gateway_refresh'").fetchone()
+    if gw_last and json.loads(gw_last[0]).get("errors"):
+        problems.append(f"last gateway refresh failed: {json.loads(gw_last[0])['errors'][:5]}")
     if _job["running"]:
         warnings.append("a sync is running now; counts may be mid-update")
 
@@ -530,15 +542,17 @@ def usage(kind: str | None = "skill", plugin: str | None = None, since_days: flo
 
 
 @tool()
-def sync(plugin: str | None = None, force: bool = False, full: bool = False) -> str:
+def sync(plugin: str | None = None, force: bool = False, full: bool = False, gateway: bool = False) -> str:
     """Run a sync now in the background instead of waiting for the next pass.
-    No arguments: a quick pass over what was pushed since the last one. full: check every
-    plugin. plugin: just that one. force: reindex even if the commit has not moved. If a
-    sync is running, this one is queued behind it. Poll `health` for the result."""
-    recent = not (plugin or force or full)
-    queued = _request_sync(plugin, force, recent)
-    return _out({"started": not queued, "queued": queued, "plugin": plugin, "force": force, "recent": recent,
-                 "last": _job["last"]})
+    No arguments: a quick pass, which reindexes only plugins whose commit or marketplace entry
+    moved. full: fetch every marketplace and retry plugins in error. plugin: just that one.
+    force: reindex even if the commit has not moved. gateway: refresh the gateway's servers and
+    tools instead of the plugins. If a sync is running, this one is queued behind it. Poll
+    `health` for the result."""
+    mode = "gateway" if gateway else "full" if (full or force) and not plugin else "quick"
+    queued = _request_sync(plugin, force, mode)
+    return _out({"started": not queued, "queued": queued, "plugin": plugin, "force": force, "mode": mode,
+                 "last": _job["gateway"] if gateway else _job["last"]})
 
 
 def _run_embed() -> None:
