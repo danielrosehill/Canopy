@@ -92,22 +92,42 @@ def test_running_an_unknown_job_is_a_404(tmp_path):
     assert c.post("/v1/jobs/nope/run").status_code == 401
 
 
-def test_search_forwards_to_the_catalogue_and_keeps_its_status(client, monkeypatch):
+def test_search_forwards_to_the_catalogue_and_keeps_its_status(monkeypatch):
     seen = {}
 
     class Http:
         def __init__(self, **kw): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): pass
-        async def post(self, url, content, headers):
+        async def aclose(self): pass
+        async def post(self, url, content, headers, timeout):
             seen.update(url=url, body=content)
             return httpx.Response(400, content=b'{"error":"needs `query`"}')
 
     monkeypatch.setattr(api.httpx, "AsyncClient", Http)
+    client = TestClient(api.create_app(Stub(), "right"), raise_server_exceptions=False)
     r = client.post("/v1/search", headers={"Authorization": "Bearer right"}, json={"limit": 1})
     assert r.status_code == 400 and r.json() == {"error": "needs `query`"}
     assert seen["url"].endswith("/search") and b"limit" in seen["body"]
     assert client.post("/v1/search", json={"query": "x"}).status_code == 401
+
+
+def test_an_unreachable_catalogue_is_a_502_that_names_it(monkeypatch):
+    class Http:
+        def __init__(self, **kw): pass
+        async def aclose(self): pass
+        async def post(self, *a, **kw): raise httpx.ConnectError("refused")
+
+    monkeypatch.setattr(api.httpx, "AsyncClient", Http)
+    client = TestClient(api.create_app(Stub(), "right"), raise_server_exceptions=False)
+    r = client.post("/v1/search", headers=AUTH, json={"query": "x"})
+    assert r.status_code == 502 and r.json()["error"].startswith("catalogue: ConnectError")
+
+
+def test_an_unexpected_fault_is_json_with_an_error(client, monkeypatch):
+    def broken(self):
+        raise KeyError("jobs")
+    monkeypatch.setattr(Stub, "validate", broken, raising=False)
+    r = client.get("/v1/config/validate", headers=AUTH)
+    assert r.status_code == 500 and r.json()["error"].startswith("internal: KeyError")
 
 
 def test_a_record_id_keeps_its_slashes(client, monkeypatch):

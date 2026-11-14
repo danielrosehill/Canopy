@@ -94,6 +94,20 @@ def write_json(path: Path, doc: dict) -> None:
     match_owner(path)
 
 
+def read_json(path: Path) -> dict:
+    """A config or state file, or {} if there is none. A file that is not a JSON object is a 500 that
+    names the file, not a bare traceback: it is the operator's to fix, and nothing should overwrite it."""
+    if not path.exists():
+        return {}
+    try:
+        doc = json.loads(path.read_text())
+    except ValueError as e:
+        raise ControlError(500, f"{path.name} is not JSON: {e}") from None
+    if not isinstance(doc, dict):
+        raise ControlError(500, f"{path.name} must be a JSON object")
+    return doc
+
+
 def expand(value: object, env: dict[str, str]) -> object:
     """Replace ${VAR} in every string. A variable that is not set raises: registering
     an upstream with an empty credential fails later and less clearly."""
@@ -319,6 +333,8 @@ class Control:
         self.last_apply: dict | None = None
         self.extra_checks: dict[str, Callable[[], dict]] = {}   # parts /v1/status reports, set by `api`
         self._mcp = gw.McpClient(f"{gw.GATEWAY_URL}/mcp", timeout=10, name="canopy-status")
+        self._gateway: tuple[str, Gateway] | None = None   # one client per admin token, not one per call
+        self._gateway_lock = threading.Lock()
 
     # --- files ---------------------------------------------------------------------
 
@@ -327,7 +343,7 @@ class Control:
         return self.config / "servers.json"
 
     def read_config(self) -> dict:
-        doc = json.loads(self.servers_path.read_text()) if self.servers_path.exists() else {}
+        doc = read_json(self.servers_path)
         return {"servers": doc.get("servers", []), "groups": doc.get("groups", [])}
 
     @property
@@ -335,7 +351,7 @@ class Control:
         return self.admin_dir / STATE
 
     def read_state(self) -> dict:
-        return json.loads(self.state_path.read_text()) if self.state_path.exists() else {}
+        return read_json(self.state_path)
 
     def write_state(self, state: dict) -> None:
         self.admin_dir.mkdir(parents=True, exist_ok=True)
@@ -360,7 +376,13 @@ class Control:
         return token
 
     def gateway(self) -> Gateway:
-        return self.make_gateway(self.admin_token())
+        """One client, and its connection pool, for as long as the admin token stays the same. A new
+        client per call left a pool behind on every status check."""
+        token = self.admin_token()
+        with self._gateway_lock:
+            if self._gateway is None or self._gateway[0] != token:
+                self._gateway = (token, self.make_gateway(token))
+            return self._gateway[1]
 
     def agent_token(self) -> str | None:
         """None in development mode, where the gateway has no identities."""
@@ -740,7 +762,7 @@ class Control:
         return self.config / "marketplaces.json"
 
     def _marketplace_doc(self) -> dict:
-        doc = json.loads(self.marketplaces_path.read_text()) if self.marketplaces_path.exists() else {}
+        doc = read_json(self.marketplaces_path)
         return {**doc, "marketplaces": doc.get("marketplaces", [])}
 
     @staticmethod

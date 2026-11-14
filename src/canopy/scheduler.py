@@ -23,6 +23,7 @@ from . import store
 CONFIG = Path(os.environ.get("CANOPY_CONFIG", "/config"))
 TICK = int(os.environ.get("SCHEDULER_TICK_SEC", "30"))
 START_DELAY = int(os.environ.get("SCHEDULER_START_DELAY_SEC", "60"))   # the seed makes the tokens
+START_WAIT = int(os.environ.get("SCHEDULER_START_WAIT_SEC", "900"))   # the longest wait for the seed after that
 OUTPUT_CAP = 10_000
 OVERDUE_SLACK = 600   # seconds past two intervals, as the catalogue judges a late sync
 INTERRUPTED = "interrupted by a restart"
@@ -61,9 +62,20 @@ class Job:
 
 def load(config: Path = CONFIG) -> list[Job]:
     path = config / "jobs.json"
-    raw = json.loads(path.read_text())["jobs"] if path.is_file() else defaults(config)
+    if path.is_file():
+        try:
+            raw = json.loads(path.read_text())
+        except ValueError as e:
+            raise ValueError(f"jobs.json is not JSON: {e}") from None
+        raw = raw.get("jobs") if isinstance(raw, dict) else None
+        if not isinstance(raw, list):
+            raise ValueError("jobs.json must be an object with a `jobs` list")
+    else:
+        raw = defaults(config)
     jobs = []
     for j in raw:
+        if not isinstance(j, dict) or not isinstance(j.get("name"), str):
+            raise ValueError(f"each job needs a `name`: {j!r}"[:200])
         if bool(j.get("every")) == bool(j.get("after")):
             raise ValueError(f"job {j.get('name')!r} needs exactly one of `every` and `after`")
         jobs.append(Job(j["name"], seconds(j["every"]) if j.get("every") else None, j.get("after"),
@@ -114,6 +126,10 @@ class Scheduler:
                     out.append(j.name)
         return out
 
+    def running(self, name: str) -> bool:
+        return self.db.execute("SELECT 1 FROM system.job_runs WHERE job = %s AND finished IS NULL",
+                               (name,)).fetchone() is not None
+
     def run(self, name: str, follow: bool = True) -> dict:
         """Run one job now, then what follows it unless `follow` is off. `started` is False if it was
         already running."""
@@ -125,13 +141,14 @@ class Scheduler:
             "ON CONFLICT (job) WHERE finished IS NULL DO NOTHING RETURNING id", (name, self.clock())).fetchone()
         if row is None:
             return {"job": name, "started": False}
-        ok, output = True, ""
+        ok, output = False, INTERRUPTED
         try:
             output = self.actions[name]() or ""
+            ok = True
         except Exception as e:  # noqa: BLE001 - a failed job is a result, recorded like any other
             ok, output = False, f"{type(e).__name__}: {e}"
-        self.db.execute("UPDATE system.job_runs SET finished = now(), ok = %s, output = %s WHERE id = %s",
-                        (ok, output[:OUTPUT_CAP], row["id"]))
+        finally:
+            self._finish(row["id"], ok, output)
         result = {"job": name, "started": True, "ok": ok, "output": output[:OUTPUT_CAP]}
         if ok and follow:
             followers = [j.name for j in self.jobs().values()
@@ -139,6 +156,20 @@ class Scheduler:
             if followers:
                 result["then"] = [self.run(f) for f in followers]
         return result
+
+    def _finish(self, run_id: int, ok: bool, output: str, attempts: int = 5) -> None:
+        """Close the run. An open row is the job's lock, so a failed write here would keep the job from
+        running again until a restart: try again, with backoff, before giving up."""
+        for attempt in range(attempts):
+            try:
+                self.db.execute("UPDATE system.job_runs SET finished = now(), ok = %s, output = %s WHERE id = %s",
+                                (ok, output[:OUTPUT_CAP], run_id))
+                return
+            except Exception as e:  # noqa: BLE001
+                if attempt == attempts - 1:
+                    print(f"scheduler: could not close run {run_id}: {e!r}", flush=True)
+                    return
+                time.sleep(2 ** attempt)
 
     def runs(self, name: str, limit: int = 20) -> list[dict]:
         rows = self.db.execute(
@@ -195,9 +226,21 @@ class Scheduler:
             t.start()
         return threads
 
-    def loop(self) -> None:
-        self.recover()
+    def loop(self, ready: Callable[[], bool] = lambda: True) -> None:
+        """`ready` says the seed has made the tokens the jobs need. START_DELAY is the least wait, and
+        a seed slower than that is waited for, up to START_WAIT, rather than failing every first run."""
+        while True:
+            try:
+                self.recover()
+                break
+            except Exception as e:  # noqa: BLE001 - the database may still be starting
+                print(f"scheduler: recover failed, trying again: {e!r}", flush=True)
+                time.sleep(5)
         time.sleep(START_DELAY)
+        deadline = time.time() + START_WAIT
+        while not ready() and time.time() < deadline:
+            self.ticked = self.clock()
+            time.sleep(TICK)
         while True:
             self.ticked = self.clock()
             try:

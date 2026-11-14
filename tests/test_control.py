@@ -219,9 +219,14 @@ def test_a_config_with_no_servers_removes_nothing(applied, jungle):
 
 def test_an_unreadable_config_stops_apply_and_removes_nothing(applied, jungle):
     applied.servers_path.write_text('{"servers": [')
-    with pytest.raises(json.JSONDecodeError):
+    with pytest.raises(ControlError, match="servers.json is not JSON") as e:
         applied.apply()
+    assert e.value.status == 500
     assert {"a", "b"} <= set(jungle.servers)
+
+
+def test_one_gateway_client_serves_every_call_with_the_same_token(applied):
+    assert applied.gateway() is applied.gateway()
 
 
 def test_a_dropped_server_still_in_a_group_stays_and_is_reported(applied, jungle):

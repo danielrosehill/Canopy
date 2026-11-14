@@ -9,6 +9,7 @@ import hmac
 import os
 import secrets
 import threading
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
@@ -63,6 +64,12 @@ def create_app(control: Control, token: str, embedder: Embedder | None = None,
                scheduler: sched.Scheduler | None = None, storage: Storage | None = None,
                backups: Backups | None = None) -> Starlette:
     embedder = embedder or Embedder(primary="", fallback="")
+    catalogue = httpx.AsyncClient(base_url=CATALOGUE_URL, timeout=60)   # shared: one pool, not one per request
+
+    @asynccontextmanager
+    async def lifespan(_):
+        yield
+        await catalogue.aclose()
 
     def need_storage() -> Storage:
         if storage is None:
@@ -105,6 +112,8 @@ def create_app(control: Control, token: str, embedder: Embedder | None = None,
         s = need_scheduler()
         if name not in s.actions or name not in s.jobs():
             raise ControlError(404, f"no such job: {name}")
+        if s.running(name):
+            raise ControlError(409, f"{name} is already running: poll /v1/jobs/{name}/runs")
         threading.Thread(target=s.run, args=(name, follow), daemon=True).start()
         return JSONResponse({"job": name, "requested": True}, status_code=202)
 
@@ -235,19 +244,22 @@ def create_app(control: Control, token: str, embedder: Embedder | None = None,
             raise ControlError(e.status, str(e)) from None
         return JSONResponse(reply)
 
+    async def forward(request: Request, path: str, timeout: float) -> Response:
+        """Hand the body to the catalogue as it is. An unreachable catalogue is a 502 that says so."""
+        try:
+            r = await catalogue.post(path, content=await request.body(), timeout=timeout,
+                                     headers={"Content-Type": "application/json"})
+        except httpx.HTTPError as e:
+            raise ControlError(502, f"catalogue: {type(e).__name__}: {e}") from None
+        return Response(r.content, status_code=r.status_code, media_type="application/json")
+
     async def skills_mcp(request: Request) -> Response:
         """The MCP Skills extension, forwarded to the catalogue. The gateway rejects these methods."""
-        async with httpx.AsyncClient(timeout=60) as http:
-            r = await http.post(f"{CATALOGUE_URL}/skills", content=await request.body(),
-                                headers={"Content-Type": "application/json"})
-        return Response(r.content, status_code=r.status_code, media_type="application/json")
+        return await forward(request, "/skills", 60)
 
     async def search(request: Request) -> Response:
         """The catalogue's search pipeline, for anything that is not an MCP client."""
-        async with httpx.AsyncClient(timeout=30) as http:
-            r = await http.post(f"{CATALOGUE_URL}/search", content=await request.body(),
-                                headers={"Content-Type": "application/json"})
-        return Response(r.content, status_code=r.status_code, media_type="application/json")
+        return await forward(request, "/search", 30)
 
     async def run(_: Request, fn, *args, status: int = 200) -> JSONResponse:
         return JSONResponse(await run_in_threadpool(fn, *args), status_code=status)
@@ -260,6 +272,10 @@ def create_app(control: Control, token: str, embedder: Embedder | None = None,
 
     async def gateway_error(_: Request, e: httpx.HTTPError) -> JSONResponse:
         return JSONResponse({"error": f"gateway: {e}"}, status_code=502)
+
+    async def unexpected(_: Request, e: Exception) -> JSONResponse:
+        """Every reply is JSON with `error`, a fault in Canopy too, so clients have one shape to read."""
+        return JSONResponse({"error": f"internal: {type(e).__name__}: {str(e)[:300]}"}, status_code=500)
 
     return Starlette(routes=[
         Route("/health", health),
@@ -300,8 +316,9 @@ def create_app(control: Control, token: str, embedder: Embedder | None = None,
         Route("/v1/backup", run_backup, methods=["POST"]),
         Route("/v1/backup/config", backup_config),
         Route("/v1/backup/plan", backup_plan),
-    ], exception_handlers={ControlError: control_error, BackupError: backup_error, httpx.HTTPError: gateway_error},
-       middleware=[Middleware(RequireToken, token=token)])
+    ], exception_handlers={ControlError: control_error, BackupError: backup_error, httpx.HTTPError: gateway_error,
+                           Exception: unexpected},
+       middleware=[Middleware(RequireToken, token=token)], lifespan=lifespan)
 
 
 def model_lookup(db: store.Db):
@@ -323,7 +340,8 @@ def main() -> None:
                                      "tool-refresh": control.refresh_job,
                                      **backups.actions(), **storage.actions()})
     control.extra_checks["jobs"] = scheduler.check
-    threading.Thread(target=scheduler.loop, daemon=True).start()
+    # The jobs need the seed's tokens: wait for its first apply rather than a fixed delay alone.
+    threading.Thread(target=scheduler.loop, args=(lambda: control.last_apply is not None,), daemon=True).start()
     app = create_app(control, load_token(), Embedder(provider_model=model_lookup(db)), scheduler, storage, backups)
     uvicorn.run(app, host=os.environ.get("CANOPY_API_HOST", "0.0.0.0"), port=PORT, log_level="warning")
 

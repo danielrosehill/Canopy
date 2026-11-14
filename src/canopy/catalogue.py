@@ -12,6 +12,7 @@ clones on disk and the manifests, not against sync bookkeeping.
 """
 from __future__ import annotations
 
+import collections
 import json
 import os
 import re
@@ -42,7 +43,9 @@ EMBED_ON_SYNC = os.environ.get("EMBED_ON_SYNC", "false").lower() == "true"
 db = ix.connect()
 _sync_lock = threading.Lock()
 _embed_lock = threading.Lock()
-_job: dict = {"running": False, "started": None, "last": None, "queued": None}
+_job: dict = {"running": False, "started": None, "last": None, "queued": 0}
+_queue: collections.deque = collections.deque()   # sync requests waiting for the worker
+_queue_lock = threading.Lock()
 _embed_job: dict = {"running": False, "last": None}
 _keywords: dict = {"index": None, "hashes": {}}
 _keyword_lock = threading.Lock()
@@ -73,38 +76,66 @@ def _in_scope(rid: str) -> bool:
 
 # --- sync scheduling -------------------------------------------------------------
 
-def _run_sync(only: str | None = None, force: bool = False, recent: bool = False) -> None:
-    if not _sync_lock.acquire(blocking=False):
-        _job["queued"] = {"only": only, "force": force, "recent": recent}   # run once the current pass ends
-        return
-    try:
-        while True:
-            _job.update(running=True, started=time.time())
-            try:
-                _job["last"] = ix.sync_recent(db) if recent else ix.sync(db, only=only, force=force)
-            except Exception as e:  # noqa: BLE001 — a crashed pass must show in health
-                _job["last"] = {"ok": False, "errors": [f"sync crashed: {e!r}"]}
-                with ix.write_lock, db:
-                    db.execute("INSERT INTO runs (started, finished, ok, summary) VALUES (%s,%s,FALSE,%s)",
-                               (_job["started"], time.time(), json.dumps(_job["last"])))
-                ix.log(f"sync crashed: {e!r}")
-            refresh_keywords()   # first: a new record is findable by keyword before it has a vector
-            if EMBED_ON_SYNC and ix.EMBED_URL:
-                _run_embed()
-            nxt, _job["queued"] = _job["queued"], None
-            if not nxt:
+def _request_sync(only: str | None = None, force: bool = False, recent: bool = False) -> bool:
+    """Queue a pass, and start the worker if none is running. Returns whether one was running already.
+
+    Requests wait in order, and one identical to a request still waiting is dropped, so a busy stack
+    neither loses a request nor runs the same pass twice. The queue and the `running` flag change
+    together under `_queue_lock`, so a request cannot land after the worker's last look and be left."""
+    with _queue_lock:
+        req = (only, force, recent)
+        if req not in _queue:
+            _queue.append(req)
+        _job["queued"] = len(_queue) if _job["running"] else 0
+        if _job["running"]:
+            return True
+        _job["running"] = True
+    threading.Thread(target=_sync_worker, daemon=True).start()
+    return False
+
+
+def _sync_worker() -> None:
+    while True:
+        with _queue_lock:
+            if not _queue:
+                _job.update(running=False, queued=0)
                 break
-            only, force, recent = nxt["only"], nxt["force"], nxt["recent"]
-    finally:
-        _job["running"] = False
-        _sync_lock.release()
+            only, force, recent = _queue.popleft()
+            _job["queued"] = len(_queue)
+        with _sync_lock:
+            _run_pass(only, force, recent)
+    if EMBED_ON_SYNC and ix.EMBED_URL:
+        _kick_embed()   # after the lock: a long first embed must not hold up the next sync
+
+
+def _run_pass(only: str | None, force: bool, recent: bool) -> None:
+    _job["started"] = time.time()
+    try:
+        _job["last"] = ix.sync_recent(db) if recent else ix.sync(db, only=only, force=force)
+    except Exception as e:  # noqa: BLE001 — a crashed pass must show in health
+        _job["last"] = {"ok": False, "errors": [f"sync crashed: {e!r}"]}
+        with ix.write_lock, db:
+            db.execute("INSERT INTO runs (started, finished, ok, summary) VALUES (%s,%s,FALSE,%s)",
+                       (_job["started"], time.time(), json.dumps(_job["last"])))
+        ix.log(f"sync crashed: {e!r}")
+    refresh_keywords()   # first: a new record is findable by keyword before it has a vector
 
 
 def refresh_keywords() -> None:
     """Bring the keyword index up to date with the records: the first call builds it, and later
     calls change only what differs, so a new skill costs milliseconds however large the catalogue."""
-    if not _keyword_lock.acquire(blocking=False):
-        return
+    _keywords["dirty"] = True
+    # A caller that finds the lock held leaves `dirty` set, and the holder goes round again, also
+    # after releasing, so a refresh asked for during another is never dropped.
+    while _keywords.get("dirty") and _keyword_lock.acquire(blocking=False):
+        try:
+            while _keywords.pop("dirty", False):
+                _refresh_keywords_once()
+        finally:
+            _keyword_lock.release()
+
+
+def _refresh_keywords_once() -> None:
     try:
         seen = {r["id"]: r["hash"] for r in db.execute("SELECT id, hash FROM records")}
         columns = "SELECT id, name, description, plugin, body FROM records"
@@ -120,8 +151,6 @@ def refresh_keywords() -> None:
             _keywords["hashes"] = seen
     except Exception as e:  # noqa: BLE001 - search says so through `degraded`
         ix.log(f"keyword index failed: {e!r}")
-    finally:
-        _keyword_lock.release()
 
 
 # --- tools ------------------------------------------------------------------------
@@ -506,23 +535,31 @@ def sync(plugin: str | None = None, force: bool = False, full: bool = False) -> 
     No arguments: a quick pass over what was pushed since the last one. full: check every
     plugin. plugin: just that one. force: reindex even if the commit has not moved. If a
     sync is running, this one is queued behind it. Poll `health` for the result."""
-    queued = _job["running"]
     recent = not (plugin or force or full)
-    threading.Thread(target=_run_sync, args=(plugin, force, recent), daemon=True).start()
+    queued = _request_sync(plugin, force, recent)
     return _out({"started": not queued, "queued": queued, "plugin": plugin, "force": force, "recent": recent,
                  "last": _job["last"]})
 
 
 def _run_embed() -> None:
-    if not _embed_lock.acquire(blocking=False):
-        return
-    _embed_job["running"] = True
-    try:
-        done, err = ix.embed_pending(db)
-        _embed_job["last"] = {"embedded": done, "error": err}
-    finally:
-        _embed_job["running"] = False
-        _embed_lock.release()
+    """Embed what is pending. A run asked for during another goes round once more, since records
+    written in the meantime were not in the first run's list. A failed run does not go round."""
+    _embed_job["again"] = True
+    while _embed_job.get("again") and _embed_lock.acquire(blocking=False):
+        _embed_job["running"] = True
+        try:
+            while _embed_job.pop("again", False):
+                done, err = ix.embed_pending(db)
+                _embed_job["last"] = {"embedded": done, "error": err}
+                if err:
+                    break
+        finally:
+            _embed_job["running"] = False
+            _embed_lock.release()
+
+
+def _kick_embed() -> None:
+    threading.Thread(target=_run_embed, daemon=True).start()
 
 
 @tool()

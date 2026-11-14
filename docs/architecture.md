@@ -104,6 +104,14 @@ Services start before tokens exist, so they read token files on every use. The A
 
 The seed exits 1 if anything failed, and lists each failure.
 
+## Scheduler
+
+The jobs run in `api`, recorded in `system.job_runs`: an open row is the job's lock, so a job cannot run twice
+at once, and the row is closed whatever the job did, with retries if the database blips. At start the scheduler
+closes rows a restart cut short, waits `SCHEDULER_START_DELAY_SEC` (60), then waits for the seed's first
+`apply`, up to `SCHEDULER_START_WAIT_SEC` (900) more, since the jobs need the tokens the seed makes. A
+`jobs.json` that is not valid is refused with its reason, in `/v1/status` and on the `/v1/jobs` routes.
+
 ## Folders
 
 Bind mounts, so an agent on the host can read them and a backup is a path. `canopy init` makes them
@@ -125,6 +133,11 @@ Bearer token, JSON, on `127.0.0.1:8090`.
 | `GET /v1/gateway/tools` | List |
 | `GET /v1/config`, `POST /v1/config/apply` | Read, apply |
 | `GET /v1/tokens/agent` | The token for MCP clients. Null in development mode |
+
+Every error is JSON with an `error` field, whatever went wrong: a corrupt `servers.json`, `registered.json`,
+`marketplaces.json` or `jobs.json` is a 500 that names the file, a catalogue that does not answer is a 502 that
+says `catalogue:`, and a job already running is a 409. The API keeps one gateway client per admin token and one
+client for the catalogue, rather than one per request.
 
 Writes run one at a time. Each is believed only once a read agrees, and only then saved to `servers.json`,
 so a failed change leaves the config as it was. `${VAR}` stays in the file, and is expanded on the way
@@ -200,8 +213,9 @@ the API token can change the stack.
   costs milliseconds. A restart builds it again from Postgres, in about a second.
 - Vectors: exact pgvector search over `catalogue.records.embedding`.
 
-With `RERANK_MODEL` set, the top 20 candidates that are not tools go to the provider's `/rerank` with their
-names and descriptions. If that fails or takes over `RERANK_TIMEOUT_SEC`, search returns the fused order.
+With `RERANK_MODEL` set, the top 20 candidates that are not tools, plus the top `RERANK_TOOL_CANDIDATES` tools
+(default 10), go to the provider's `/rerank` in one call with their names and descriptions. A tool is then shown
+only if its rerank score reaches `SEARCH_TOOL_MIN_RERANK`. If that fails or takes over `RERANK_TIMEOUT_SEC`, search returns the fused order.
 Anything that falls short shows in `degraded`: no provider, a failed embedding, a failed rerank, or a
 keyword index not built yet.
 
@@ -215,6 +229,13 @@ A record keeps its vector while `embed_key`, the hash of the embedded text, stay
 `EMBED_ON_SYNC=true` every sync embeds what it wrote, however it was started, and a record still missing a
 vector afterwards fails `health`. Otherwise `canopy embed` reports pending records and estimated tokens,
 and `dry_run=false` starts the run. Until it has a vector, a record ranks on its keyword position alone.
+
+**Sync requests queue, in order.** `catalogue__sync` adds its request to a queue and one worker drains it,
+so a request made during a pass waits for it rather than replacing an earlier one, and a request identical to
+one still waiting is dropped. `queued` in the reply is how many are waiting. With `EMBED_ON_SYNC=true` the
+embedding runs after the queue is empty and outside the sync lock, so a long first embed does not hold up the
+next sync, and an embed asked for during another runs once more afterwards. The keyword index works the same
+way: a refresh asked for during another is not dropped.
 
 **Freshness.** `sync-recent` runs every 5 minutes, and `canopy sync` with no arguments does the same: one
 GitHub call lists recent pushes, and only marketplaces and plugin repos pushed since the last pass are checked.

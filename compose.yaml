@@ -113,7 +113,8 @@ services:
     command: ["python", "-m", "canopy.api"]
     healthcheck:
       <<: *mcp-health
-      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8090), 2)"]
+      # /health, not a TCP connect: the port opens before the app can answer.
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8090/health', timeout=2)"]
     environment:
       <<: [*canopy-env, *canopy-db]
       CANOPY_API_TOKEN: ${CANOPY_API_TOKEN:-}
@@ -228,7 +229,8 @@ services:
     profiles: [search]
     environment:
       OLLAMA_HOST: http://ollama:11434
-    entrypoint: ["sh", "-c", "sleep 5 && ollama pull ${EMBED_MODEL:-bge-m3}"]
+    # Ollama takes a variable time to answer: retry for about two minutes rather than one fixed sleep.
+    entrypoint: ["sh", "-c", "n=0; until ollama pull ${EMBED_MODEL:-bge-m3}; do n=$$((n+1)); [ $$n -ge 24 ] && exit 1; sleep 5; done"]
     depends_on:
       - ollama
     networks: [canopy]

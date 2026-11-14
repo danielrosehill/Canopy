@@ -57,7 +57,7 @@ jobs:
             git /repo --redact --no-banner
 
   image:
-    needs: [test, contract, backup, secrets]
+    needs: [test, contract, backup, storage, secrets]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:

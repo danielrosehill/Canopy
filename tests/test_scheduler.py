@@ -32,6 +32,8 @@ def test_no_file_means_the_defaults_and_they_do_not_spend_money(tmp_path):
     ([{"name": "a", "every": "1h", "after": "b"}, {"name": "b", "every": "1h"}], "exactly one"),
     ([{"name": "a", "after": "gone"}], "does not exist"),
     ([{"name": "a", "every": "1h"}, {"name": "a", "every": "2h"}], "share a name"),
+    (["a"], "needs a `name`"),
+    ([{"every": "1h"}], "needs a `name`"),
 ])
 def test_a_bad_file_is_refused(tmp_path, jobs, message):
     with pytest.raises(ValueError, match=message):
@@ -41,6 +43,35 @@ def test_a_bad_file_is_refused(tmp_path, jobs, message):
 def test_interval_reads_the_file_and_survives_a_broken_one(tmp_path):
     assert s.interval("sync", 99, write(tmp_path, [{"name": "sync", "every": "6h"}])) == 21600
     (tmp_path / "jobs.json").write_text("{not json")
-    with pytest.raises(json.JSONDecodeError):
+    with pytest.raises(ValueError, match="not JSON"):
         s.load(tmp_path)
     assert s.interval("sync", 99, tmp_path) == 99
+
+
+def test_a_bad_jobs_file_is_a_named_error(tmp_path):
+    (tmp_path / "jobs.json").write_text('{"jobs": [')
+    with pytest.raises(ValueError, match="jobs.json is not JSON"):
+        s.load(tmp_path)
+    (tmp_path / "jobs.json").write_text('[]')
+    with pytest.raises(ValueError, match="`jobs` list"):
+        s.load(tmp_path)
+
+
+class FlakyDb:
+    """Fails the first `fails` writes, as a database that blips would."""
+
+    def __init__(self, fails):
+        self.fails, self.writes = fails, []
+
+    def execute(self, sql, params=()):
+        if self.fails:
+            self.fails -= 1
+            raise OSError("connection lost")
+        self.writes.append(params)
+
+
+def test_a_run_is_closed_even_if_the_first_write_fails(monkeypatch):
+    monkeypatch.setattr(s.time, "sleep", lambda _: None)
+    db = FlakyDb(fails=2)
+    s.Scheduler(db, {})._finish(7, True, "done")
+    assert db.writes == [(True, "done", 7)]

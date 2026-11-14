@@ -11,6 +11,7 @@ every use, because services start before the seed has created them.
 from __future__ import annotations
 
 import functools
+import itertools
 import json
 import os
 import threading
@@ -75,7 +76,7 @@ class McpClient:
         self._http = httpx.Client(timeout=timeout)
         self._lock = threading.Lock()
         self._session: str | None = None
-        self._next_id = 0
+        self._ids = itertools.count(1)   # atomic under the GIL, unlike `+= 1` across threads
 
     def _post(self, body: dict, session: str | None) -> httpx.Response:
         headers = {"Content-Type": "application/json",
@@ -99,11 +100,13 @@ class McpClient:
             return session
 
     def request(self, method: str, params: dict | None = None) -> dict:
-        self._next_id += 1
-        body = {"jsonrpc": "2.0", "id": self._next_id, "method": method, "params": params or {}}
-        r = self._post(body, self._connect())
+        body = {"jsonrpc": "2.0", "id": next(self._ids), "method": method, "params": params or {}}
+        session = self._connect()
+        r = self._post(body, session)
         if r.status_code in (400, 401, 404):   # the session expired: reconnect once
-            self._session = None
+            with self._lock:   # only drop the session this call used, not one another thread just made
+                if self._session == session:
+                    self._session = None
             r = self._post(body, self._connect())
         r.raise_for_status()
         reply = parse_mcp_response(r.text) or {}

@@ -337,9 +337,11 @@ def embed(texts: list[str], timeout: float = 120) -> list[list[float]]:
 
 
 def _pending(db: store.Db) -> list[store.Row]:
-    """One row per distinct text: records sharing a text share a vector."""
+    """One row per distinct text: records sharing a text share a vector. Only the part of the body that
+    `embed_text` uses is read, so a first embed of a large catalogue does not hold every body in memory."""
     return db.execute(
-        "SELECT DISTINCT ON (embed_key) id, kind, plugin, name, description, body, embed_key FROM records "
+        "SELECT DISTINCT ON (embed_key) id, kind, plugin, name, description, left(body, 2000) AS body, embed_key "
+        "FROM records "
         "WHERE embedding IS NULL OR embed_model IS DISTINCT FROM %s ORDER BY embed_key, id",
         (EMBED_MODEL,)).fetchall()
 
@@ -358,8 +360,13 @@ def embed_pending(db: store.Db, batch: int = 32) -> tuple[int, str | None]:
     done = 0
     for i in range(0, len(rows), batch):
         chunk = rows[i:i + batch]
+        texts = [embed_text(dict(r)) for r in chunk]
         try:
-            vecs = embed([embed_text(dict(r)) for r in chunk])
+            try:
+                vecs = embed(texts)
+            except Exception:  # noqa: BLE001 — one retry: a provider blip must not end a long run
+                time.sleep(5)
+                vecs = embed(texts)
         except Exception as e:  # noqa: BLE001 — reported; the records stay pending
             return done, f"embedding stopped after {done}/{len(rows)}: {e}"
         with write_lock, db:

@@ -235,6 +235,9 @@ class Search:
         want = top + tool_ids
         rows = {r["id"]: r for r in self.db.execute(
             "SELECT * FROM records WHERE id = ANY(%s)", (want,))} if want else {}
+        # The stages read separately, so a sync can delete a record after it was ranked. Drop it here
+        # rather than fail the whole search on it.
+        top, tool_ids = [r for r in top if r in rows], [r for r in tool_ids if r in rows]
 
         def item(rid: str) -> dict:
             r = rows[rid]
