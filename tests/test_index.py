@@ -139,7 +139,7 @@ def test_graphql_heads_batches_and_resolves_tags_to_commits(monkeypatch):
 
     def post(url, json, **kw):
         queries.append(json["query"])
-        if len(queries) == 1:
+        if '"o/gone"' not in json["query"] and 'name: "gone"' not in json["query"]:
             return Reply({"data": {
                 "r0": {"defaultBranchRef": {"target": {"oid": "c" * 40}}},
                 "r1": {"ref": {"target": {"oid": "t" * 40, "target": {"oid": "d" * 40}}}}}})
@@ -148,7 +148,7 @@ def test_graphql_heads_batches_and_resolves_tags_to_commits(monkeypatch):
     keys = [("o/a", None), ("o/b", "v1"), ("o/gone", None)]
     heads = ix._graphql_heads(keys, token="t", post=post)
     assert len(queries) == 2
-    assert 'repository(owner: "o", name: "b") { ref(qualifiedName: "v1")' in queries[0]
+    assert any('repository(owner: "o", name: "b") { ref(qualifiedName: "v1")' in q for q in queries)
     assert heads == {("o/a", None): "c" * 40, ("o/b", "v1"): "d" * 40}   # the gone repo is left to git
 
 

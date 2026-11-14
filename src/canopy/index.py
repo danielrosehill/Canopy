@@ -47,7 +47,10 @@ CORE_GROUP = os.environ.get("CORE_GROUP", "core")
 # The name clients give this gateway, which is the `<client>` in mcp__<client>__<tool>.
 CLIENT_NAME = os.environ.get("CANOPY_CLIENT_NAME", "canopy")
 BODY_CAP = 200_000   # bytes kept per record
-GRAPHQL_BATCH = 50   # repositories per GraphQL head query
+# Repositories per GraphQL head query, and queries at once. Measured 2026-11-14 on 314 repos: 50 a call in
+# sequence took 16.5 s (about 2.4 s a call); 25 a call, 8 at once, 2.7 s.
+GRAPHQL_BATCH = 25
+GRAPHQL_PARALLEL = 8
 
 write_lock = threading.Lock()
 
@@ -654,10 +657,11 @@ _TARGET = "target { oid ... on Tag { target { oid } } }"
 def _graphql_heads(keys: list[Key], token: str = GIT_TOKEN, post=httpx.post) -> dict[Key, str]:
     """The commit for each (owner/repo, ref) GitHub resolves, GRAPHQL_BATCH repositories per call. A
     repository or ref it cannot resolve is left out, for the caller to ask git. An annotated tag
-    resolves to its commit, as `remote_head` does, so the two never disagree about a head."""
+    resolves to its commit, as `remote_head` does, so the two never disagree about a head. The calls
+    run GRAPHQL_PARALLEL at a time, since GitHub takes seconds to answer each one."""
     out: dict[Key, str] = {}
-    for i in range(0, len(keys), GRAPHQL_BATCH):
-        chunk = keys[i:i + GRAPHQL_BATCH]
+
+    def batch(chunk: list[Key]) -> None:
         fields = []
         for j, (repo, ref) in enumerate(chunk):
             owner, name = repo.split("/")
@@ -672,6 +676,9 @@ def _graphql_heads(keys: list[Key], token: str = GIT_TOKEN, post=httpx.post) -> 
             oid = (target.get("target") or {}).get("oid") or target.get("oid")
             if oid:
                 out[(repo, ref)] = oid
+
+    with ThreadPoolExecutor(GRAPHQL_PARALLEL) as ex:
+        list(ex.map(batch, [keys[i:i + GRAPHQL_BATCH] for i in range(0, len(keys), GRAPHQL_BATCH)]))
     return out
 
 
