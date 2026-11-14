@@ -45,6 +45,11 @@ read or print credential files. Then list the paths and run `canopy clis logins`
 - `via`: `image` is already in the image, `apk` installs an Alpine package, `npm` and `uv` a package, `bin` downloads
   one file, `tar` unpacks a release into the home folder, and `host` copies the host's binary. Use `host` for static
   binaries only: anything linked against glibc will not run on Alpine.
+- `repo`: for an `apk` entry, a third-party Alpine repo named in `apk_repos`, in the library or in this file (same
+  shape: `url`, `key_url`, `key_name`, `signer_sha256` (SHA-256 of the public key)). `install` downloads the key, refuses if its SHA-256 differs,
+  puts it in `/etc/apk/keys/`, and passes the repo to `apk add -X`, leaving `/etc/apk/repositories` alone. The library
+  ships one: `danielrosehill` (`https://apps.danielrosehill.com/alpine`, source
+  github.com/danielrosehill/Alpine-Public-Repo) for `orexplorer`, `hubexplorer` and `eml-toolkit`.
 - `env`: variables to set for a `host` CLI, such as a token read from a file in the home folder.
 - `check`: a read-only command. Where a login matters, use one that needs it, not `--version`. It passes on exit code alone.
 

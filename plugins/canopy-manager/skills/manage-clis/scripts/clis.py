@@ -121,6 +121,32 @@ def install_host(cli: dict, cli_home: Path) -> None:
         launcher.chmod(0o755)
 
 
+def apk_script(clis: list[dict], repos: dict[str, dict]) -> str:
+    """One root shell command: trust each third-party repo the chosen apk tools need, then one `apk add`.
+
+    A tool with `"repo": NAME` comes from `apk_repos[NAME]` in the library (or in cli.json). Its key is
+    downloaded, checked against `signer_sha256` and put in /etc/apk/keys; the repo is passed with -X, so
+    /etc/apk/repositories is left alone. Both are lost with the container, like the packages.
+    """
+    apks = [c for c in clis if c["via"] == "apk"]
+    steps, urls = [], []
+    for name in sorted({c["repo"] for c in apks if c.get("repo")}):
+        if name not in repos:
+            sys.exit(f"apk repo {name!r} is not defined under apk_repos")
+        repo = repos[name]
+        key = "/etc/apk/keys/" + repo["key_name"]
+        steps.append(f'curl -fsSL -o /tmp/apk-key {shlex.quote(repo["key_url"])} && '
+                     f'echo {shlex.quote(repo["signer_sha256"] + "  /tmp/apk-key")} | sha256sum -c -s && '
+                     f'install -m644 /tmp/apk-key {shlex.quote(key)} && rm -f /tmp/apk-key || '
+                     f'{{ echo "apk repo {name}: key checksum mismatch" >&2; exit 1; }}')
+        urls.append(repo["url"])
+    if not apks:
+        return ""
+    flags = "".join(f" -X {shlex.quote(u)}" for u in urls)
+    steps.append("apk add -q --no-cache" + flags + " " + shlex.join(c["package"] for c in apks))
+    return " && ".join(f"( {x} )" if "||" in x else x for x in steps)
+
+
 def install_script(cli: dict) -> str:
     """The shell command that installs an npm, uv, bin or tar entry inside the container."""
     via = cli["via"]
@@ -165,7 +191,9 @@ def main() -> int:
 
     path = args.list or args.agent_data / "config/cli.json"
     spec = json.loads(path.read_text()) if path.exists() else {}
-    library = json.loads(LIBRARY.read_text())["tools"]
+    lib = json.loads(LIBRARY.read_text())
+    library = lib["tools"]
+    repos = {**lib.get("apk_repos", {}), **spec.get("apk_repos", {})}
     chosen = set(spec.get("tools", []))
 
     if args.action == "list":
@@ -190,8 +218,8 @@ def main() -> int:
         for rel in copy_logins(spec.get("logins", []), Path.home(), cli_home):
             print(f"login not on host, skipped: {rel}")
     if args.action in ("install", "all"):
-        packages = [c["package"] for c in clis if c["via"] == "apk"]
-        if packages and as_root(args.canopy, "apk add -q --no-cache " + shlex.join(packages)).returncode != 0:
+        script = apk_script(clis, repos)
+        if script and as_root(args.canopy, script).returncode != 0:
             print("apk install FAILED")
         for cli in clis:
             if cli["via"] in ("image", "apk"):

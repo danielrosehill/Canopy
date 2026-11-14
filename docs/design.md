@@ -514,6 +514,10 @@ CLI, out of 3,571 skills, commands and agents in a real catalogue on 2026-11-05.
 | Media set, opt-in | `ffmpeg` (82), `ffprobe`, `imagemagick` (92), `exiftool` (29), `pdftotext`, `pandoc` | A second image tag, because these are large |
 | Added per user | `hf` (37), `modal` (56), `wrangler`, `vercel`, `gcloud`, `op`, `infisical`, anything else | `canopy cli add <name>`, recorded in `agent-data/config/cli.json` |
 
+An `apk` entry can name a third-party Alpine repo (`repo`, defined under `apk_repos`): its signing key is fetched
+and checked against a pinned SHA-256 before `apk add -X <repo>`. That keeps a publisher's own CLIs as signed packages
+rather than ad hoc `uv` installs from git (added 2026-11-14, first repo `danielrosehill`).
+
 Added CLIs install into `agent-data/cli` with `uv tool`, `npm` or a release download, so they survive an
 image update. The library is `config/cli-library.json`. `canopy clis choose` is the picker, `canopy clis install` applies the
 choices in `agent-data/config/cli.json`, and skill `manage-clis` is the agent's way in. It replaces the `canopy cli add`

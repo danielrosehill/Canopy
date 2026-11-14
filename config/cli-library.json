@@ -1,5 +1,8 @@
 {
-  "note": "Tools a user can choose for the cli container. See plugins/canopy-manager/skills/manage-clis. x86-64 URLs. `needs: lan` means the tool only sees the LAN with host networking.",
+  "note": "Tools a user can choose for the cli container. See plugins/canopy-manager/skills/manage-clis. x86-64 URLs. `needs: lan` means the tool only sees the LAN with host networking. An apk tool with `repo` installs from that entry in `apk_repos`: its key is fetched and checked against key_sha256 first.",
+  "apk_repos": {
+    "danielrosehill": { "about": "Daniel Rosehill's CLI tools (github.com/danielrosehill/Alpine-Public-Repo)", "url": "https://apps.danielrosehill.com/alpine/v3.22/main", "key_url": "https://apps.danielrosehill.com/alpine/danielrosehill-apk.rsa.pub", "key_name": "danielrosehill-apk.rsa.pub", "signer_sha256": "ad8378396567f8e81d1ba4debecabb7194eda23962ba4807790f03a93d5c0cdd" }
+  },
   "tools": [
     { "name": "wrangler", "group": "cloud", "about": "Cloudflare Workers, R2, D1, Pages", "via": "npm", "package": "wrangler", "check": "wrangler --version" },
     { "name": "cloudflared", "group": "cloud", "about": "Cloudflare tunnels and Access", "via": "bin", "url": "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64", "check": "cloudflared --version" },
@@ -30,11 +33,15 @@
     { "name": "pandoc", "group": "documents", "about": "Document conversion", "via": "apk", "package": "pandoc-cli", "check": "pandoc --version" },
     { "name": "pdftotext", "group": "documents", "about": "PDF tools (poppler)", "via": "apk", "package": "poppler-utils", "check": "pdftotext -v" },
     { "name": "markitdown", "group": "documents", "about": "Files to markdown", "via": "uv", "package": "markitdown[all]", "check": "markitdown --version" },
+    { "name": "eml-toolkit", "group": "documents", "about": "Email .eml/.mbox to thread JSON, PDF, HTML, Markdown; RTL-safe", "via": "apk", "package": "eml-toolkit", "repo": "danielrosehill", "check": "eml-toolkit --help" },
+    { "name": "typst", "group": "documents", "about": "Typst typesetting to PDF (Alpine package, may trail upstream)", "via": "apk", "package": "typst", "check": "typst --version" },
     { "name": "adb", "group": "devices", "about": "Android devices over the network; USB needs the device passed through", "via": "apk", "package": "android-tools", "check": "adb version" },
     { "name": "sqlite", "group": "data", "about": "SQLite shell", "via": "apk", "package": "sqlite", "check": "sqlite3 --version" },
     { "name": "yq", "group": "data", "about": "YAML like jq", "via": "apk", "package": "yq-go", "check": "yq --version" },
     { "name": "ripgrep", "group": "data", "about": "Fast text search", "via": "apk", "package": "ripgrep", "check": "rg --version" },
     { "name": "age", "group": "secrets", "about": "File encryption", "via": "apk", "package": "age", "check": "age --version" },
-    { "name": "sops", "group": "secrets", "about": "Encrypted config files", "via": "apk", "package": "sops", "check": "sops --version" }
+    { "name": "sops", "group": "secrets", "about": "Encrypted config files", "via": "apk", "package": "sops", "check": "sops --version" },
+    { "name": "orexplorer", "group": "ai-research", "about": "OpenRouter models: capabilities, batch, prices, providers, trending (unofficial)", "via": "apk", "package": "orexplorer", "repo": "danielrosehill", "check": "orexplorer stats --compact" },
+    { "name": "hubexplorer", "group": "ai-research", "about": "Hugging Face Hub models and datasets by task and filter (unofficial)", "via": "apk", "package": "hubexplorer", "repo": "danielrosehill", "check": "hubexplorer --help" }
   ]
 }
