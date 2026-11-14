@@ -191,13 +191,16 @@ def test_extract_context_kinds_names_and_skips(tmp_path):
         "sops/consolidate.md": "---\ntitle: Consolidate plugins\n---\nSteps",
         "preferences/hebrew-repos.md": "---\ndescription: Hebrew repos go to the Hebrish org\n---\nRule",
         "preferences/gone.md": "---\nstatus: retired\n---\n",
+        "context/home-network.md": "# Home network\n\nHosts, addresses and how to reach them.\n",
         "skills/x/SKILL.md": "not context",
     })
     recs = {r["id"]: r for r in ix.extract_context("me", tmp_path)}
-    assert set(recs) == {"habit:me/agent-first", "sop:me/consolidate", "preference:me/hebrew-repos"}
+    assert set(recs) == {"habit:me/agent-first", "sop:me/consolidate", "preference:me/hebrew-repos",
+                         "context:me/home-network"}
     assert recs["habit:me/agent-first"]["description"] == "Write for an agent"
     assert recs["sop:me/consolidate"]["description"] == "Consolidate plugins"
     assert recs["preference:me/hebrew-repos"]["path"] == "preferences/hebrew-repos.md"
+    assert recs["context:me/home-network"]["description"] == "Hosts, addresses and how to reach them."
 
 
 def test_context_sources_join_the_manifest_under_the_context_marketplace(tmp_path, monkeypatch):

@@ -57,13 +57,19 @@ a task returns the rule with the skill, and every device sees the same copy.
 }
 ```
 
-In that repo, each `.md` file under a top-level `habits/`, `sops/` or `preferences/` is one record, of kind
-`habit`, `sop` or `preference`, with id `<kind>:<source>/<name>`:
+The same repo can hold background context: notes about your network, accounts or services that an agent should
+read when a task touches them, such as which host runs what or how a mail account is set up. These used to sit
+in local files listed in CLAUDE.md, where only one device could see them and the index cost context every
+session. Put them under `context/`. They are not rules, so the search describes them as notes to read before
+asking you.
+
+In that repo, each `.md` file under a top-level `habits/`, `sops/`, `preferences/` or `context/` is one record, of
+kind `habit`, `sop`, `preference` or `context`, with id `<kind>:<source>/<name>`:
 
 | Field | From | Note |
 | --- | --- | --- |
 | name | frontmatter `name` or `id`, else the file stem | |
-| description | frontmatter `description`, `summary` or `title`, else the first paragraph | What search matches: state the trigger and the rule |
+| description | frontmatter `description`, `summary` or `title`, else the first paragraph | What search matches: state the trigger and the rule. For `context`, list the hosts, services and tasks it covers |
 | skipped | `README.md`, `INDEX.md`, `archive/` and `templates/` folders, frontmatter `status` archived, retired, superseded, inactive or draft | |
 
 Every source is listed as a plugin in the marketplace `context`, so `search(kind="preference")` or

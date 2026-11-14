@@ -173,8 +173,9 @@ def search(query: str, kind: str | None = None, plugin: str | None = None,
     plugins and MCP servers; `tools` holds the best-matching gateway tools, each with
     how to call it (its native name, or toolbox__call_tool for tools not in your list). Prefer a matching skill: it wraps the tool with the right conventions.
     `results` can also hold the user's standing instructions (kind habit, sop or preference): a matching
-    one is a rule for this task, so `read` it and follow it.
-    kind: plugin | skill | command | agent | mcp | tool | habit | sop | preference.
+    one is a rule for this task, so `read` it and follow it. Kind context is the user's background notes
+    (their network, accounts, services): `read` a matching one before asking the user what it answers.
+    kind: plugin | skill | command | agent | mcp | tool | habit | sop | preference | context.
     marketplace: a configured marketplace name (`context` for the standing instructions).
     `read` an id for full text; for a tool it returns the input schema.
     Hybrid keyword (BM25) and semantic ranking; `degraded` says if semantic is off.

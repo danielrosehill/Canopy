@@ -20,7 +20,7 @@ import numpy as np
 from . import index as ix
 from . import ranking
 
-KINDS = ("plugin", "skill", "command", "agent", "mcp", "tool", "habit", "sop", "preference")
+KINDS = ("plugin", "skill", "command", "agent", "mcp", "tool", "habit", "sop", "preference", "context")
 QUERY_EMBED_TIMEOUT = float(os.environ.get("QUERY_EMBED_TIMEOUT_SEC", "8"))
 # Cosine of the best result, below which a reply says the match is weak. Fused rank scores cannot
 # do this: every query has a first place. 0.60 is for bge-m3; see docs/design.md, "What the agent sees".

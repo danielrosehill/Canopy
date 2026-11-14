@@ -2,7 +2,7 @@
 
 Records are plugins, the skills, commands and agents inside them, the MCP
 servers and tools known to the gateway, and context records (habits, SOPs and
-preferences) from the context sources in `marketplaces.json`. The `catalogue` schema is a cache: everything in
+preferences, and background context) from the context sources in `marketplaces.json`. The `catalogue` schema is a cache: everything in
 it except `reads` (usage history) comes from git and the gateway, so deleting it and
 syncing rebuilds it. Vectors are the costly part, so a record keeps its vector while the
 text that was embedded stays the same.
@@ -168,7 +168,8 @@ def plugin_root(name: str, meta: dict | None) -> Path:
 
 # A context source is a git repo of standing instructions, indexed beside the skills so that the search an
 # agent runs before a task also returns the rules that apply to it. Its top-level directories name the kind.
-CONTEXT_DIRS = {"habits": "habit", "sops": "sop", "preferences": "preference"}
+# `context/` holds background an agent reads when a task touches it (a network, an account, a service), not a rule.
+CONTEXT_DIRS = {"habits": "habit", "sops": "sop", "preferences": "preference", "context": "context"}
 CONTEXT_KINDS = tuple(CONTEXT_DIRS.values())
 CONTEXT_MARKET = "context"   # the marketplace every context source is listed under
 _CONTEXT_SKIP_FILES = {"readme.md", "index.md"}
@@ -247,7 +248,7 @@ def extract(plugin: str, root: Path) -> list[dict]:
 
 
 def extract_context(source: str, root: Path) -> list[dict]:
-    """Records in one context source: every .md under `habits/`, `sops/` or `preferences/`, one record each.
+    """Records in one context source: every .md under `habits/`, `sops/`, `preferences/` or `context/`, one record each.
     The name is frontmatter `name` or `id`, else the file stem; the description is frontmatter `description`,
     `summary` or `title`, else the first paragraph. README.md, INDEX.md, `archive/` folders and files whose
     frontmatter `status` is archived, retired, superseded, inactive or draft are skipped."""
