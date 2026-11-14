@@ -40,7 +40,8 @@ def defaults(config: Path) -> list[dict]:
             {"name": "health", "every": "5m"}, {"name": "backup-data", "every": "1d", "enabled": target},
             {"name": "backup-config", "every": "1h", "enabled": target},
             {"name": "restore-test", "after": "backup-data", "enabled": target},
-            {"name": "storage-expiry", "every": "1d"}, {"name": "tool-refresh", "every": "1d", "enabled": TOOL_REFRESH}]
+            {"name": "storage-expiry", "every": "1d"},
+            {"name": "context-push", "every": "1h", "enabled": bool(os.environ.get("CONTEXT_REMOTE", "").strip())}, {"name": "tool-refresh", "every": "1d", "enabled": TOOL_REFRESH}]
 
 
 _UNITS = {"m": 60, "h": 3600, "d": 86400}
@@ -274,6 +275,13 @@ class CatalogueJobs:
                 return row["summary"]
             time.sleep(self.poll)
         raise TimeoutError(f"no sync finished within {self.wait} s")
+
+    def reindex_user_context(self) -> None:
+        """After a write to the context volume. Fire and forget: a failure leaves it to the next quick pass."""
+        try:
+            self.call("catalogue__sync", {"plugin": os.environ.get("CANOPY_USER_CONTEXT_NAME", "user")})
+        except Exception:  # noqa: BLE001
+            pass
 
     def sync_recent(self) -> str:
         """Fire and forget. With nothing pushed a quick pass writes no `runs` row to wait for."""

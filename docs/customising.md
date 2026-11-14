@@ -7,7 +7,7 @@ Canopy is the public skeleton. Your skills, MCP servers, secrets and settings li
 | You want to add | Put it in | Then run |
 | --- | --- | --- |
 | Skills, private or public | A plugin marketplace repo, listed in `config/marketplaces.json` | `canopy jobs run sync` |
-| Standing instructions (habits, SOPs, preferences) | A git repo, listed under `context` in `config/marketplaces.json` | `canopy jobs run sync` |
+| Standing instructions (habits, SOPs, preferences, background notes) | Your context in Canopy: an agent's `context_write`, or `canopy context put` | Nothing: each write is reindexed |
 | A hosted MCP server | `config/servers.json` | `canopy apply` |
 | Your own MCP server | A service in `compose.override.yaml`, and `config/servers.json` | `canopy up`, then `canopy apply` |
 | Which tools agents see directly | `groups` in `config/servers.json` | `canopy apply` |
@@ -45,26 +45,57 @@ restore from. For anything `canopy` should run beyond this, wrap it in a script 
 
 ## Standing instructions
 
-Rules you want every agent to follow, but only when they apply ("repos about X go in org Y", a procedure for a
-recurring job), do not belong in a user-level CLAUDE.md that loads in full every session. Keep them in a git repo
-and list it as a context source. The catalogue indexes them beside the skills, so the search an agent runs before
-a task returns the rule with the skill, and every device sees the same copy.
+Rules you want every agent to follow only when they apply ("repos about X go in org Y", a procedure for a recurring
+job), and background an agent should read before asking you (your network, accounts, services), do not belong in a
+user-level CLAUDE.md. It loads in full every session, and it lives on one machine. Canopy keeps them for you, and the
+search an agent runs before a task returns the ones that apply, on every device.
+
+### Your context, in Canopy
+
+`$CANOPY_DATA/context` is a git repo that Canopy creates on first start. It is state, so it is writable with or
+without an overlay. Canopy ships the folders, not the content:
+
+| Folder | Kind | For |
+| --- | --- | --- |
+| `habits/` | `habit` | How to work, whatever the task |
+| `sops/` | `sop` | A procedure for a recurring job |
+| `preferences/` | `preference` | A rule with a trigger, including guardrails |
+| `context/` | `context` | Background: read when a task touches it, before asking you |
+
+Agents write to it with the catalogue's `context_write` and `context_delete` tools, the operator with
+`canopy context put|rm`, anything else through `PUT /v1/context/{kind}/{name}`. Every write is a commit and is
+reindexed at once, as the source `user` (record ids such as `preference:user/hebrew-repos`). To move an existing
+CLAUDE.md and its side files in, use the `migrate-context` skill in `canopy-connector`. `CANOPY_CONTEXT_WRITE=false`
+takes the write tools away from agents.
+
+Its copy in the cloud is a git remote:
+
+| Setting | Effect |
+| --- | --- |
+| `CONTEXT_REMOTE` | `owner/repo` or an https URL. An empty volume starts as a clone of it, and the `context-push` job pulls with rebase and pushes every hour. A private repo, normally |
+| `CONTEXT_REMOTE_REF` | The branch, `main` by default |
+| `GITHUB_TOKEN` | Needs write access to that repo |
+
+The API is the only writer. If the remote has changes that do not rebase, `context-push` fails and `/v1/status`
+shows it: nothing is forced. Without a remote the repo is local, and `backup-config` (hourly) and `backup-data`
+(daily) cover it. The remote can hold other folders too: only the four above are indexed.
+
+### More sources
+
+Other git repos of the same shape can be listed as context sources, for example a team's shared rules. They are
+read-only: Canopy fetches them like a plugin.
 
 ```json
 {
   "marketplaces": [ { "name": "my-skills", "repo": "me/my-skills" } ],
-  "context": [ { "name": "my-context", "repo": "me/my-context", "ref": "", "path": "" } ]
+  "context": [ { "name": "team-rules", "repo": "me/team-rules", "ref": "", "path": "" } ]
 }
 ```
 
-The same repo can hold background context: notes about your network, accounts or services that an agent should
-read when a task touches them, such as which host runs what or how a mail account is set up. These used to sit
-in local files listed in CLAUDE.md, where only one device could see them and the index cost context every
-session. Put them under `context/`. They are not rules, so the search describes them as notes to read before
-asking you.
+### Records
 
-In that repo, each `.md` file under a top-level `habits/`, `sops/`, `preferences/` or `context/` is one record, of
-kind `habit`, `sop`, `preference` or `context`, with id `<kind>:<source>/<name>`:
+Each `.md` file under a top-level `habits/`, `sops/`, `preferences/` or `context/` is one record, of kind `habit`,
+`sop`, `preference` or `context`, with id `<kind>:<source>/<name>`:
 
 | Field | From | Note |
 | --- | --- | --- |

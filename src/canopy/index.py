@@ -48,6 +48,10 @@ CORE_GROUP = os.environ.get("CORE_GROUP", "core")
 # The name clients give this gateway, which is the `<client>` in mcp__<client>__<tool>.
 CLIENT_NAME = os.environ.get("CANOPY_CLIENT_NAME", "canopy")
 BODY_CAP = 200_000   # bytes kept per record
+# The user's own context, a git repo on a volume (see usercontext.py). Indexed in place, as the source `user`.
+USER_CONTEXT = Path(os.environ.get("CANOPY_USER_CONTEXT", "/context"))
+USER_CONTEXT_NAME = os.environ.get("CANOPY_USER_CONTEXT_NAME", "user")
+LOCAL = "local:"   # the repo field of a source read in place, never fetched
 # Repositories per GraphQL head query, and queries at once. Measured 2026-11-14 on 314 repos: 50 a call in
 # sequence took 16.5 s (about 2.4 s a call); 25 a call, 8 at once, 2.7 s.
 GRAPHQL_BATCH = 25
@@ -160,6 +164,8 @@ def fetch_clone(repo: str, dest: Path, ref: str | None = None) -> None:
 
 
 def plugin_root(name: str, meta: dict | None) -> Path:
+    if (meta or {}).get("repo", "").startswith(LOCAL):
+        return Path(meta["repo"][len(LOCAL):])
     path = (meta or {}).get("path") or ""
     return clones() / name / path if path else clones() / name
 
@@ -526,6 +532,8 @@ def read_manifests(fetch: bool | set[str] = True) -> tuple[dict[str, dict], list
         errors.append(f"marketplaces.json context: {e}")
         return plugins, errors, healthy
     healthy.add(CONTEXT_MARKET)   # the list is the config itself, so a source not in it is gone
+    if (own := user_context_source()) and USER_CONTEXT_NAME not in plugins:
+        plugins[USER_CONTEXT_NAME] = own
     for c in sources:
         if c["name"] in plugins:
             errors.append(f"context/{c['name']}: name also used by a plugin in "
@@ -574,7 +582,8 @@ def _drop_plugin(db: store.Db, plugin: str) -> None:
 
 
 def _index_plugin(db: store.Db, name: str, meta: dict, head: str, gateway: set[str]) -> int:
-    fetch_clone(meta["repo"], clones() / name, meta.get("ref"))
+    if not meta["repo"].startswith(LOCAL):
+        fetch_clone(meta["repo"], clones() / name, meta.get("ref"))
     root = plugin_root(name, meta)
     if not root.is_dir():
         raise RuntimeError(f"path {meta.get('path')!r} not found in {meta['repo']}")
@@ -768,7 +777,12 @@ def remote_heads(keys: set[Key]) -> tuple[dict[Key, str], dict[Key, str]]:
     errors: dict[Key, str] = {}
     github = []
     for repo, ref in keys:
-        if ref and _SHA.fullmatch(ref):
+        if repo.startswith(LOCAL):
+            try:
+                heads[(repo, ref)] = local_head(Path(repo[len(LOCAL):]))
+            except Exception as e:  # noqa: BLE001
+                errors[(repo, ref)] = str(e)
+        elif ref and _SHA.fullmatch(ref):
             heads[(repo, ref)] = ref
         elif GIT_TOKEN and _REPO.fullmatch(repo):
             github.append((repo, ref))
@@ -787,6 +801,25 @@ def remote_heads(keys: set[Key]) -> tuple[dict[Key, str], dict[Key, str]]:
     with ThreadPoolExecutor(16) as ex:
         list(ex.map(one, [k for k in keys if k not in heads]))
     return heads, errors
+
+
+def local_head(root: Path) -> str:
+    """The commit of a repo read in place. Its working tree is what is indexed, so uncommitted edits
+    count too: the hash of `git status` is added when the tree is dirty."""
+    git = ["git", "-c", f"safe.directory={root}", "-C", str(root)]
+    head = subprocess.run([*git, "rev-parse", "HEAD"], capture_output=True, text=True, timeout=30)
+    if head.returncode:
+        raise RuntimeError(f"{root}: not a git repo with a commit")
+    dirty = subprocess.run([*git, "status", "--porcelain"], capture_output=True, text=True, timeout=30).stdout
+    return head.stdout.strip() + ("+" + hashlib.sha256(dirty.encode()).hexdigest()[:12] if dirty else "")
+
+
+def user_context_source() -> dict | None:
+    """The volume's context, if it is a repo. Listed like a configured context source."""
+    if not (USER_CONTEXT / ".git").exists():
+        return None
+    return {"repo": f"{LOCAL}{USER_CONTEXT}", "ref": None, "path": "", "marketplace": CONTEXT_MARKET,
+            "description": "Your standing instructions and background notes, kept in this Canopy.", "context": True}
 
 
 def _key(meta: dict) -> Key:
@@ -821,7 +854,8 @@ def sync(db: store.Db, only: str | None = None, force: bool = False, full: bool 
     market_heads = {r["name"]: r["head"] for r in db.execute("SELECT name, head FROM marketplaces")}
 
     def checked(meta: dict) -> bool:
-        return bool(GIT_TOKEN) or full or bool(only) or any(meta["repo"] == m["repo"] for m in markets)
+        return (bool(GIT_TOKEN) or full or bool(only) or meta["repo"].startswith(LOCAL)
+                or any(meta["repo"] == m["repo"] for m in markets))
 
     keys = {_key(m) for m in markets}
     keys |= {_key(p) for n, p in local.items() if (n == only if only else checked(p))}

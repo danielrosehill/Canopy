@@ -89,11 +89,13 @@ services:
       RERANK_MODEL: ${RERANK_MODEL:-}
       RERANK_API_KEY: ${RERANK_API_KEY:-}
       RERANK_TIMEOUT_SEC: ${RERANK_TIMEOUT_SEC:-2}
+      CANOPY_CONTEXT_WRITE: ${CANOPY_CONTEXT_WRITE:-true}
     depends_on:
       db:
         condition: service_healthy
     volumes:
       - ${CANOPY_DATA:-${HOME}/canopy/data}/catalogue:/data
+      - ${CANOPY_DATA:-${HOME}/canopy/data}/context:/context:ro
       - ${CANOPY_DATA:-${HOME}/canopy/data}/api:/api:ro
       - ${CANOPY_DATA:-${HOME}/canopy/data}/tokens:/tokens:ro
       - ${CANOPY_AGENT_DATA:-${HOME}/canopy/agent-data}/config:/config:ro
@@ -129,6 +131,9 @@ services:
       CANOPY_STAGE_MAX_MB: ${CANOPY_STAGE_MAX_MB:-256}
       CANOPY_ALERT_WEBHOOK: ${CANOPY_ALERT_WEBHOOK:-}
       CANOPY_TOOL_REFRESH: ${CANOPY_TOOL_REFRESH:-false}
+      CONTEXT_REMOTE: ${CONTEXT_REMOTE:-}           # owner/repo or https URL: the cloud copy of the user's context
+      CONTEXT_REMOTE_REF: ${CONTEXT_REMOTE_REF:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}                # pushes CONTEXT_REMOTE
     # secrets.env only. settings.env feeds compose's ${VAR} substitution, never a container's environment:
     # host-side names such as CANOPY_API_PORT (the published port) mean something else inside (the listen port).
     env_file:
@@ -144,6 +149,7 @@ services:
       - ${CANOPY_AGENT_DATA:-${HOME}/canopy/agent-data}:/agent-data
       - ${CANOPY_DATA:-${HOME}/canopy/data}/backups:/backups
       - ${CANOPY_DATA:-${HOME}/canopy/data}/storage-secrets:/storage-secrets
+      - ${CANOPY_DATA:-${HOME}/canopy/data}/context:/context
     depends_on:
       gateway:
         condition: service_started

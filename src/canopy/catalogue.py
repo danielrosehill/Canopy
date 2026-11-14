@@ -597,6 +597,39 @@ def embed(dry_run: bool = True) -> str:
     return _out(out | {"started": not already})
 
 
+# --- the user's context: writes go through the API, which owns the repo -------------------
+
+CONTEXT_WRITE = os.environ.get("CANOPY_CONTEXT_WRITE", "true").lower() == "true"
+
+
+def _context_api(method: str, path: str, doc: dict | None = None) -> str:
+    import httpx
+    base = os.environ.get("CANOPY_API_URL", "http://api:8090").rstrip("/")
+    token = os.environ.get("CANOPY_API_TOKEN") or ix.API_TOKEN_FILE.read_text().strip()
+    r = httpx.request(method, f"{base}/v1/context{path}", json=doc,
+                      headers={"Authorization": f"Bearer {token}"}, timeout=60)
+    return _out(r.json() if r.content else {"status": r.status_code})
+
+
+if CONTEXT_WRITE and not SCOPED:
+    @tool()
+    def context_write(kind: str, name: str, text: str, description: str = "") -> str:
+        """Save one of the user's standing instructions in Canopy, so every agent on every device finds it
+        through search. Only when the user asks you to remember a rule, procedure or background note.
+        kind: habit (how to work, any task) | sop (a procedure for a recurring job) | preference (a rule on a
+        trigger, including guardrails) | context (background: their network, accounts, services).
+        name: lowercase-with-hyphens. text: markdown; with frontmatter, or pass `description`: the trigger and
+        the rule in one sentence, which is what search matches. Replaces a record of the same kind and name.
+        Every write is a commit, so it can be undone. Show the user what you saved."""
+        return _context_api("PUT", f"/{kind}/{name}", {"text": text, "description": description or None})
+
+    @tool()
+    def context_delete(kind: str, name: str) -> str:
+        """Remove one of the user's standing instructions (kind and name as in `context_write`). Only on the
+        user's request. A commit, so it can be restored from history."""
+        return _context_api("DELETE", f"/{kind}/{name}")
+
+
 # Text content only: a structured copy of the same result costs extra tokens in clients.
 for _t in mcp._tool_manager.list_tools():
     _t.fn_metadata.output_schema = None

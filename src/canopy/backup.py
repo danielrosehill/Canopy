@@ -45,6 +45,7 @@ AGENT_DATA = Path(os.environ.get("CANOPY_AGENT_DATA_DIR", "/agent-data"))
 AGENT_STATE = os.environ.get("CANOPY_AGENT_STATE_DIR", "")
 CONFIG_EXPORT = os.environ.get("CANOPY_CONFIG_EXPORT", "")   # default: config/export.json
 STATE = [Path(p) for p in ("/api", "/admin", "/tokens")]
+CONTEXT = Path(os.environ.get("CANOPY_CONTEXT_DIR", "/context"))   # the user's context: in both backups
 DB_HOST = os.environ.get("BACKUP_DB_HOST", "db")
 OWNERS = {"mcpjungle": "mcpjungle", "canopy": "canopy"}   # database: role, as in db-init.sh
 TIMEOUT = int(os.environ.get("BACKUP_TIMEOUT_SEC", "14400"))
@@ -171,7 +172,7 @@ class Backups:
             shutil.rmtree(self.stage, ignore_errors=True)
             self.stage.mkdir(mode=0o700, parents=True)
             try:
-                state = [p for p in [*self.state, *self.secrets_files] if p.exists()]
+                state = [p for p in [*self.state, CONTEXT, *self.secrets_files] if p.exists()]
                 manifest = {"databases": {n: self.dump(n, self.stage / f"{n}.dump") for n in OWNERS},
                             "files": {str(f): sha256(f) for f in files_under(state)}}
                 (self.stage / "manifest.json").write_text(json.dumps(manifest, indent=1))
@@ -207,6 +208,8 @@ class Backups:
             self.export()
             names = ("config", "skills", "notes", "compose.override.yaml")
             paths = [self.agent_data / n for n in names if (self.agent_data / n).exists()]
+            if CONTEXT.is_dir():
+                paths.append(CONTEXT)
             if self.export_path.exists() and not any(self.export_path.is_relative_to(p) for p in paths):
                 paths.append(self.export_path)
             if not paths:

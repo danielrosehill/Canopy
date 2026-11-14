@@ -1,7 +1,7 @@
 # Canopy connector
 
 The one Canopy plugin to install at user level. It stays small because it loads in every session:
-the MCP connection, three small skills (`find`, `validate` to check and benchmark the connection, and `recommended` to pick plugins from a checklist), the `/skill` command and a prompt hook.
+the MCP connection, four small skills (`find`, `validate` to check and benchmark the connection, `recommended` to pick plugins from a checklist, and `migrate-context` to move your CLAUDE.md rules and notes into Canopy), the `/skill` command and a prompt hook.
 
 ```
 /plugin marketplace add danielrosehill/Canopy

@@ -94,6 +94,23 @@ api_token="$(cat "$CANOPY_DATA/api/token")"
 agent_token="$(canopy token)"
 before="$(canopy servers)"
 
+say "Your context: a write is a commit, indexed and found by search"
+printf 'Proof repos go in the proof org.\n' > "$root/proof-rule.md"
+canopy context put preference proof-rule "$root/proof-rule.md" "Creating a proof repo: use the proof org" \
+  | python3 -c "import json, sys; d = json.load(sys.stdin); assert d['created'] and d['head'], d"
+canopy context | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+assert [r['id'] for r in d['records']] == ['preference:user/proof-rule'], d"
+found=""
+for _ in $(seq 30); do
+  if curl -fsS -H "Authorization: Bearer $api_token" -H 'Content-Type: application/json' \
+       -d '{"query": "creating a proof repo", "kind": "preference"}' "$CANOPY_API_URL/v1/search" \
+       | grep -q 'preference:user/proof-rule'; then found=1; break; fi
+  sleep 2
+done
+[ -n "$found" ] || { echo "the context record was not searchable"; exit 1; }
+
 say "Back up"
 job_ok() {   # a job's latest run, newer than run id $2. Runs are started in the background
   for _ in $(seq 150); do
@@ -141,7 +158,8 @@ assert d['data'] and d['command'] == 'canopy restore --replace', d"
 canopy compose exec -T api python - <<'PY'
 from canopy import gateway as gw
 names = {t["name"] for t in gw.McpClient(f"{gw.GATEWAY_URL}/v0/groups/core/mcp", timeout=20).tools()}
-assert len(names) == 10 and not names & set(gw.ADMIN_TOOLS), sorted(names)
+assert len(names) == 12 and not names & set(gw.ADMIN_TOOLS), sorted(names)
+assert {"catalogue__context_write", "catalogue__context_delete"} <= names, sorted(names)
 PY
 for _ in $(seq 60); do canopy status >/dev/null 2>&1 && break; sleep 2; done   # the sync above is settling
 canopy status | tee /dev/stderr | python3 -c "
@@ -186,6 +204,8 @@ say "Check"
 [ "$(canopy servers)" = "$before" ]
 grep -q "proof skill" "$CANOPY_AGENT_DATA/skills/proof/SKILL.md"
 grep -q "proof note" "$CANOPY_AGENT_DATA/notes/proof.md"
+grep -q "Proof repos go in the proof org" "$CANOPY_DATA/context/preferences/proof-rule.md"
+git -C "$CANOPY_DATA/context" -c safe.directory='*' log --format=%s | grep -q "Add preference proof-rule"
 grep -q "POSTGRES_PASSWORD=proof-postgres" "$CANOPY_AGENT_DATA/secrets.env"
 canopy compose exec -T db sh -c 'PGPASSWORD=proof-canopy psql -h 127.0.0.1 -U canopy -d canopy -Atc "SELECT 1"' >/dev/null
 # The clones are not backed up, so status stays red until the seed's sync has rebuilt them.

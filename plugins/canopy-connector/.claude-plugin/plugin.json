@@ -1,8 +1,10 @@
 {
   "name": "canopy-connector",
-  "version": "0.5.0",
-  "description": "Connect to your Canopy server, find skills on it, and validate and benchmark the connection. The only Canopy plugin to install at user level.",
-  "author": { "name": "Daniel Rosehill" },
+  "version": "0.6.0",
+  "description": "Connect to your Canopy server, find skills on it, move your standing instructions into it, and validate and benchmark the connection. The only Canopy plugin to install at user level.",
+  "author": {
+    "name": "Daniel Rosehill"
+  },
   "license": "MIT",
   "repository": "https://github.com/danielrosehill/Canopy"
 }

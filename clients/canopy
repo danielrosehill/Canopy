@@ -25,6 +25,10 @@
                                     --gateway: the gateway's servers and tools instead
     canopy embed [--run]            what is pending and its cost. --run starts it
     canopy read ID                  one record in full, such as skill:my-plugin/my-skill
+    canopy context                  your habits, SOPs, preferences and notes (in $CANOPY_DATA/context)
+    canopy context push             pull and push CONTEXT_REMOTE now
+    canopy context put KIND NAME FILE [DESCRIPTION]    save a markdown file as a record
+    canopy context rm KIND NAME
     canopy jobs                     the scheduler's jobs and their last runs
     canopy jobs run NAME            run a job now
     canopy jobs runs NAME           recent runs of a job
@@ -69,7 +73,7 @@ REPO = Path(__file__).resolve().parent.parent
 IN_CLI = os.environ.get("CANOPY_IN_CLI") == "1"
 AGENT_FOLDERS = ("config", "skills", "notes", "cli")
 BACKUP_WAIT = 4 * 3600   # as BACKUP_TIMEOUT_SEC
-DATA_FOLDERS = ("api", "admin", "tokens", "postgres", "catalogue", "backups", "storage", "storage-secrets")
+DATA_FOLDERS = ("api", "admin", "tokens", "postgres", "catalogue", "backups", "storage", "storage-secrets", "context")
 CONFIG_EDITS = ("add-server", "remove-server", "set-group", "remove-group", "add-marketplace", "remove-marketplace")
 KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 NOTICES: dict[str, bool] = {}   # each printed once
@@ -684,6 +688,17 @@ def main() -> int:
         flags = {f.removeprefix("--"): True for f in args if f in ("--full", "--force", "--gateway")}
         names = [a for a in args if not a.startswith("--")]
         return show("POST", "/v1/catalogue/sync", {**flags, **({"plugin": names[0]} if names else {})})
+    if cmd == "context":
+        sub = args[0] if args else "list"
+        if sub == "list":
+            return show("GET", "/v1/context")
+        if sub == "push":
+            return show("POST", "/v1/context/push")
+        if sub == "put" and len(args) >= 4:
+            doc = {"text": Path(args[3]).read_text(), **({"description": args[4]} if len(args) > 4 else {})}
+            return show("PUT", f"/v1/context/{args[1]}/{args[2]}", doc)
+        if sub == "rm" and len(args) == 3:
+            return show("DELETE", f"/v1/context/{args[1]}/{args[2]}")
     if cmd == "embed":
         return show("POST", "/v1/embeddings/run") if "--run" in args else show("GET", "/v1/embeddings/pending")
     if cmd == "read" and args:

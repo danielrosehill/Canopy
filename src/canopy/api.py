@@ -28,6 +28,7 @@ from . import store
 from .control import Control, ControlError, write_secret
 from .embedder import Embedder, EmbedError
 from .storage import DEFAULT_EXPIRES, MAX_BYTES, Storage
+from .usercontext import ContextError, UserContext
 
 API_DIR = Path(os.environ.get("CANOPY_API_DIR", "/api"))
 PORT = int(os.environ.get("CANOPY_API_PORT", "8090"))
@@ -62,7 +63,7 @@ class RequireToken(BaseHTTPMiddleware):
 
 def create_app(control: Control, token: str, embedder: Embedder | None = None,
                scheduler: sched.Scheduler | None = None, storage: Storage | None = None,
-               backups: Backups | None = None) -> Starlette:
+               backups: Backups | None = None, context: UserContext | None = None) -> Starlette:
     embedder = embedder or Embedder(primary="", fallback="")
     catalogue = httpx.AsyncClient(base_url=CATALOGUE_URL, timeout=60)   # shared: one pool, not one per request
 
@@ -139,6 +140,34 @@ def create_app(control: Control, token: str, embedder: Embedder | None = None,
         """`backup-data` alone. `canopy update` restarts the stack next, which would cut off a restore-test."""
         need_backups().describe()
         return start_job("backup-data", follow=False)
+
+    def need_context() -> UserContext:
+        if context is None:
+            raise ContextError(503, "the context store is not set up")
+        return context
+
+    async def context_list(request: Request) -> JSONResponse:
+        return await run(request, need_context().listing)
+
+    async def context_read(request: Request) -> JSONResponse:
+        pp = request.path_params
+        return await run(request, need_context().read, pp["kind"], pp["name"])
+
+    async def context_write(request: Request) -> JSONResponse:
+        """JSON {"text": markdown, "description": optional}. Text without frontmatter needs `description`."""
+        pp, doc = request.path_params, await body(request)
+        if extra := set(doc) - {"text", "description"}:
+            raise ControlError(400, f"unknown fields: {sorted(extra)}")
+        if not isinstance(doc.get("text"), str):
+            raise ControlError(400, "needs `text`, the markdown")
+        return await run(request, need_context().write, pp["kind"], pp["name"], doc["text"], doc.get("description"))
+
+    async def context_delete(request: Request) -> JSONResponse:
+        pp = request.path_params
+        return await run(request, need_context().delete, pp["kind"], pp["name"])
+
+    async def context_push(request: Request) -> JSONResponse:
+        return await run(request, need_context().push)
 
     async def body(request: Request) -> dict:
         try:
@@ -267,6 +296,9 @@ def create_app(control: Control, token: str, embedder: Embedder | None = None,
     async def control_error(_: Request, e: ControlError) -> JSONResponse:
         return JSONResponse({"error": str(e)}, status_code=e.status)
 
+    async def context_error(_: Request, e: ContextError) -> JSONResponse:
+        return JSONResponse({"error": str(e)}, status_code=e.status)
+
     async def backup_error(_: Request, e: BackupError) -> JSONResponse:
         return JSONResponse({"error": str(e)}, status_code=409)
 
@@ -316,7 +348,12 @@ def create_app(control: Control, token: str, embedder: Embedder | None = None,
         Route("/v1/backup", run_backup, methods=["POST"]),
         Route("/v1/backup/config", backup_config),
         Route("/v1/backup/plan", backup_plan),
-    ], exception_handlers={ControlError: control_error, BackupError: backup_error, httpx.HTTPError: gateway_error,
+        Route("/v1/context", context_list),
+        Route("/v1/context/push", context_push, methods=["POST"]),
+        Route("/v1/context/{kind}/{name}", context_read),
+        Route("/v1/context/{kind}/{name}", context_write, methods=["PUT"]),
+        Route("/v1/context/{kind}/{name}", context_delete, methods=["DELETE"]),
+    ], exception_handlers={ControlError: control_error, BackupError: backup_error, ContextError: context_error, httpx.HTTPError: gateway_error,
                            Exception: unexpected},
        middleware=[Middleware(RequireToken, token=token)], lifespan=lifespan)
 
@@ -336,14 +373,19 @@ def main() -> None:
     storage.prepare()
     control.extra_checks["storage"] = storage.check
     jobs = sched.CatalogueJobs(db, control._tool_text)
+    context = UserContext(on_change=lambda: jobs.reindex_user_context())
+    try:
+        print(f"context: {context.prepare()} at {context.root}", flush=True)
+    except Exception as e:  # noqa: BLE001 - a bad remote must not stop the API
+        print(f"context: not ready: {e}", flush=True)
     scheduler = sched.Scheduler(db, {"sync": jobs.sync, "sync-recent": jobs.sync_recent,
                                      "gateway-refresh": jobs.gateway_refresh, "embed": jobs.embed, "health": control.health_job,
                                      "tool-refresh": control.refresh_job,
-                                     **backups.actions(), **storage.actions()})
+                                     **backups.actions(), **storage.actions(), **context.actions()})
     control.extra_checks["jobs"] = scheduler.check
     # The jobs need the seed's tokens: wait for its first apply rather than a fixed delay alone.
     threading.Thread(target=scheduler.loop, args=(lambda: control.last_apply is not None,), daemon=True).start()
-    app = create_app(control, load_token(), Embedder(provider_model=model_lookup(db)), scheduler, storage, backups)
+    app = create_app(control, load_token(), Embedder(provider_model=model_lookup(db)), scheduler, storage, backups, context)
     uvicorn.run(app, host=os.environ.get("CANOPY_API_HOST", "0.0.0.0"), port=PORT, log_level="warning")
 
 
