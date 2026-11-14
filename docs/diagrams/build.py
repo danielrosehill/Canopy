@@ -5,7 +5,7 @@
 """Build the Home Canopy and Cloud Canopy posters.
 
 Run: uv run docs/diagrams/build.py. Needs Graphviz, Typst and pdftoppm. Fonts are in fonts/, so nothing is installed.
-Per poster it writes <name>.dot, <name>.pdf (A1, for screens), <name>.png and <name>-print.pdf
+Per poster it writes <name>.dot, <name>.pdf (A1, for screens), <name>.jpg (README preview) and <name>-print.pdf
 (A1 with 3 mm bleed, crop marks, and TrimBox and BleedBox set) and <name>-print-a0.pdf (the same at A0). Layout is in poster.typ.
 Keep the Canopy stack in stack() in step with compose.yaml.
 """
@@ -338,7 +338,7 @@ def main():
         typst(poster, other, diagram, HERE / f"{name}-print.pdf", True)
         set_boxes(HERE / f"{name}-print.pdf")
         scale_to_a0(HERE / f"{name}-print.pdf", HERE / f"{name}-print-a0.pdf")
-        subprocess.run(["pdftoppm", "-png", "-scale-to", "3200", "-singlefile", str(HERE / f"{name}.pdf"), str(HERE / name)],
+        subprocess.run(["pdftoppm", "-jpeg", "-jpegopt", "quality=88", "-scale-to", "3200", "-singlefile", str(HERE / f"{name}.pdf"), str(HERE / name)],
                        check=True)
         report(name)
 

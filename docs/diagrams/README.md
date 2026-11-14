@@ -6,7 +6,7 @@ its alternative.
 | File | For |
 | --- | --- |
 | `<name>.pdf` | Screens. A1 at trim size |
-| `<name>.png` | The README, 3200 px wide |
+| `<name>.jpg` | The README preview, 3200 px wide |
 | `<name>-print.pdf` | Printing. A1, 3 mm bleed, crop marks |
 | `<name>-print-a0.pdf` | Printing. The same poster at A0 |
 | `<name>.dot` | Generated Graphviz source of the diagram |

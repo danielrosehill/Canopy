@@ -46,7 +46,7 @@ as a pair of posters: [print notes](docs/diagrams/README.md).
 
 The gateway on a home server.
 
-[![Home Canopy network diagram](docs/diagrams/home-canopy.png)](docs/diagrams/home-canopy.pdf)
+[![Home Canopy network diagram](docs/diagrams/home-canopy.jpg)](docs/diagrams/home-canopy.pdf)
 
 [PDF](docs/diagrams/home-canopy.pdf) | Print-ready: [A1](docs/diagrams/home-canopy-print.pdf), [A0](docs/diagrams/home-canopy-print-a0.pdf)
 
@@ -54,7 +54,7 @@ The gateway on a home server.
 
 The gateway on a VPS, with a local proxy at home.
 
-[![Cloud Canopy network diagram](docs/diagrams/cloud-canopy.png)](docs/diagrams/cloud-canopy.pdf)
+[![Cloud Canopy network diagram](docs/diagrams/cloud-canopy.jpg)](docs/diagrams/cloud-canopy.pdf)
 
 [PDF](docs/diagrams/cloud-canopy.pdf) | Print-ready: [A1](docs/diagrams/cloud-canopy-print.pdf), [A0](docs/diagrams/cloud-canopy-print-a0.pdf)
 
