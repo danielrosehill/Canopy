@@ -238,6 +238,7 @@ follow, so add only sources you trust.
   including hosted clients such as ChatGPT and claude.ai
 - [Target design](docs/design.md): where this is heading, and the order of work
 - [Add your own things](docs/customising.md): private skills, MCP servers and settings, kept out of a Canopy checkout, and updating
+- [Parallel art](docs/parallel-art.md): other projects solving similar problems, and how Canopy differs
 - [MCP Deployment Architecture](https://github.com/danielrosehill/MCP-Deployment-Architecture): the
   conceptual notes behind this design
 
