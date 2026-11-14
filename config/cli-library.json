@@ -1,5 +1,5 @@
 {
-  "note": "Tools a user can choose for the cli container. See plugins/canopy-manager/skills/manage-clis. x86-64 URLs. `needs: lan` means the tool only sees the LAN with host networking. An apk tool with `repo` installs from that entry in `apk_repos`: its key is fetched and checked against key_sha256 first.",
+  "note": "Tools a user can choose for the cli container. See plugins/canopy-manager/skills/manage-clis. x86-64 URLs. `needs: lan` means the tool only sees the LAN with host networking. An apk tool with `repo` installs from that entry in `apk_repos`: its key is fetched and checked against signer_sha256 first.",
   "apk_repos": {
     "danielrosehill": { "about": "Daniel Rosehill's CLI tools (github.com/danielrosehill/Alpine-Public-Repo)", "url": "https://apps.danielrosehill.com/alpine/v3.22/main", "key_url": "https://apps.danielrosehill.com/alpine/danielrosehill-apk.rsa.pub", "key_name": "danielrosehill-apk.rsa.pub", "signer_sha256": "ad8378396567f8e81d1ba4debecabb7194eda23962ba4807790f03a93d5c0cdd" }
   },
