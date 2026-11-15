@@ -589,11 +589,12 @@ So the aggregator becomes Canopy code: `src/canopy/hub.py`, on the `mcp` SDK alr
   A call to a dead session reconnects once and retries, only when the request was never sent.
 - A group is a scope: the set of servers an identity sees, as the catalogue's scope is a set of
   marketplaces. Out of scope answers the same as absent.
+- Who gets which scope is set by spaces and profiles: see [spaces](spaces.md).
 
 Status on 2026-11-15: **prototype.** `tests/test_hub.py` proves the above against the contract fixture
 over HTTP and an SDK server over stdio (`tests/fixtures/stdio_upstream.py`). Not built yet, in order:
 
-1. The front door: one MCP endpoint per identity, bearer token to scope, listing the catalogue's tools,
+1. The front door: one MCP endpoint, the bearer token picks a [profile](spaces.md) and so the scope, listing the catalogue's tools,
    `call_tool` and the core tools natively, and serving `skills/list` itself.
 2. The catalogue's `gateway_servers` and `gateway_tools` fed from the hub instead of MCPJungle's REST API,
    and the toolbox calling the hub.

@@ -182,6 +182,9 @@ out of date unnoticed. Registering the box directly over the tailnet did the sam
 Separate from gateways, you can run more than one Cloudflare portal in front of a single gateway, for example
 one for shared tools and one that is private to you, each with its own gateway group.
 
+For a household of a few people, each with their own business and some things in common, see
+[spaces](spaces.md): who sees which tools and skills, planned to replace groups.
+
 ## Thin clients
 
 This is the principle the rest follows from. **Clients hold no MCP servers and no authentication for your
