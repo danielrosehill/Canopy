@@ -1,0 +1,10 @@
+{
+  "name": "canopy-habits",
+  "version": "0.1.0",
+  "description": "Your habits and SOPs, kept in your Canopy instead of local files. Capture a rule from a loose sentence, adopt example habits, write and run SOPs, and keep the one small generated block in CLAUDE.md in step with them.",
+  "author": {
+    "name": "Daniel Rosehill"
+  },
+  "license": "MIT",
+  "repository": "https://github.com/danielrosehill/Canopy"
+}

@@ -65,7 +65,9 @@ without an overlay. Canopy ships the folders, not the content:
 Agents write to it with the catalogue's `context_write` and `context_delete` tools, the operator with
 `canopy context put|rm`, anything else through `PUT /v1/context/{kind}/{name}`. Every write is a commit and is
 reindexed at once, as the source `user` (record ids such as `preference:user/hebrew-repos`). To move an existing
-CLAUDE.md and its side files in, use the `migrate-context` skill in `canopy-connector`. `CANOPY_CONTEXT_WRITE=false`
+CLAUDE.md and its side files in, use the `migrate-context` skill in `canopy-connector`. To keep habits and SOPs
+afterwards (capture a rule, adopt example habits, and sync the small generated block in CLAUDE.md), use the
+`canopy-habits` plugin. `CANOPY_CONTEXT_WRITE=false`
 takes the write tools away from agents.
 
 Its copy in the cloud is a git remote:

@@ -13,6 +13,11 @@
       "description": "Connect to your Canopy server, find skills on it, move your standing instructions into it, and validate and benchmark the connection. The only Canopy plugin to install at user level."
     },
     {
+      "name": "canopy-habits",
+      "source": "./plugins/canopy-habits",
+      "description": "Your habits and SOPs in Canopy: capture a dictated rule, adopt example habits, write and run SOPs, and keep the CLAUDE.md block in step."
+    },
+    {
       "name": "canopy-manager",
       "source": "./plugins/canopy-manager",
       "description": "Set up, run and diagnose a Canopy server. Deploy it on the server; add it at user level only while setting up."

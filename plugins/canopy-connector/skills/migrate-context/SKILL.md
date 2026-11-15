@@ -48,5 +48,9 @@ to search on. Those stay in CLAUDE.md.
 
 ## Later
 
-To save a new rule from any device, `catalogue__context_write` it and show the user what was saved. The server
+Habits and SOPs are best kept with the `canopy-habits` plugin: `capture-habit` turns a loosely worded rule into the right
+record, and `sync-habits` keeps one small generated block in CLAUDE.md pointing at them. It also adopts example habits
+from a library.
+
+To save any other rule from any device, `catalogue__context_write` it and show the user what was saved. The server
 pushes to `CONTEXT_REMOTE` hourly if one is set (`canopy context push` to do it now), and both backups cover it.

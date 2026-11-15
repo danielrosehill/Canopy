@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/danielrosehill/Canopy/plugins/canopy-habits/schema/sop.schema.json",
+  "title": "SOP front matter",
+  "description": "The YAML front matter of a single SOP file. Only these fields are indexed; everything below the front matter is body text read solely when the SOP is selected.",
+  "type": "object",
+  "required": ["id", "title", "trigger", "last_verified"],
+  "additionalProperties": true,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "description": "Kebab-case identifier. Must equal the filename without .md."
+    },
+    "title": {
+      "type": "string",
+      "minLength": 4,
+      "description": "What the procedure does, in one line, as a verb phrase."
+    },
+    "trigger": {
+      "type": "string",
+      "minLength": 8,
+      "description": "The situation in which this SOP applies. This is the field the dispatcher matches against, so write it as the circumstance, not the action."
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
+      "description": "Free-form grouping labels."
+    },
+    "autonomy": {
+      "enum": ["auto", "confirm", "confirm-each", "manual"],
+      "default": "confirm",
+      "description": "How much of this SOP may be executed without asking. auto = run it through; confirm = one confirmation before the first irreversible step; confirm-each = ask at every step that changes something; manual = read it out to the user and let them drive."
+    },
+    "last_verified": {
+      "type": "string",
+      "format": "date",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "description": "Absolute date this procedure was last known to work end to end. Not the date the file was edited."
+    },
+    "frequency": {
+      "enum": ["daily", "weekly", "monthly", "quarterly", "yearly", "occasional", "rare"],
+      "description": "Roughly how often it runs. Feeds staleness judgement: a monthly SOP unverified for a year is suspect in a way a rare one is not."
+    },
+    "supersedes": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "IDs of retired SOPs this one replaces."
+    },
+    "requires": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Tools, CLIs, credentials or MCP servers that must be present. Names only — never values."
+    }
+  }
+}
