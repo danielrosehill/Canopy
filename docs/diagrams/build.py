@@ -21,7 +21,7 @@ HERE = Path(__file__).parent
 FONT = "Atkinson Hyperlegible"
 BUILD = HERE / ".build"
 MM = 72 / 25.4
-DATE = "2026-11-05"
+DATE = "2026-11-15"
 TAGLINE = "Your AI universe under one roof"
 CREDIT = "By Daniel Rosehill with Claude Opus 5.5"
 LINK = {  # class: (colour, style, width, legend)
@@ -33,13 +33,14 @@ LINK = {  # class: (colour, style, width, legend)
     "out":    ("#37474f", "solid", 1.2, "Outbound HTTPS"),
     "ctl":    ("#607d8b", "solid", 1.1, "Internal: control API, database"),
     "file":   ("#00838f", "solid", 1.6, "Files: S3 and presigned URLs"),
+    "proto":  ("#ad1457", "dashed", 1.8, "Prototype, not in compose yet: front door and hub"),
     "idea":   ("#c62828", "dashed", 1.8, "Not built: the anti-hairpin route"),
 }
 ZONE = {"internet": "#f5f5f5", "cf": "#fff3e0", "ts": "#e3f2fd", "site": "#e8f5e9", "host": "#f1f8e9",
         "stack": "#dcedc8", "cloud": "#e1f5fe", "oai": "#f3e5f5", "client": "#fafafa"}
 
 
-KEY = {"gateway", "catalogue", "toolbox", "storage", "proxy", "mesh", "portal"}
+KEY = {"gateway", "catalogue", "toolbox", "storage", "proxy", "mesh", "portal", "front", "hub"}
 TITLE_PT, KEY_PT, SUB_PT, EDGE_PT = 20, 26, 16, 16
 
 
@@ -69,10 +70,13 @@ def e(a, b, kind, label="", **kw):
 def stack(zone_label):
     """The compose stack. Dashed nodes are opt-in profiles."""
     return zone("stack", zone_label, "stack",
-        n("gateway", "gateway", "MCPJungle :8080<br/>/v0/groups/core/mcp<br/>/v0/groups/hosted/mcp", "#aed581"),
-        n("catalogue", "catalogue", "skills index, BM25 + vectors"),
+        n("gateway", "gateway", "MCPJungle :8080<br/>/v0/groups/core/mcp<br/>/v0/groups/hosted/mcp<br/>the hub replaces it", "#aed581"),
+        n("catalogue", "catalogue", "skills, tools and your context<br/>BM25 + vectors, rerank"),
+        n("context", "context", "habits, SOPs, preferences, notes<br/>git repo on a volume"),
+        n("front", "front door", "one MCP endpoint per person<br/>token names a profile (Spaces)<br/>prototype", "#f8bbd0", dashed=True),
+        n("hub", "hub", "Canopy's own aggregator<br/>keys per space, no groups<br/>prototype", "#f8bbd0", dashed=True),
         n("toolbox", "toolbox", "long-tail tools on demand"),
-        n("api", "api", "control API :8090<br/>scheduler, backup, staging"),
+        n("api", "api", "control API :8090<br/>scheduler, backup, staging,<br/>context writes"),
         n("db", "db", "Postgres + pgvector"),
         n("seed", "seed", "one-shot, applies config"),
         n("cli", "cli", "gh, aws, rclone, restic<br/>logins stay here"),
@@ -93,7 +97,10 @@ def stack_links():
         e("api", "db", "ctl"), e("catalogue", "db", "ctl", constraint="false"), e("gateway", "db", "ctl", constraint="false"),
         e("catalogue", "api", "ctl", "embeddings", constraint="false"),
         e("api", "ollama", "ctl"),
+        e("api", "context", "ctl", "writes: every write a commit"), e("catalogue", "context", "ctl", "indexes, read-only", constraint="false"),
         e("cfd", "gateway", "cf"), e("tsc", "gateway", "ts"),
+        e("tsc", "front", "proto", "one endpoint, scoped"), e("front", "catalogue", "proto", "scoped search"),
+        e("front", "hub", "proto", "call_tool"),
     ]
 
 
@@ -123,7 +130,9 @@ def cloud_services():
         n("apis", "Cloud APIs", "Gemini, image and video models"),
         n("saas", "Hosted MCP servers", "SaaS upstreams"),
         n("embed", "Embeddings and rerank", "hosted fallback, optional"),
-        n("s3", "Off-site S3", "restic backups"))
+        n("s3", "Off-site S3", "restic backups"),
+        n("ctxremote", "Context remote", "GitHub repo, the cloud copy<br/>of your context, optional", dashed=True),
+        n("overlay", "Config overlay", "git repo: servers, marketplaces,<br/>settings, optional", dashed=True))
 
 
 def client_links():
@@ -142,7 +151,9 @@ def outbound_links():
     return [
         e("catalogue", "git", "out", "clone"), e("catalogue", "embed", "out", "rerank"), e("api", "embed", "out", "embed"),
         e("gateway", "saas", "mcp"), e("localmcp", "apis", "out", "tools call out"), e("cli", "apis", "out"),
-        e("api", "s3", "out", "restic"),
+        e("api", "s3", "out", "restic"), e("api", "ctxremote", "out", "context-push"),
+        e("oper", "overlay", "out", "canopy up pulls config"),
+        e("hub", "saas", "proto", constraint="false"),
         e("mesh", "api", "file", "stage a file: needs the API token"),
         e("api", "storage", "file", "stage"),
         e("storage", "localmcp", "file", "tool fetches by presigned URL", constraint="false"),
@@ -158,7 +169,7 @@ def legend(used):
     rows = "".join(f'<TR>{sample(c, s)}<TD ALIGN="LEFT">{t}</TD></TR>' for k, (c, s, _, t) in LINK.items() if k in used)
     return ('legend [shape=plaintext, fontsize=18, label=<<TABLE BORDER="1" COLOR="#90a4ae" CELLBORDER="0" CELLSPACING="3" CELLPADDING="3">'
             f'<TR><TD COLSPAN="2" ALIGN="LEFT"><B>Key</B></TD></TR>{rows}'
-            '<TR><TD ALIGN="LEFT">Dashed box</TD><TD ALIGN="LEFT">Opt-in compose profile, or optional</TD></TR></TABLE>>];')
+            '<TR><TD ALIGN="LEFT">Dashed box</TD><TD ALIGN="LEFT">Opt-in compose profile, or optional; pink: prototype</TD></TR></TABLE>>];')
 
 
 def graph(nodesep, body):
@@ -198,6 +209,7 @@ def home():
             *stack_links(), *client_links(), *outbound_links(),
             e("oper", "api", "ctl", "control API"), e("oper", "cli", "ctl", "canopy run"),
             e("gateway", "localmcp", "mcp", "registered upstreams"), *local_links("localmcp"),
+            e("hub", "localmcp", "proto", "a session per account", constraint="false"),
             e("gateway", "boxmcp", "ts", "upstream over the tailnet"),
             e("cfedge", "vpscfd", "cf", "its own hostnames"), e("vpscfd", "vpsapps", "cf"), e("boxmcp", "vpsapps", "lan"),
             e("gateway", "sitegw", "ts", "one upstream"), e("sitegw", "sitetools", "lan")]
@@ -221,6 +233,7 @@ def cloud():
             e("oper", "api", "ctl", "control API"), e("oper", "cli", "ctl", "canopy run"),
             e("athome", "mesh", "ts"),
             e("gateway", "localmcp", "mcp", "registered upstreams"),
+            e("hub", "localmcp", "proto", "a session per account", constraint="false"),
             e("gateway", "boxmcp", "ts", "upstream over the tailnet"),
             e("gateway", "proxy", "ts", "one upstream, every local call: proxy dials out to the tailnet"),
             e("proxy", "proxymcp", "mcp"), *local_links("proxymcp"),

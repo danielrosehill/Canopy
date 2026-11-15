@@ -3,7 +3,7 @@ rankdir=LR; compound=true; newrank=true; nodesep=0.55; ranksep=0.6; splines=true
 fontname="Atkinson Hyperlegible";
 node [shape=box, fontname="Atkinson Hyperlegible", fontsize=20, color="#37474f", margin="0.12,0.07"];
 edge [fontname="Atkinson Hyperlegible", fontsize=16, arrowsize=0.8];
-legend [shape=plaintext, fontsize=18, label=<<TABLE BORDER="1" COLOR="#90a4ae" CELLBORDER="0" CELLSPACING="3" CELLPADDING="3"><TR><TD COLSPAN="2" ALIGN="LEFT"><B>Key</B></TD></TR><TR><TD ALIGN="LEFT"><FONT COLOR="#1b5e20"><B>———</B></FONT></TD><TD ALIGN="LEFT">MCP over HTTP, with a token</TD></TR><TR><TD ALIGN="LEFT"><FONT COLOR="#1565c0"><B>———</B></FONT></TD><TD ALIGN="LEFT">Tailscale (WireGuard)</TD></TR><TR><TD ALIGN="LEFT"><FONT COLOR="#e65100"><B>———</B></FONT></TD><TD ALIGN="LEFT">Cloudflare: OAuth, Access, tunnel</TD></TR><TR><TD ALIGN="LEFT"><FONT COLOR="#6a1b9a"><B>- - - -</B></FONT></TD><TD ALIGN="LEFT">OpenAI tunnel</TD></TR><TR><TD ALIGN="LEFT"><FONT COLOR="#7cb342"><B>———</B></FONT></TD><TD ALIGN="LEFT">Local network: API or SSH</TD></TR><TR><TD ALIGN="LEFT"><FONT COLOR="#37474f"><B>———</B></FONT></TD><TD ALIGN="LEFT">Outbound HTTPS</TD></TR><TR><TD ALIGN="LEFT"><FONT COLOR="#607d8b"><B>———</B></FONT></TD><TD ALIGN="LEFT">Internal: control API, database</TD></TR><TR><TD ALIGN="LEFT"><FONT COLOR="#00838f"><B>———</B></FONT></TD><TD ALIGN="LEFT">Files: S3 and presigned URLs</TD></TR><TR><TD ALIGN="LEFT"><FONT COLOR="#c62828"><B>- - - -</B></FONT></TD><TD ALIGN="LEFT">Not built: the anti-hairpin route</TD></TR><TR><TD ALIGN="LEFT">Dashed box</TD><TD ALIGN="LEFT">Opt-in compose profile, or optional</TD></TR></TABLE>>];
+legend [shape=plaintext, fontsize=18, label=<<TABLE BORDER="1" COLOR="#90a4ae" CELLBORDER="0" CELLSPACING="3" CELLPADDING="3"><TR><TD COLSPAN="2" ALIGN="LEFT"><B>Key</B></TD></TR><TR><TD ALIGN="LEFT"><FONT COLOR="#1b5e20"><B>———</B></FONT></TD><TD ALIGN="LEFT">MCP over HTTP, with a token</TD></TR><TR><TD ALIGN="LEFT"><FONT COLOR="#1565c0"><B>———</B></FONT></TD><TD ALIGN="LEFT">Tailscale (WireGuard)</TD></TR><TR><TD ALIGN="LEFT"><FONT COLOR="#e65100"><B>———</B></FONT></TD><TD ALIGN="LEFT">Cloudflare: OAuth, Access, tunnel</TD></TR><TR><TD ALIGN="LEFT"><FONT COLOR="#6a1b9a"><B>- - - -</B></FONT></TD><TD ALIGN="LEFT">OpenAI tunnel</TD></TR><TR><TD ALIGN="LEFT"><FONT COLOR="#7cb342"><B>———</B></FONT></TD><TD ALIGN="LEFT">Local network: API or SSH</TD></TR><TR><TD ALIGN="LEFT"><FONT COLOR="#37474f"><B>———</B></FONT></TD><TD ALIGN="LEFT">Outbound HTTPS</TD></TR><TR><TD ALIGN="LEFT"><FONT COLOR="#607d8b"><B>———</B></FONT></TD><TD ALIGN="LEFT">Internal: control API, database</TD></TR><TR><TD ALIGN="LEFT"><FONT COLOR="#00838f"><B>———</B></FONT></TD><TD ALIGN="LEFT">Files: S3 and presigned URLs</TD></TR><TR><TD ALIGN="LEFT"><FONT COLOR="#ad1457"><B>- - - -</B></FONT></TD><TD ALIGN="LEFT">Prototype, not in compose yet: front door and hub</TD></TR><TR><TD ALIGN="LEFT"><FONT COLOR="#c62828"><B>- - - -</B></FONT></TD><TD ALIGN="LEFT">Not built: the anti-hairpin route</TD></TR><TR><TD ALIGN="LEFT">Dashed box</TD><TD ALIGN="LEFT">Opt-in compose profile, or optional; pink: prototype</TD></TR></TABLE>>];
 subgraph cluster_own { label=<<B>Your own devices</B>>; labeljust=l; style="rounded,filled"; fillcolor="#fafafa"; color="#78909c"; fontsize=23;
 cc [label=<<B>Claude Code</B><BR/><FONT POINT-SIZE="16" COLOR="#1c2b33">canopy-connector plugin:<br/>one connection, find, validate, /skill</FONT>>, style="rounded,filled", fillcolor="white"];
 athome [label=<<B>Claude Code at home</B><BR/><FONT POINT-SIZE="16" COLOR="#1c2b33">same connector, on the home network</FONT>>, style="rounded,filled", fillcolor="white"];
@@ -25,10 +25,13 @@ mesh [label=<<B><FONT POINT-SIZE="26">Tailscale mesh</FONT></B><BR/><FONT POINT-
 }
 subgraph cluster_vps { label=<<B>Cloud VPS: Docker host</B>>; labeljust=l; style="rounded,filled"; fillcolor="#e1f5fe"; color="#78909c"; fontsize=23;
 subgraph cluster_stack { label=<<B>Canopy stack</B>>; labeljust=l; style="rounded,filled"; fillcolor="#dcedc8"; color="#78909c"; fontsize=23;
-gateway [label=<<B><FONT POINT-SIZE="26">gateway</FONT></B><BR/><FONT POINT-SIZE="16" COLOR="#1c2b33">MCPJungle :8080<br/>/v0/groups/core/mcp<br/>/v0/groups/hosted/mcp</FONT>>, style="rounded,filled", fillcolor="#aed581"];
-catalogue [label=<<B><FONT POINT-SIZE="26">catalogue</FONT></B><BR/><FONT POINT-SIZE="16" COLOR="#1c2b33">skills index, BM25 + vectors</FONT>>, style="rounded,filled", fillcolor="white"];
+gateway [label=<<B><FONT POINT-SIZE="26">gateway</FONT></B><BR/><FONT POINT-SIZE="16" COLOR="#1c2b33">MCPJungle :8080<br/>/v0/groups/core/mcp<br/>/v0/groups/hosted/mcp<br/>the hub replaces it</FONT>>, style="rounded,filled", fillcolor="#aed581"];
+catalogue [label=<<B><FONT POINT-SIZE="26">catalogue</FONT></B><BR/><FONT POINT-SIZE="16" COLOR="#1c2b33">skills, tools and your context<br/>BM25 + vectors, rerank</FONT>>, style="rounded,filled", fillcolor="white"];
+context [label=<<B>context</B><BR/><FONT POINT-SIZE="16" COLOR="#1c2b33">habits, SOPs, preferences, notes<br/>git repo on a volume</FONT>>, style="rounded,filled", fillcolor="white"];
+front [label=<<B><FONT POINT-SIZE="26">front door</FONT></B><BR/><FONT POINT-SIZE="16" COLOR="#1c2b33">one MCP endpoint per person<br/>token names a profile (Spaces)<br/>prototype</FONT>>, style="rounded,filled,dashed", fillcolor="#f8bbd0"];
+hub [label=<<B><FONT POINT-SIZE="26">hub</FONT></B><BR/><FONT POINT-SIZE="16" COLOR="#1c2b33">Canopy's own aggregator<br/>keys per space, no groups<br/>prototype</FONT>>, style="rounded,filled,dashed", fillcolor="#f8bbd0"];
 toolbox [label=<<B><FONT POINT-SIZE="26">toolbox</FONT></B><BR/><FONT POINT-SIZE="16" COLOR="#1c2b33">long-tail tools on demand</FONT>>, style="rounded,filled", fillcolor="white"];
-api [label=<<B>api</B><BR/><FONT POINT-SIZE="16" COLOR="#1c2b33">control API :8090<br/>scheduler, backup, staging</FONT>>, style="rounded,filled", fillcolor="white"];
+api [label=<<B>api</B><BR/><FONT POINT-SIZE="16" COLOR="#1c2b33">control API :8090<br/>scheduler, backup, staging,<br/>context writes</FONT>>, style="rounded,filled", fillcolor="white"];
 db [label=<<B>db</B><BR/><FONT POINT-SIZE="16" COLOR="#1c2b33">Postgres + pgvector</FONT>>, style="rounded,filled", fillcolor="white"];
 seed [label=<<B>seed</B><BR/><FONT POINT-SIZE="16" COLOR="#1c2b33">one-shot, applies config</FONT>>, style="rounded,filled", fillcolor="white"];
 cli [label=<<B>cli</B><BR/><FONT POINT-SIZE="16" COLOR="#1c2b33">gh, aws, rclone, restic<br/>logins stay here</FONT>>, style="rounded,filled", fillcolor="white"];
@@ -65,6 +68,8 @@ apis [label=<<B>Cloud APIs</B><BR/><FONT POINT-SIZE="16" COLOR="#1c2b33">Gemini,
 saas [label=<<B>Hosted MCP servers</B><BR/><FONT POINT-SIZE="16" COLOR="#1c2b33">SaaS upstreams</FONT>>, style="rounded,filled", fillcolor="white"];
 embed [label=<<B>Embeddings and rerank</B><BR/><FONT POINT-SIZE="16" COLOR="#1c2b33">hosted fallback, optional</FONT>>, style="rounded,filled", fillcolor="white"];
 s3 [label=<<B>Off-site S3</B><BR/><FONT POINT-SIZE="16" COLOR="#1c2b33">restic backups</FONT>>, style="rounded,filled", fillcolor="white"];
+ctxremote [label=<<B>Context remote</B><BR/><FONT POINT-SIZE="16" COLOR="#1c2b33">GitHub repo, the cloud copy<br/>of your context, optional</FONT>>, style="rounded,filled,dashed", fillcolor="white"];
+overlay [label=<<B>Config overlay</B><BR/><FONT POINT-SIZE="16" COLOR="#1c2b33">git repo: servers, marketplaces,<br/>settings, optional</FONT>>, style="rounded,filled,dashed", fillcolor="white"];
 }
 gateway -> catalogue [color="#1b5e20", style="solid", penwidth="1.8", fontcolor="#1b5e20", label="core group"];
 gateway -> toolbox [color="#1b5e20", style="solid", penwidth="1.8", fontcolor="#1b5e20", label="core group"];
@@ -77,8 +82,13 @@ catalogue -> db [color="#607d8b", style="solid", penwidth="1.1", fontcolor="#374
 gateway -> db [color="#607d8b", style="solid", penwidth="1.1", fontcolor="#37474f", constraint="false"];
 catalogue -> api [color="#607d8b", style="solid", penwidth="1.1", fontcolor="#37474f", constraint="false", label="embeddings"];
 api -> ollama [color="#607d8b", style="solid", penwidth="1.1", fontcolor="#37474f"];
+api -> context [color="#607d8b", style="solid", penwidth="1.1", fontcolor="#37474f", label="writes: every write a commit"];
+catalogue -> context [color="#607d8b", style="solid", penwidth="1.1", fontcolor="#37474f", constraint="false", label="indexes, read-only"];
 cfd -> gateway [color="#e65100", style="solid", penwidth="1.8", fontcolor="#e65100"];
 tsc -> gateway [color="#1565c0", style="solid", penwidth="1.8", fontcolor="#1565c0"];
+tsc -> front [color="#ad1457", style="dashed", penwidth="1.8", fontcolor="#ad1457", label="one endpoint, scoped"];
+front -> catalogue [color="#ad1457", style="dashed", penwidth="1.8", fontcolor="#ad1457", label="scoped search"];
+front -> hub [color="#ad1457", style="dashed", penwidth="1.8", fontcolor="#ad1457", label="call_tool"];
 cc -> mesh [color="#1565c0", style="solid", penwidth="1.8", fontcolor="#1565c0"];
 pick -> mesh [color="#1565c0", style="solid", penwidth="1.8", fontcolor="#1565c0"];
 webui -> mesh [color="#1565c0", style="solid", penwidth="1.8", fontcolor="#1565c0"];
@@ -98,6 +108,9 @@ gateway -> saas [color="#1b5e20", style="solid", penwidth="1.8", fontcolor="#1b5
 localmcp -> apis [color="#37474f", style="solid", penwidth="1.2", fontcolor="#37474f", label="tools call out"];
 cli -> apis [color="#37474f", style="solid", penwidth="1.2", fontcolor="#37474f"];
 api -> s3 [color="#37474f", style="solid", penwidth="1.2", fontcolor="#37474f", label="restic"];
+api -> ctxremote [color="#37474f", style="solid", penwidth="1.2", fontcolor="#37474f", label="context-push"];
+oper -> overlay [color="#37474f", style="solid", penwidth="1.2", fontcolor="#37474f", label="canopy up pulls config"];
+hub -> saas [color="#ad1457", style="dashed", penwidth="1.8", fontcolor="#ad1457", constraint="false"];
 mesh -> api [color="#00838f", style="solid", penwidth="1.6", fontcolor="#00838f", label="stage a file: needs the API token"];
 api -> storage [color="#00838f", style="solid", penwidth="1.6", fontcolor="#00838f", label="stage"];
 storage -> localmcp [color="#00838f", style="solid", penwidth="1.6", fontcolor="#00838f", constraint="false", label="tool fetches by presigned URL"];
@@ -105,6 +118,7 @@ oper -> api [color="#607d8b", style="solid", penwidth="1.1", fontcolor="#37474f"
 oper -> cli [color="#607d8b", style="solid", penwidth="1.1", fontcolor="#37474f", label="canopy run"];
 athome -> mesh [color="#1565c0", style="solid", penwidth="1.8", fontcolor="#1565c0"];
 gateway -> localmcp [color="#1b5e20", style="solid", penwidth="1.8", fontcolor="#1b5e20", label="registered upstreams"];
+hub -> localmcp [color="#ad1457", style="dashed", penwidth="1.8", fontcolor="#ad1457", constraint="false", label="a session per account"];
 gateway -> boxmcp [color="#1565c0", style="solid", penwidth="1.8", fontcolor="#1565c0", label="upstream over the tailnet"];
 gateway -> proxy [color="#1565c0", style="solid", penwidth="1.8", fontcolor="#1565c0", label="one upstream, every local call: proxy dials out to the tailnet"];
 proxy -> proxymcp [color="#1b5e20", style="solid", penwidth="1.8", fontcolor="#1b5e20"];

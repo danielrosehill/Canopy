@@ -17,9 +17,9 @@ Both sizes are ready to print. Choose by how far away people will stand.
 
 | Printed type, in points | Home, A1 | Cloud, A1 | Home, A0 | Cloud, A0 |
 | --- | --- | --- | --- | --- |
-| Key components, such as the gateway | 18 | 16 | 26 | 23 |
-| Other box names | 14 | 12 | 20 | 18 |
-| Connection labels and small print | 11 | 10 | 16 | 14 |
+| Key components, such as the gateway | 16 | 13 | 22 | 19 |
+| Other box names | 12 | 10 | 17 | 15 |
+| Connection labels and small print | 10 | 8 | 14 | 12 |
 | "What to look at" list | 22 | 22 | 31 | 31 |
 
 `build.py` prints the diagram rows on every build.
@@ -57,5 +57,8 @@ uv run docs/diagrams/build.py
 Needs Graphviz, Typst and `pdftoppm`. Fonts are in `fonts/` (Atkinson Hyperlegible for reading, Fredoka for titles), under the SIL Open Font License, and are used without
 installing them. `build.py` holds the components and connections, and `poster.typ` holds the layout.
 
-The Canopy stack in `build.py` was checked against `compose.yaml` and the source on 2026-11-05. Change one
+The Canopy stack in `build.py` was checked against `compose.yaml` and the source on 2026-11-15. Since then the posters also show
+the context volume and its GitHub remote, the config overlay, and, as pink dashed boxes, the front door and hub, which are
+prototypes (`src/canopy/front.py`, `src/canopy/hub.py`), not compose services yet. Docker Hub and the alert webhook are left off
+for space. Change one
 when the other changes. Update `DATE` in `build.py` when you do.
