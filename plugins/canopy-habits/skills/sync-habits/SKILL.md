@@ -15,8 +15,9 @@ with one summary line per active habit (triggered ones grouped under "These appl
 
 `catalogue__list(kind="habit", marketplace="context")` and `kind="sop"` for the ids (retired and archived records are not
 indexed, so they drop out). Then `catalogue__read` all ids in one call. Build a records file
-`{"habits": [{"name", "text"}], "sops": [{"name", "text"}]}` with each record's frontmatter (the block reads nothing
-below it, so the body can be left out and the file stays small).
+`{"habits": [{"name", "text"}], "sops": [{"name", "text"}]}`. Habits can be frontmatter only (the block reads nothing
+below it, so the file stays small). SOPs need their full text: validation rejects an SOP with no `## Steps` section,
+and then nothing syncs. Skip non-record files such as `README` and `INDEX` (first used 2026-11-15).
 
 ## 2. Find the targets and preview
 
