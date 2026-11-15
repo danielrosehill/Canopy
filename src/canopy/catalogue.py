@@ -29,9 +29,10 @@ from . import gateway as gw
 from . import index as ix
 from . import ranking
 from . import scheduler
-from .retrieval import (SCOPED, SEARCH_LIMIT, Scope, Search, current_scope, filters as _filters, scope as _scope,
+from .retrieval import (SCOPED, SEARCH_LIMIT, Search, current_scope, filters as _filters, scope as _scope,
                         summary as _summary, use_scope)
 from .skills_ext import Skills
+from .spaces import resolve_scope
 
 # Reachable only on the stack's internal network; the gateway is the front door.
 _security = TransportSecuritySettings(
@@ -676,7 +677,11 @@ def _scoped_call(body: dict) -> dict:
         raise ValueError("this catalogue is scoped by its environment, so it takes no scope from a caller")
     if "scope" not in body:
         raise ValueError("scope is required: an unscoped call does not come through this route")
-    sc = Scope.from_dict(body["scope"]) if body["scope"] is not None else None   # None: a single-profile install
+    sc = None   # None: a single-profile install, which sees everything
+    if body["scope"] is not None:
+        plugins = [(r["name"], r["marketplace"] or "") for r in db.execute("SELECT name, marketplace FROM plugins")]
+        tools = [r["name"] for r in db.execute("SELECT name FROM records WHERE kind = 'tool'")]
+        sc = resolve_scope(body["scope"], plugins, tools)
     with use_scope(sc):
         if body.get("op") == "skills":
             return {"reply": skills.handle(body.get("message") or {})}

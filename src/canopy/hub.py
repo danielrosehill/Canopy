@@ -14,8 +14,9 @@ the seed depends on"):
   on its own.
 - A server that cannot be reached is reported with its error, and the others keep working. A call to it
   tries to connect once more before failing.
-- Groups are scopes: an identity sees a set of servers, as the catalogue's scope sees a set of marketplaces.
-  Which tools a client lists natively is the front door's choice, not a gateway object to rebuild.
+- Groups are gone. A caller passes `allow`, a test on each tool name (a profile's, from src/canopy/spaces.py),
+  so one server can serve tools to everyone and keep others for its admin. Which tools a client lists
+  natively is the front door's choice, not a gateway object to rebuild.
 """
 from __future__ import annotations
 
@@ -24,6 +25,7 @@ import contextlib
 import os
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import anyio
@@ -156,8 +158,11 @@ def _reason(e: BaseException) -> str:
     return f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
 
 
+Allow = Callable[[str], bool] | None   # a test on `<server>__<tool>`; None allows everything
+
+
 class Hub:
-    """Every upstream in one place. `scope` is a set of server names, or None for all of them."""
+    """Every upstream in one place."""
 
     def __init__(self, servers: list[dict], env: dict[str, str] | None = None):
         env = dict(os.environ) if env is None else env
@@ -181,18 +186,23 @@ class Hub:
     async def stop(self) -> None:
         await asyncio.gather(*(u.close() for u in self.upstreams.values()))
 
-    def _visible(self, scope: set[str] | None) -> list[Upstream]:
-        return [u for n, u in self.upstreams.items() if scope is None or n in scope]
+    def servers(self, allow: Allow = None, may_see: Callable[[str], bool] | None = None) -> list[dict]:
+        """Servers with at least one allowed tool, and their allowed tool count. A server whose tools are
+        unknown (down) is listed if `may_see(name)` says it could hold an allowed one."""
+        out = []
+        for u in self.upstreams.values():
+            n = sum(1 for t in u.tools if allow is None or allow(f"{u.name}{SEP}{t.name}"))
+            if n or (not u.up and (may_see is None or may_see(u.name))) or (allow is None):
+                out.append({"name": u.name, "description": u.description, "up": u.up, "error": u.error,
+                            "tools": n, "listed_at": u.listed_at})
+        return out
 
-    def servers(self, scope: set[str] | None = None) -> list[dict]:
-        return [{"name": u.name, "description": u.description, "up": u.up, "error": u.error,
-                 "tools": len(u.tools), "listed_at": u.listed_at} for u in self._visible(scope)]
-
-    def tools(self, scope: set[str] | None = None) -> list[dict]:
-        """Every tool of every connected server in scope, as `<server>__<tool>`."""
+    def tools(self, allow: Allow = None) -> list[dict]:
+        """Every allowed tool of every connected server, as `<server>__<tool>`."""
         return [{"name": f"{u.name}{SEP}{t.name}", "description": t.description or "",
                  "inputSchema": t.inputSchema, "server": u.name}
-                for u in self._visible(scope) if u.up for t in u.tools]
+                for u in self.upstreams.values() if u.up for t in u.tools
+                if allow is None or allow(f"{u.name}{SEP}{t.name}")]
 
     async def refresh(self, name: str | None = None) -> dict[str, str | None]:
         """Re-list tools, reconnecting a server that is down. Returns each server's error, or None."""
@@ -209,14 +219,13 @@ class Hub:
         await asyncio.gather(*(one(u) for u in targets))
         return {u.name: u.error for u in targets}
 
-    async def call(self, name: str, arguments: dict | None = None,
-                   scope: set[str] | None = None) -> types.CallToolResult:
+    async def call(self, name: str, arguments: dict | None = None, allow: Allow = None) -> types.CallToolResult:
         server, sep, tool = name.partition(SEP)
         if not sep or not tool:
             raise HubError(f"{name!r} is not <server>{SEP}<tool>")
         up = self.upstreams.get(server)
-        if up is None or (scope is not None and server not in scope):
-            raise HubError(f"no server {server!r}")   # out of scope looks the same as absent
+        if up is None or (allow is not None and not allow(name)):
+            raise HubError(f"no tool {name!r}")   # not allowed looks the same as absent
         if not up.up and up.spec:
             await up.connect()
         if not up.up:

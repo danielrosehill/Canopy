@@ -118,15 +118,18 @@ def test_a_server_that_dies_is_reconnected_on_the_next_call(http_url):
     assert run(http_url, body) == "stdio:back"
 
 
-def test_scope_hides_servers_from_lists_and_calls(http_url):
+def test_allow_works_tool_by_tool(http_url):
+    def allow(name):   # all of `web`, and only `echo` of `local`
+        return name.startswith("web__") or name == "local__echo"
+
     async def body(hub):
-        scope = {"web"}
-        assert {s["name"] for s in hub.servers(scope)} == {"web"}
-        assert all(t["server"] == "web" for t in hub.tools(scope))
-        with pytest.raises(HubError, match="no server 'local'"):
-            await hub.call("local__echo", {"text": "x"}, scope=scope)
-        return text(await hub.call("web__web_a", scope=scope))
-    assert run(http_url, body) == "web:web_a"
+        names = {t["name"] for t in hub.tools(allow)}   # `web` may hold tools an earlier test added
+        assert {"web__web_a", "web__web_b"} <= names and {n for n in names if n.startswith("local__")} == {"local__echo"}
+        assert {s["name"]: s["tools"] for s in hub.servers(allow)}["local"] == 1
+        with pytest.raises(HubError, match="no tool 'local__crash'"):
+            await hub.call("local__crash", allow=allow)
+        return text(await hub.call("local__echo", {"text": "ok"}, allow=allow))
+    assert run(http_url, body) == "stdio:ok"
 
 
 def test_bad_names_are_refused():

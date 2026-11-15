@@ -47,23 +47,16 @@ def _env_list(name: str) -> list[str]:
 
 @dataclass(frozen=True)
 class Scope:
-    """What one caller may see. Plugin, skill, command and agent records need their plugin in one of
-    `marketplaces`, or named in `plugins` (context sources share one marketplace, so they are named one by
-    one); tool and mcp records need their server in `servers`. `call` is how a scoped caller reaches a tool
-    that is not in its list."""
+    """What one caller may see, as resolved lists. Plugin, skill, command and agent records need their plugin
+    in one of `marketplaces` or named in `plugins`. Tool records need their server in `servers` or their own
+    name in `tools`; an mcp (server) record shows if the caller sees any of its tools. A profile's scope is
+    tool by tool (src/canopy/spaces.py, resolve_scope); the environment-set scope below is server by server.
+    `call` is how a scoped caller reaches a tool that is not in its list."""
     marketplaces: tuple[str, ...] = ()
     plugins: tuple[str, ...] = ()
     servers: tuple[str, ...] = ()
+    tools: tuple[str, ...] = ()
     call: str = "toolbox__call_tool"
-
-    @classmethod
-    def from_dict(cls, d: dict) -> Scope:
-        return cls(*(tuple(d.get(k) or ()) for k in ("marketplaces", "plugins", "servers")),
-                   d.get("call") or "toolbox__call_tool")
-
-    def to_dict(self) -> dict:
-        return {"marketplaces": list(self.marketplaces), "plugins": list(self.plugins),
-                "servers": list(self.servers), "call": self.call}
 
 
 # A scoped catalogue instance: a second catalogue for another user, set by environment. Either variable set
@@ -74,7 +67,8 @@ SCOPE_MARKETPLACES = _env_list("CATALOGUE_MARKETPLACES")
 SCOPE_SERVERS = _env_list("CATALOGUE_SERVERS")
 SCOPED = bool(SCOPE_MARKETPLACES or SCOPE_SERVERS)
 _scope: ContextVar[Scope | None] = ContextVar(
-    "canopy_scope", default=Scope(tuple(SCOPE_MARKETPLACES), (), tuple(SCOPE_SERVERS)) if SCOPED else None)
+    "canopy_scope", default=Scope(marketplaces=tuple(SCOPE_MARKETPLACES), servers=tuple(SCOPE_SERVERS))
+    if SCOPED else None)
 
 
 def current_scope() -> Scope | None:
@@ -96,10 +90,12 @@ def scope() -> tuple[str, list] | None:
     sc = _scope.get()
     if sc is None:
         return None
+    tool_servers = sorted({*sc.servers, *(t.split("__", 1)[0] for t in sc.tools)})
     return ("((r.kind NOT IN ('tool', 'mcp') AND (r.plugin = ANY(%s) OR r.plugin IN "
             "(SELECT name FROM plugins WHERE marketplace = ANY(%s)))) "
-            "OR (r.kind IN ('tool', 'mcp') AND split_part(r.name, '__', 1) = ANY(%s)))",
-            [list(sc.plugins), list(sc.marketplaces), list(sc.servers)])
+            "OR (r.kind = 'tool' AND (split_part(r.name, '__', 1) = ANY(%s) OR r.name = ANY(%s))) "
+            "OR (r.kind = 'mcp' AND r.name = ANY(%s)))",
+            [list(sc.plugins), list(sc.marketplaces), list(sc.servers), list(sc.tools), tool_servers])
 
 
 def filters(kind: str | None, plugin: str | None, marketplace: str | None) -> tuple[str, list]:

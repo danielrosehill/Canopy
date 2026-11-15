@@ -95,7 +95,7 @@ class Front:
 
     async def _catalogue(self, profile: Profile, op: str, args: dict) -> list[types.TextContent]:
         # No spaces.json: scope None, which the catalogue takes as "everything".
-        body = {"op": op, "args": args, "scope": profile.scope.to_dict() if profile.scope else None}
+        body = {"op": op, "args": args, "scope": profile.scope_request(CALL)}
         r = await self.catalogue.post("/scoped", json=body)
         doc = r.json()
         if r.status_code != 200:
@@ -104,14 +104,14 @@ class Front:
 
     async def _call_tool(self, name: str, arguments: dict) -> list | types.CallToolResult:
         profile = self._profile()
-        scope = set(profile.scope.servers) if profile.scope is not None else None
+        allow = profile.allows_tool if profile.placement else None
         try:
             if name in ("search", "read", "list"):
                 return await self._catalogue(profile, name, arguments)
             if name == "list_servers":
-                return _text(json.dumps({"servers": self.hub.servers(scope)}, indent=1))
+                return _text(json.dumps({"servers": self.hub.servers(allow, profile.may_see_server)}, indent=1))
             if name == CALL:
-                return await self.hub.call(arguments.get("name", ""), arguments.get("arguments"), scope=scope)
+                return await self.hub.call(arguments.get("name", ""), arguments.get("arguments"), allow=allow)
             raise HubError(f"unknown tool {name!r}")
         except HubError as e:
             return types.CallToolResult(content=_text(f"error: {e}"), isError=True)
@@ -151,7 +151,7 @@ class Front:
 
 def build() -> Front:
     servers = json.loads((CONFIG / "servers.json").read_text()).get("servers", [])
-    spaces = Spaces.load(CONFIG, servers, call=CALL)
+    spaces = Spaces.load(CONFIG)
     return Front(Hub(servers), spaces, load_tokens(TOKEN_DIR, list(spaces.profiles)))
 
 

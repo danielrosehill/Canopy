@@ -550,9 +550,17 @@ def test_a_front_door_call_is_scoped_by_its_profile():
     store(rec("skill:mine/diary", plugin="mine", description="Turn the diary page"), plugin="mine")
     store(rec("habit:notes-h/tidy", plugin="notes-h", description="Turn off when done") | {"kind": "habit"}, plugin="notes-h")
     store(rec("habit:notes-d/late", plugin="notes-d", description="Turn in late") | {"kind": "habit"}, plugin="notes-d")
-    scope = {"marketplaces": ["shared"], "plugins": ["notes-h"], "servers": [], "call": "call_tool"}
+    with cat.db:
+        ix._store(cat.db, "", [
+            {"id": f"tool:{n}", "kind": "tool", "plugin": "", "name": n, "description": "Turn it", "path": "",
+             "body": "call: toolbox", "hash": n} for n in ("inv__search", "inv__delete")])
+    scope = {"placement": {"operator": "d", "spaces": {
+        "d": {}, "h": {"plugins": ["notes-h"]},
+        "home": {"marketplaces": ["shared"], "tools": ["inv__search"]}}},
+        "spaces": ["h", "home"], "call": "call_tool"}
     ids = {r["id"] for r in json.loads(cat._scoped_call({"op": "list", "args": {}, "scope": scope})["text"])["records"]}
-    assert ids == {"skill:house/lights", "habit:notes-h/tidy"}   # context sources are named one by one
+    # Context sources are placed one by one, and one tool of a server can be shared without the rest.
+    assert ids == {"skill:house/lights", "habit:notes-h/tidy", "tool:inv__search"}
     skills = cat._scoped_call({"op": "skills", "scope": scope, "message": {
         "jsonrpc": "2.0", "id": 1, "method": "skills/list", "params": {}}})["reply"]
     assert "diary" not in json.dumps(skills)

@@ -6,8 +6,10 @@ catalogue by `CATALOGUE_MARKETPLACES` and `CATALOGUE_SERVERS`, one profile set b
 uses MCPJungle groups. Spaces replace both, as part of the hub
 ([design](design.md#replacing-mcpjungle-with-the-hub)).
 
-Canopy treats an MCP server and a plugin marketplace as the same kind of thing: a **source**, with tools or
-skills nested inside it. Sharing works the same way for both, so one model covers them.
+Canopy treats tools and plugins alike, and shares them the same way. What is shared is a **tool** or a
+**plugin**, not a server or a machine: one server often holds tools for everyone and tools for its admin
+alone. An inventory server can let both people look things up while only one can change stock; a box-control
+server on a machine is admin, whoever lives in the room it sits in.
 
 ## The household this was designed for
 
@@ -28,15 +30,17 @@ enterprise: two people, two small businesses, one house.
 
 1. **A space is the only container.** Each row above is a space, and so is `common` (below). Spaces don't nest. A business
    "attached" to a person is just a space whose only member is that person.
-2. **Every source belongs to exactly one space.** An MCP server, a marketplace or a context volume is never in
-   two. If two people need it, it goes in a shared space. It isn't copied.
+2. **Every tool and every plugin belongs to exactly one space.** A space claims them by name or by pattern
+   (`home-assistant__*` is a whole server), and a whole marketplace by name. Whatever nobody claims belongs
+   to the operator. If two people need something, it goes in a shared space; it isn't copied.
 3. **A profile is a person plus some of their spaces.** A token is issued to a profile. A person can have
    several profiles, for example personal and work, and can only include spaces they're a member of.
 4. **What a profile sees is the union of its spaces.** There are no overrides, deny lists or inheritance.
    Something outside the profile looks the same as something that doesn't exist.
 
-Credentials go with the source, so the Home Assistant token sits in Household. Neither person's client holds it,
-and a profile without Household can't reach it.
+Credentials stay with the server, in Canopy, whichever spaces its tools are in. Neither person's client holds
+the Home Assistant token; a profile without Household can't reach its tools, and a profile with it reaches
+only the tools Household claims.
 
 ## The household as spaces and profiles
 
@@ -47,12 +51,12 @@ flowchart LR
         dw["Daniel, work"]
         hp["Hannah"]
     end
-    subgraph spaces["Spaces (each source in exactly one)"]
+    subgraph spaces["Spaces (each tool and plugin in exactly one)"]
         d["Daniel<br/>his habits, notes, personal Google"]
         r["Ridgeline<br/>business email, accounts, client repos"]
         h["Hannah<br/>her habits, notes, personal Google"]
         w["Willow Studio<br/>booking, studio site"]
-        home["Household<br/>Home Assistant, NAS, shared calendar"]
+        home["Household<br/>Home Assistant, inventory look-up, shared calendar"]
     end
     dp --> d
     dp --> r
@@ -63,14 +67,14 @@ flowchart LR
     hp --> home
 ```
 
-| Space | Members | Example sources |
+| Space | Members | Claims |
 | --- | --- | --- |
-| `daniel` | Daniel | His context volume (habits, SOPs), personal Google, his own marketplaces |
-| `ridgeline` | Daniel | Business Google, accounting, the business's marketplace |
-| `hannah` | Hannah | Her context volume, her personal Google |
-| `willow` | Hannah | Booking system, studio website |
-| `household` | Daniel, Hannah | Home Assistant, NAS, shared calendar, household skills |
-| `common` | Everyone | Keyless, harmless utilities: time, currency rates, docs lookup |
+| `daniel` | Daniel | Nothing listed: everything unclaimed, which includes all admin (machines, NAS, firewall), his context volume and the inventory's write tools |
+| `ridgeline` | Daniel | `business-mail__*`, `accounts__*`, the business's marketplace |
+| `hannah` | Hannah | Her context volume (`hannah-notes`), `hannah-mail__*` |
+| `willow` | Hannah | `booking__*`, `studio-site__*` |
+| `household` | Daniel, Hannah | `home-assistant__*`, `inventory__search_items`, `inventory__get_*`, `calendar-home__*`, the household marketplace |
+| `common` | Everyone | Keyless, harmless utilities: `time__*`, `fx__*`, docs lookup |
 
 | Profile | Person | Spaces | New notes and memories go to |
 | --- | --- | --- | --- |
@@ -88,21 +92,22 @@ key that costs money or reaches private data: that belongs to whoever owns the k
 
 ## Config
 
-Each source in `servers.json` and `marketplaces.json` (marketplaces and `context` sources) takes a `space`
-key, and `spaces.json` names the spaces and profiles. A source with no `space`
-key belongs to the operator's own space. With no `spaces.json`, everything is one space, so a single-user
-install doesn't change.
+One file, `agent-data/config/spaces.json`. `servers.json` and `marketplaces.json` don't change: placement
+lives in one place, so it reads as a whole.
 
 ```json
 {
   "operator": "daniel",
   "spaces": {
     "daniel":    {"members": ["daniel"]},
-    "ridgeline": {"members": ["daniel"]},
-    "hannah":    {"members": ["hannah"]},
-    "willow":    {"members": ["hannah"]},
-    "household": {"members": ["daniel", "hannah"]},
-    "common":    {"members": ["daniel", "hannah"]}
+    "ridgeline": {"members": ["daniel"], "tools": ["business-mail__*", "accounts__*"],
+                  "marketplaces": ["ridgeline-skills"]},
+    "hannah":    {"members": ["hannah"], "tools": ["hannah-mail__*"], "plugins": ["hannah-notes"]},
+    "willow":    {"members": ["hannah"], "tools": ["booking__*", "studio-site__*"]},
+    "household": {"members": ["daniel", "hannah"],
+                  "tools": ["home-assistant__*", "inventory__search_items", "inventory__get_*", "calendar-home__*"],
+                  "marketplaces": ["household-skills"]},
+    "common":    {"members": ["daniel", "hannah"], "tools": ["time__*", "fx__*"]}
   },
   "profiles": {
     "daniel":      {"person": "daniel", "spaces": ["daniel", "ridgeline", "household", "common"]},
@@ -112,21 +117,32 @@ install doesn't change.
 }
 ```
 
-```json
-{"name": "home-assistant", "space": "household", "transport": "streamable_http", "url": "...", "bearer_token": "${HA_TOKEN}"}
-```
+How a name finds its space, first match wins:
+
+1. an exact tool or plugin name;
+2. the longest matching pattern (`inventory__get_*` beats `inventory__*`); a tie goes to the space listed first;
+3. for a plugin, a claimed marketplace (a context source is a plugin of the `context` marketplace, so it is
+   claimed by name);
+4. the operator's space.
+
+A tool that appears later, on a server that adds one, lands by the same rules at once: there is nothing to
+re-register. With no `spaces.json` there is one profile that sees everything, so a single-user install
+doesn't change.
 
 Validation refuses:
-- a profile that names a space its person isn't a member of;
-- a source in an unknown space;
-- two sources with the same name.
+- a profile that names a space its person isn't a member of, or an unknown space;
+- the same exact name, or the same pattern, claimed by two spaces;
+- a space with no members, or no space named after the operator.
 
 ## How it maps onto the parts
 
-- **Hub:** a profile's servers are its `scope` (`Hub.tools(scope)`, `Hub.call(..., scope=)`).
-- **Catalogue:** a profile's marketplaces, context sources and servers are a `retrieval.Scope`, set per
-  request with `use_scope`, for search, read, list and `skills/list`.
+- **Hub:** the profile's test on a tool name (`Profile.allows_tool`) is the hub's `allow`, for listing and
+  calling. `list_servers` counts only the tools the profile has; a server that is down is listed if one of
+  the profile's names or patterns could match one of its tools.
+- **Catalogue:** the front door sends the placement and the profile's spaces; the catalogue resolves them
+  against its own plugin and tool lists (`spaces.resolve_scope`) into a `retrieval.Scope`, set per request
+  with `use_scope`, for search, read, list and `skills/list`.
 - **Front door:** one MCP endpoint. The bearer token (`profile-<name>.token`, made on first start) picks the
   profile, and every client gets the same five tools, so nobody's tool list grows with what they can reach.
-- **Context and memory:** a context volume is a source, so it has a space like anything else. Memory
-  namespaces get a space the same way.
+- **Context and memory:** a context volume is a plugin, so it has a space like anything else. Memory
+  namespaces will get a space the same way (not built).

@@ -25,9 +25,11 @@ from canopy.hub import Hub  # noqa: E402
 from canopy.spaces import Spaces  # noqa: E402
 
 DOC = {"operator": "daniel",
-       "spaces": {"daniel": {"members": ["daniel"]}, "ridgeline": {"members": ["daniel"]},
-                  "hannah": {"members": ["hannah"]}, "willow": {"members": ["hannah"]},
-                  "household": {"members": ["daniel", "hannah"]}},
+       "spaces": {"daniel": {"members": ["daniel"]},
+                  "ridgeline": {"members": ["daniel"], "tools": ["invoices__*"]},
+                  "hannah": {"members": ["hannah"]},
+                  "willow": {"members": ["hannah"], "tools": ["booking__*"]},
+                  "household": {"members": ["daniel", "hannah"], "tools": ["ha__*", "inventory__inventory_a"]}},
        "profiles": {"daniel-work": {"person": "daniel", "spaces": ["ridgeline"]},
                     "hannah": {"person": "hannah", "spaces": ["hannah", "willow", "household"]}}}
 TOKENS = {"tok-work": "daniel-work", "tok-hannah": "hannah"}
@@ -37,7 +39,7 @@ sent: list[dict] = []
 def fake_catalogue(request: httpx.Request) -> httpx.Response:
     body = json.loads(request.content)
     sent.append(body)
-    return httpx.Response(200, json={"text": json.dumps({"op": body["op"], "servers": body["scope"]["servers"]})})
+    return httpx.Response(200, json={"text": json.dumps({"op": body["op"], "spaces": body["scope"]["spaces"]})})
 
 
 @pytest.fixture(scope="module")
@@ -45,10 +47,9 @@ def front_url():
     up = ThreadingHTTPServer(("127.0.0.1", 0), http_fixture.Handler)
     threading.Thread(target=up.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{up.server_port}/mcp"
-    servers = [{"name": "invoices", "space": "ridgeline", "transport": "streamable_http", "url": f"{base}/invoices"},
-               {"name": "ha", "space": "household", "transport": "streamable_http", "url": f"{base}/ha"},
-               {"name": "booking", "space": "willow", "transport": "streamable_http", "url": f"{base}/booking"}]
-    front = Front(Hub(servers, env={}), Spaces(DOC, servers, {}), TOKENS,
+    servers = [{"name": n, "transport": "streamable_http", "url": f"{base}/{n}"}
+               for n in ("invoices", "ha", "booking", "inventory")]
+    front = Front(Hub(servers, env={}), Spaces(DOC), TOKENS,
                   catalogue_url="http://catalogue", catalogue_transport=httpx.MockTransport(fake_catalogue))
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -80,11 +81,22 @@ def test_everyone_gets_the_same_small_tool_list(front_url):
     assert as_profile(front_url, "tok-hannah", body) == ["call_tool", "list", "list_servers", "read", "search"]
 
 
-def test_list_servers_shows_only_the_profiles_spaces(front_url):
+def test_list_servers_counts_only_the_tools_a_profile_has(front_url):
     async def body(s):
-        return {x["name"] for x in json.loads((await s.call_tool("list_servers", {})).content[0].text)["servers"]}
-    assert as_profile(front_url, "tok-hannah", body) == {"ha", "booking"}
-    assert as_profile(front_url, "tok-work", body) == {"invoices"}
+        return {x["name"]: x["tools"] for x in
+                json.loads((await s.call_tool("list_servers", {})).content[0].text)["servers"]}
+    assert as_profile(front_url, "tok-hannah", body) == {"ha": 2, "booking": 2, "inventory": 1}
+    assert as_profile(front_url, "tok-work", body) == {"invoices": 2}
+
+
+def test_one_server_can_share_one_tool_and_keep_the_rest(front_url):
+    async def body(s):
+        a = await s.call_tool("call_tool", {"name": "inventory__inventory_a"})
+        b = await s.call_tool("call_tool", {"name": "inventory__inventory_b"})
+        return (a.isError, a.content[0].text), (b.isError, b.content[0].text)
+    shared, kept = as_profile(front_url, "tok-hannah", body)
+    assert shared == (False, "inventory:inventory_a")
+    assert kept[0] and "no tool 'inventory__inventory_b'" in kept[1]
 
 
 def test_a_shared_server_answers_both_and_a_private_one_only_its_owner(front_url):
@@ -96,13 +108,13 @@ def test_a_shared_server_answers_both_and_a_private_one_only_its_owner(front_url
         return await call(s, "ha__ha_a"), await call(s, "invoices__invoices_a")
     shared, private = as_profile(front_url, "tok-hannah", hannah)
     assert shared == (False, "ha:ha_a")
-    assert private[0] and "no server 'invoices'" in private[1]
+    assert private[0] and "no tool 'invoices__invoices_a'" in private[1]
 
     async def work(s):
         return await call(s, "invoices__invoices_a"), await call(s, "ha__ha_a")
     own, home = as_profile(front_url, "tok-work", work)
     assert own == (False, "invoices:invoices_a")
-    assert home[0] and "no server 'ha'" in home[1]   # the work profile leaves the household out
+    assert home[0] and "no tool 'ha__ha_a'" in home[1]   # the work profile leaves the household out
 
 
 def test_search_reaches_the_catalogue_with_the_profiles_scope(front_url):
@@ -110,7 +122,7 @@ def test_search_reaches_the_catalogue_with_the_profiles_scope(front_url):
 
     async def body(s):
         return json.loads((await s.call_tool("search", {"query": "lights"})).content[0].text)
-    assert as_profile(front_url, "tok-hannah", body) == {"op": "search", "servers": ["booking", "ha"]}
+    assert as_profile(front_url, "tok-hannah", body) == {"op": "search", "spaces": ["hannah", "willow", "household"]}
     assert sent[-1]["scope"]["call"] == "call_tool" and sent[-1]["args"] == {"query": "lights"}
 
 

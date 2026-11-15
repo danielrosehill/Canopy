@@ -587,9 +587,9 @@ So the aggregator becomes Canopy code: `src/canopy/hub.py`, on the `mcp` SDK alr
   `tools/list_changed` re-lists on its own.
 - A server that cannot be reached, or whose `${VAR}` is unset, is reported with its error; the rest work.
   A call to a dead session reconnects once and retries, only when the request was never sent.
-- A group is a scope: the set of servers an identity sees, as the catalogue's scope is a set of
-  marketplaces. Out of scope answers the same as absent.
-- Who gets which scope is set by spaces and profiles: see [spaces](spaces.md).
+- No groups. Sharing is per tool and per plugin, not per server: a server is often one machine, and one
+  server can hold tools for everyone and tools for its admin. The hub takes an `allow` test on each tool
+  name, which comes from the caller's profile ([spaces](spaces.md)). Not allowed answers the same as absent.
 
 Status on 2026-11-15: **prototype, not in compose.** Built and tested:
 

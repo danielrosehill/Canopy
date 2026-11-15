@@ -1,34 +1,105 @@
-"""Spaces and profiles: who sees which sources. The design, with a worked household, is docs/spaces.md.
+"""Spaces and profiles: who sees which tools and plugins. The design, with a worked household, is docs/spaces.md.
 
-A space owns sources: MCP servers (`servers.json`), marketplaces and context sources (`marketplaces.json`),
-each with an optional `"space"` key, so every source is in exactly one space. A profile is a person plus some
-of the spaces they are a member of, and a token is issued to a profile. What a profile sees is the union of
-its spaces: no overrides, no deny lists, no nesting.
+The unit of ownership is a tool (`<server>__<tool>`) or a plugin, not a server or a machine: one server can
+hold tools for everyone and tools for its admin only. A space claims tools and plugins by name or by pattern,
+and a whole server or marketplace is only a pattern (`home-assistant__*`) or a shortcut (`marketplaces`).
+Every tool and plugin resolves to exactly one space:
+
+    an exact name  >  the longest matching pattern  >  a claimed marketplace (plugins)  >  the operator's space
+
+A tie between two patterns of the same length goes to the space listed first. A profile is a person plus
+some of the spaces they are a member of, and a token is issued to a profile. What a profile sees is
+everything that resolves to one of its spaces.
 
 `agent-data/config/spaces.json`:
 
     {"operator": "daniel",
-     "spaces":   {"daniel": {"members": ["daniel"]}, "household": {"members": ["daniel", "hannah"]}, ...},
+     "spaces": {
+       "daniel":    {"members": ["daniel"]},
+       "household": {"members": ["daniel", "hannah"],
+                     "tools": ["home-assistant__*", "inventory__search_items"],
+                     "marketplaces": ["household-skills"], "plugins": ["hannah-notes"]}},
      "profiles": {"daniel": {"person": "daniel", "spaces": ["daniel", "household"]}, ...}}
 
-A source without `space` belongs to the operator's space, whose id is the operator's name. With no
-spaces.json there is one implicit profile that sees everything (`Spaces.single()`).
+The operator's space, named after the operator, holds everything nobody claimed, so it lists nothing.
+With no spaces.json there is one profile, `default`, that sees everything.
 """
 from __future__ import annotations
 
 import json
 import secrets
+from collections.abc import Iterable
 from dataclasses import dataclass
+from fnmatch import fnmatchcase
 from pathlib import Path
 
 from .retrieval import Scope
 
-CONTEXT_MARKET = "context"   # as index.CONTEXT_MARKET; repeated so this module needs no database
-USER_CONTEXT = "user"        # the volume's own context source, which is always the operator's
-
 
 class SpacesError(ValueError):
     """The config is inconsistent. The message names the entry."""
+
+
+def _pattern(p: str) -> bool:
+    return any(c in p for c in "*?[")
+
+
+class Placement:
+    """Which space every tool and plugin belongs to. Built from spaces.json's `spaces`; also travels to the
+    catalogue (`to_dict`), which resolves its own plugin and tool lists with it."""
+
+    def __init__(self, operator: str, spaces: dict[str, dict]):
+        self.operator, self.order = operator, list(spaces)
+        self.rules: dict[str, list[tuple[str, str]]] = {"tools": [], "plugins": []}   # (pattern, space)
+        self.exact: dict[str, dict[str, str]] = {"tools": {}, "plugins": {}, "marketplaces": {}}
+        for space, s in spaces.items():
+            for kind in ("tools", "plugins", "marketplaces"):
+                for entry in s.get(kind) or ():
+                    if kind != "marketplaces" and _pattern(entry):
+                        if any(p == entry for p, _ in self.rules[kind]):
+                            raise SpacesError(f"{kind} pattern {entry!r} is claimed by two spaces")
+                        self.rules[kind].append((entry, space))
+                    else:
+                        if entry in self.exact[kind]:
+                            raise SpacesError(f"{kind} {entry!r} is claimed by {self.exact[kind][entry]!r} "
+                                              f"and {space!r}")
+                        self.exact[kind][entry] = space
+        for kind in self.rules:   # longest first; equal length keeps spaces.json order (sort is stable)
+            self.rules[kind].sort(key=lambda r: -len(r[0]))
+
+    def _match(self, kind: str, name: str) -> str | None:
+        if name in self.exact[kind]:
+            return self.exact[kind][name]
+        return next((space for pat, space in self.rules[kind] if fnmatchcase(name, pat)), None)
+
+    def tool_space(self, tool: str) -> str:
+        return self._match("tools", tool) or self.operator
+
+    def plugin_space(self, plugin: str, marketplace: str = "") -> str:
+        return self._match("plugins", plugin) or self.exact["marketplaces"].get(marketplace) or self.operator
+
+    def server_spaces(self, server: str) -> set[str]:
+        """Every space that may hold a tool of this server, for listing a server whose tools are unknown
+        (it is down). The operator's space is always one: nothing proves every tool was claimed."""
+        prefix = f"{server}__"
+        out = {self.operator}
+        out |= {sp for t, sp in self.exact["tools"].items() if t.startswith(prefix)}
+        out |= {sp for p, sp in self.rules["tools"] if fnmatchcase(server, p.split("__", 1)[0])}
+        return out
+
+    def to_dict(self) -> dict:
+        spaces: dict[str, dict] = {s: {"tools": [], "plugins": [], "marketplaces": []} for s in self.order}
+        for kind in ("tools", "plugins"):
+            for pat, sp in self.rules[kind]:
+                spaces[sp][kind].append(pat)
+        for kind, names in self.exact.items():
+            for name, sp in names.items():
+                spaces[sp][kind].append(name)
+        return {"operator": self.operator, "spaces": spaces}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> Placement:
+        return cls(d["operator"], d["spaces"])
 
 
 @dataclass(frozen=True)
@@ -36,14 +107,34 @@ class Profile:
     name: str
     person: str
     spaces: tuple[str, ...]
-    scope: Scope | None   # None: sees everything (no spaces.json)
+    placement: Placement | None   # None: sees everything (no spaces.json)
+
+    def allows_tool(self, tool: str) -> bool:
+        return self.placement is None or self.placement.tool_space(tool) in self.spaces
+
+    def may_see_server(self, server: str) -> bool:
+        return self.placement is None or bool(self.placement.server_spaces(server) & set(self.spaces))
+
+    def scope_request(self, call: str) -> dict | None:
+        """What the front door sends the catalogue, which resolves it with `resolve_scope`."""
+        if self.placement is None:
+            return None
+        return {"placement": self.placement.to_dict(), "spaces": list(self.spaces), "call": call}
+
+
+def resolve_scope(request: dict, plugins: Iterable[tuple[str, str]], tools: Iterable[str]) -> Scope:
+    """A profile's scope as the catalogue's lists: `plugins` is every (plugin, marketplace) it indexes,
+    `tools` every tool name. Done per request, so a new tool or plugin lands in the right space at once."""
+    placement, visible = Placement.from_dict(request["placement"]), set(request["spaces"])
+    return Scope(plugins=tuple(sorted(p for p, m in plugins if placement.plugin_space(p, m) in visible)),
+                 tools=tuple(sorted(t for t in tools if placement.tool_space(t) in visible)),
+                 call=request.get("call") or "toolbox__call_tool")
 
 
 class Spaces:
-    def __init__(self, doc: dict, servers: list[dict], marketplaces: dict, call: str = "call_tool"):
+    def __init__(self, doc: dict):
         self.operator = doc.get("operator") or ""
         spaces = doc.get("spaces") or {}
-        profiles = doc.get("profiles") or {}
         if not self.operator:
             raise SpacesError("operator is required")
         if self.operator not in spaces:
@@ -52,27 +143,9 @@ class Spaces:
         for name, m in members.items():
             if not m:
                 raise SpacesError(f"space {name!r} has no members")
-
-        owner: dict[tuple[str, str], str] = {}   # (kind, source) -> space
-
-        def place(kind: str, name: str, space: str | None) -> None:
-            space = space or self.operator
-            if space not in spaces:
-                raise SpacesError(f"{kind} {name!r} is in unknown space {space!r}")
-            if (kind, name) in owner:
-                raise SpacesError(f"{kind} {name!r} is listed twice")
-            owner[(kind, name)] = space
-
-        for s in servers:
-            place("server", s["name"], s.get("space"))
-        for m in marketplaces.get("marketplaces") or []:
-            place("marketplace", m["name"], m.get("space"))
-        for c in marketplaces.get("context") or []:
-            place("context", c.get("name") or c["repo"].rsplit("/", 1)[-1], c.get("space"))
-        owner.setdefault(("context", USER_CONTEXT), self.operator)
-
+        self.placement = Placement(self.operator, spaces)
         self.profiles: dict[str, Profile] = {}
-        for pname, p in profiles.items():
+        for pname, p in (doc.get("profiles") or {}).items():
             person, wanted = p.get("person"), tuple(p.get("spaces") or ())
             if not wanted:
                 raise SpacesError(f"profile {pname!r} has no spaces")
@@ -81,28 +154,20 @@ class Spaces:
                     raise SpacesError(f"profile {pname!r} names unknown space {sp!r}")
                 if person not in members[sp]:
                     raise SpacesError(f"profile {pname!r}: {person!r} is not a member of space {sp!r}")
-
-            def names(kind: str) -> tuple[str, ...]:
-                return tuple(sorted(n for (k, n), sp in owner.items() if k == kind and sp in wanted))
-            self.profiles[pname] = Profile(pname, person, wanted, Scope(
-                marketplaces=names("marketplace"), plugins=names("context"), servers=names("server"), call=call))
-        self.owner = owner
+            self.profiles[pname] = Profile(pname, person, wanted, self.placement)
 
     @classmethod
     def single(cls) -> Spaces:
         """No spaces.json: one profile, `default`, that sees everything."""
         self = cls.__new__(cls)
-        self.operator, self.owner = "", {}
+        self.operator, self.placement = "", None
         self.profiles = {"default": Profile("default", "", (), None)}
         return self
 
     @classmethod
-    def load(cls, config_dir: Path, servers: list[dict], call: str = "call_tool") -> Spaces:
+    def load(cls, config_dir: Path) -> Spaces:
         path = config_dir / "spaces.json"
-        if not path.exists():
-            return cls.single()
-        mk = config_dir / "marketplaces.json"
-        return cls(json.loads(path.read_text()), servers, json.loads(mk.read_text()) if mk.exists() else {}, call)
+        return cls(json.loads(path.read_text())) if path.exists() else cls.single()
 
 
 def load_tokens(token_dir: Path, profiles: list[str]) -> dict[str, str]:
