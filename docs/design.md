@@ -569,6 +569,38 @@ given to that device.
 - `docs/connect/`: a page per client (Claude Code, Codex, others). `saas-and-web-clients.md` covers ChatGPT,
   claude.ai and self-run web clients. Canopy documents those routes and ships none of them.
 
+## Replacing MCPJungle with the hub
+
+Decided 2026-11-15. Canopy's point is that MCP servers and plugins are one ecosystem: a server is a
+first-level source like a plugin, its tools are nested records like a plugin's skills, and both are found
+through the same progressive discovery. The catalogue already models them that way (`mcp:` and `tool:`
+records beside `plugin:` and `skill:`, and `retrieval.scope()` scopes servers and marketplaces alike). What
+stays foreign is the plumbing: MCPJungle's registration model. Most of the contract suite pins its
+quirks, it cannot serve `skills/list`, and Canopy's own API, config, tokens and UI already do the control
+plane. Two people at home need scoping, not enterprise federation.
+
+So the aggregator becomes Canopy code: `src/canopy/hub.py`, on the `mcp` SDK already in use.
+
+- One live client session per server in `servers.json`, over stdio or streamable HTTP. The config is the
+  registry: nothing is registered, so there is no delete-then-register and no frozen tool list.
+- Tools are `<server>__<tool>`, calls routed by the prefix. `refresh` re-lists, and
+  `tools/list_changed` re-lists on its own.
+- A server that cannot be reached, or whose `${VAR}` is unset, is reported with its error; the rest work.
+  A call to a dead session reconnects once and retries, only when the request was never sent.
+- A group is a scope: the set of servers an identity sees, as the catalogue's scope is a set of
+  marketplaces. Out of scope answers the same as absent.
+
+Status on 2026-11-15: **prototype.** `tests/test_hub.py` proves the above against the contract fixture
+over HTTP and an SDK server over stdio (`tests/fixtures/stdio_upstream.py`). Not built yet, in order:
+
+1. The front door: one MCP endpoint per identity, bearer token to scope, listing the catalogue's tools,
+   `call_tool` and the core tools natively, and serving `skills/list` itself.
+2. The catalogue's `gateway_servers` and `gateway_tools` fed from the hub instead of MCPJungle's REST API,
+   and the toolbox calling the hub.
+3. Upstream OAuth, and the API's `/v1/gateway/*` routes on the hub.
+4. Then drop the `gateway` service, the `mcpjungle` database, `compat.json`, `scripts/bump-mcpjungle.py`
+   and the watch workflow, and turn the contract suite into the hub's.
+
 ## Order of work
 
 Each step ends with a clean install on an empty machine, and the contract suite once it exists.
