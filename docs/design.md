@@ -587,6 +587,9 @@ So the aggregator becomes Canopy code: `src/canopy/hub.py`, on the `mcp` SDK alr
   `tools/list_changed` re-lists on its own.
 - A server that cannot be reached, or whose `${VAR}` is unset, is reported with its error; the rest work.
   A call to a dead session reconnects once and retries, only when the request was never sent.
+- Accounts: one server with several keys is one definition, and `call_tool` takes the account
+  ([spaces](spaces.md#accounts-one-server-several-keys)). A session per account, started on first use, or
+  one session and an argument the hub sets.
 - No groups. Sharing is per tool and per plugin, not per server: a server is often one machine, and one
   server can hold tools for everyone and tools for its admin. The hub takes an `allow` test on each tool
   name, which comes from the caller's profile ([spaces](spaces.md)). Not allowed answers the same as absent.
@@ -597,6 +600,8 @@ Status on 2026-11-15: **prototype, not in compose.** Built and tested:
   SDK server over stdio (`tests/fixtures/stdio_upstream.py`).
 - `src/canopy/spaces.py`: spaces and profiles from `spaces.json` ([spaces](spaces.md)), and a token per profile
   in `profile-<name>.token`. `tests/test_spaces.py`.
+- Accounts in the hub, spaces and front door: `tests/test_hub.py` (both modes, missing keys),
+  `tests/test_spaces.py`, and `tests/test_front.py::test_one_newsletter_server_two_people_each_their_own_accounts`.
 - `src/canopy/front.py`: the front door, `python -m canopy.front`. One MCP endpoint; the bearer token picks
   the profile, and every client gets the same five tools: `search`, `read`, `list` (forwarded to the
   catalogue's `POST /scoped` with the profile's scope), `list_servers` and `call_tool` (the hub, scoped).

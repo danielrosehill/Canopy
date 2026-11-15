@@ -1,5 +1,5 @@
 """A stdio MCP upstream for tests/test_hub.py. Tool `grow` adds a tool and sends tools/list_changed;
-`crash` ends the process, as a server that dies would."""
+`crash` ends the process, as a server that dies would; `whoami` says which account it runs as."""
 import os
 
 from mcp.server.fastmcp import Context, FastMCP
@@ -19,6 +19,12 @@ async def grow(name: str, ctx: Context) -> str:
     mcp.add_tool(lambda: f"stdio:{name}", name=name, description=f"Grown tool {name}")
     await ctx.session.send_tool_list_changed()
     return "grown"
+
+
+@mcp.tool()
+def whoami(email: str = "") -> str:
+    """Which account this process was started with (ACCOUNT), and the email argument it was given."""
+    return f"{os.environ.get('ACCOUNT', '-')}|{email}"
 
 
 @mcp.tool()

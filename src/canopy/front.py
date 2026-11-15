@@ -67,9 +67,12 @@ TOOLS = [
     types.Tool(name="list_servers", description="The MCP servers you can reach, whether each is up, and its "
                "tool count.", inputSchema={**_obj, "properties": {}}),
     types.Tool(name=CALL, description="Call any tool you can reach, by its `<server>__<tool>` name, with an "
-               "arguments object matching its schema (`read` the tool's id for it).",
+               "arguments object matching its schema (`read` the tool's id for it). A server with several "
+               "accounts (newsletters, mailboxes) takes `account`; `list_servers` shows yours, and with only "
+               "one, or a default, you can leave it out.",
                inputSchema={**_obj, "required": ["name"], "properties": {
-                   "name": {"type": "string"}, "arguments": {"type": "object"}}}),
+                   "name": {"type": "string"}, "arguments": {"type": "object"},
+                   "account": {"type": "string"}}}),
 ]
 
 
@@ -95,7 +98,11 @@ class Front:
 
     async def _catalogue(self, profile: Profile, op: str, args: dict) -> list[types.TextContent]:
         # No spaces.json: scope None, which the catalogue takes as "everything".
-        body = {"op": op, "args": args, "scope": profile.scope_request(CALL)}
+        req = profile.scope_request(CALL)
+        if req is not None:
+            req["no_account"] = [s for s, acc in self.hub.accounts.items()
+                                 if not profile.accounts_for(s, sorted(acc))]
+        body = {"op": op, "args": args, "scope": req}
         r = await self.catalogue.post("/scoped", json=body)
         doc = r.json()
         if r.status_code != 200:
@@ -109,9 +116,12 @@ class Front:
             if name in ("search", "read", "list"):
                 return await self._catalogue(profile, name, arguments)
             if name == "list_servers":
-                return _text(json.dumps({"servers": self.hub.servers(allow, profile.may_see_server)}, indent=1))
+                return _text(json.dumps({"servers": self.hub.servers(
+                    allow, profile.may_see_server, profile.accounts_for)}, indent=1))
             if name == CALL:
-                return await self.hub.call(arguments.get("name", ""), arguments.get("arguments"), allow=allow)
+                return await self.hub.call(arguments.get("name", ""), arguments.get("arguments"), allow=allow,
+                                           account=arguments.get("account"), accounts=profile.accounts_for,
+                                           default=profile.default_account)
             raise HubError(f"unknown tool {name!r}")
         except HubError as e:
             return types.CallToolResult(content=_text(f"error: {e}"), isError=True)

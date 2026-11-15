@@ -9,15 +9,18 @@ DOC = {
     "operator": "daniel",
     "spaces": {
         "daniel": {"members": ["daniel"]},
-        "ridgeline": {"members": ["daniel"], "tools": ["invoices__*"], "marketplaces": ["ridgeline-skills"]},
+        "ridgeline": {"members": ["daniel"], "tools": ["invoices__*"], "marketplaces": ["ridgeline-skills"],
+                      "accounts": ["buttondown:business", "resend:business"]},
         "hannah": {"members": ["hannah"], "plugins": ["hannah-notes"]},
         "willow": {"members": ["hannah"], "tools": ["booking__*"]},
         "household": {"members": ["daniel", "hannah"],
-                      "tools": ["home-assistant__*", "inventory__search_items", "inventory__get_*"],
+                      "tools": ["home-assistant__*", "inventory__search_items", "inventory__get_*", "buttondown__*"],
+                      "accounts": ["buttondown:family", "resend:*"],
                       "marketplaces": ["house-skills"], "plugins": ["house-skills-admin*"]},
         "common": {"members": ["daniel", "hannah"], "tools": ["time__*", "*__ping"]},
     },
-    "profiles": {"daniel": {"person": "daniel", "spaces": ["daniel", "ridgeline", "household", "common"]},
+    "profiles": {"daniel": {"person": "daniel", "spaces": ["daniel", "ridgeline", "household", "common"],
+                            "defaults": {"buttondown": "personal"}},
                  "daniel-work": {"person": "daniel", "spaces": ["ridgeline", "common"]},
                  "hannah": {"person": "hannah", "spaces": ["hannah", "willow", "household", "common"]}},
 }
@@ -56,6 +59,24 @@ def test_hannah_can_look_up_the_inventory_but_not_change_it():
     assert hannah.may_see_server("inventory")
     # A server that is down is listed if any of her patterns could match one of its tools: `*__ping` could.
     assert hannah.may_see_server("box-control")
+
+
+def test_accounts_resolve_like_tools():
+    sp = Spaces(DOC)
+    every = ["business", "family", "personal"]
+    assert sp.profiles["hannah"].accounts_for("buttondown", every) == ["family"]
+    assert sp.profiles["daniel-work"].accounts_for("buttondown", every) == ["business"]
+    assert sp.profiles["daniel"].accounts_for("buttondown", every) == every
+    assert sp.profiles["daniel"].default_account("buttondown") == "personal"
+    # `resend:business` is exact, so it beats the household's `resend:*`
+    assert sp.profiles["hannah"].accounts_for("resend", ["business", "home"]) == ["home"]
+
+
+def test_a_default_account_must_be_one_the_profile_has():
+    d = copy.deepcopy(DOC)
+    d["profiles"]["hannah"]["defaults"] = {"buttondown": "personal"}
+    with pytest.raises(SpacesError, match="default account buttondown:personal"):
+        Spaces(d)
 
 
 def test_the_work_profile_leaves_the_household_out():

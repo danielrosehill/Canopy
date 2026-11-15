@@ -134,10 +134,39 @@ Validation refuses:
 - the same exact name, or the same pattern, claimed by two spaces;
 - a space with no members, or no space named after the operator.
 
+## Accounts: one server, several keys
+
+Newsletters, mailboxes and phone numbers are the common case: one MCP server, several accounts, each just a
+different key. Some are one person's, some the business's, some the household's. Running a copy of the server
+per account and per person would be silly, so a server lists its accounts and spaces claim them:
+
+```json
+{"name": "buttondown", "transport": "stdio", "command": "...",
+ "accounts": {"personal": {"env": {"BUTTONDOWN_API_KEY": "${BD_PERSONAL}"}},
+              "business": {"env": {"BUTTONDOWN_API_KEY": "${BD_BUSINESS}"}},
+              "family":   {"env": {"BUTTONDOWN_API_KEY": "${BD_FAMILY}"}}}}
+```
+
+```json
+"household": {"tools": ["buttondown__*"], "accounts": ["buttondown:family"]},
+"ridgeline": {"accounts": ["buttondown:business"]}
+```
+
+- **Two questions, answered separately.** Tools say what a profile can do; accounts say as whom. Both resolve
+  like tools (exact, longest pattern, then the operator's), so an unclaimed account is the operator's.
+- **The agent sees one set of tools,** and `call_tool` takes `account` beside the tool's own arguments.
+  With one usable account, or a profile default (`"defaults": {"buttondown": "personal"}`), it can leave it
+  out. An account the profile doesn't have answers like one that doesn't exist, and a server where it has
+  none is not listed, nor are its tools found by search.
+- **Two ways to run it.** A server that reads its key at start gets one session per account, started on that
+  account's first call. A server that takes the account per call (`"account_argument": "user_google_email"`,
+  accounts `{"value": "..."}`) gets one session, and the hub sets that argument itself; a caller who sets it
+  differently is refused.
+
 ## How it maps onto the parts
 
 - **Hub:** the profile's test on a tool name (`Profile.allows_tool`) is the hub's `allow`, for listing and
-  calling. `list_servers` counts only the tools the profile has; a server that is down is listed if one of
+  calling, and `Profile.accounts_for` and `default_account` pick the account. `list_servers` counts only the tools the profile has; a server that is down is listed if one of
   the profile's names or patterns could match one of its tools.
 - **Catalogue:** the front door sends the placement and the profile's spaces; the catalogue resolves them
   against its own plugin and tool lists (`spaces.resolve_scope`) into a `retrieval.Scope`, set per request

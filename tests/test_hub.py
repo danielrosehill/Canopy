@@ -53,7 +53,8 @@ def text(result) -> str:
 def test_tools_from_both_transports_are_named_by_server(http_url):
     async def body(hub):
         return sorted(t["name"] for t in hub.tools())
-    assert run(http_url, body) == ["local__crash", "local__echo", "local__grow", "web__web_a", "web__web_b"]
+    assert run(http_url, body) == ["local__crash", "local__echo", "local__grow", "local__whoami", "web__web_a",
+                                    "web__web_b"]
 
 
 def test_a_call_reaches_its_own_upstream(http_url):
@@ -130,6 +131,83 @@ def test_allow_works_tool_by_tool(http_url):
             await hub.call("local__crash", allow=allow)
         return text(await hub.call("local__echo", {"text": "ok"}, allow=allow))
     assert run(http_url, body) == "stdio:ok"
+
+
+def accounts_hub(env=None):
+    letters = {"name": "letters", "transport": "stdio", "command": sys.executable, "args": [STDIO],
+               "accounts": {"personal": {"env": {"ACCOUNT": "personal"}},
+                            "family": {"env": {"ACCOUNT": "family"}},
+                            "business": {"env": {"ACCOUNT": "${BIZ}"}}}}
+    mail = {"name": "mail", "transport": "stdio", "command": sys.executable, "args": [STDIO],
+            "account_argument": "email",
+            "accounts": {"home": {"value": "home@example.org"}, "work": {"value": "${WORK_MAIL}"}}}
+    return Hub([letters, mail], env=env if env is not None else {"BIZ": "business", "WORK_MAIL": "w@example.org"})
+
+
+def with_accounts(body, env=None):
+    async def go():
+        hub = accounts_hub(env)
+        await hub.start()
+        try:
+            return await body(hub)
+        finally:
+            await hub.stop()
+    return asyncio.run(go())
+
+
+def test_a_server_per_account_starts_one_session_and_the_rest_on_first_use():
+    async def body(hub):
+        before = sorted(k for k, u in hub.upstreams.items() if u.up)
+        family = text(await hub.call("letters__whoami", account="family"))
+        after = sorted(k for k, u in hub.upstreams.items() if u.up)
+        return before, family, after
+    before, family, after = with_accounts(body)
+    assert before == ["letters:personal", "mail"]
+    assert family == "family|"
+    assert after == ["letters:family", "letters:personal", "mail"]
+
+
+def test_each_account_runs_with_its_own_key():
+    async def body(hub):
+        return [text(await hub.call("letters__whoami", account=a)) for a in ("personal", "family", "business")]
+    assert with_accounts(body) == ["personal|", "family|", "business|"]
+
+
+def test_an_argument_account_is_set_by_the_hub_and_cannot_be_overridden():
+    async def body(hub):
+        work = text(await hub.call("mail__whoami", account="work"))
+        with pytest.raises(HubError, match="choose the account with `account`"):
+            await hub.call("mail__whoami", {"email": "home@example.org"}, account="work")
+        return work
+    assert with_accounts(body) == "-|w@example.org"
+
+
+def test_the_caller_only_reaches_its_own_accounts():
+    def only_family(server, every):
+        return [a for a in every if a in ("family", "home")]
+
+    async def body(hub):
+        alone = text(await hub.call("letters__whoami", accounts=only_family))   # one account: no need to name it
+        with pytest.raises(HubError, match="no account 'personal'"):
+            await hub.call("letters__whoami", account="personal", accounts=only_family)
+        with pytest.raises(HubError, match="several accounts"):
+            await hub.call("letters__whoami")
+        chosen = text(await hub.call("letters__whoami", default=lambda s: "business"))
+        rows = {r["name"]: r["accounts"] for r in hub.servers(accounts=only_family)}
+        none = hub.servers(accounts=lambda s, every: [])
+        return alone, chosen, rows, none
+    alone, chosen, rows, none = with_accounts(body)
+    assert alone == "family|" and chosen == "business|"
+    assert rows == {"letters": ["family"], "mail": ["home"]}
+    assert none == []   # no account on a server means no server
+
+
+def test_an_account_with_a_missing_key_fails_alone():
+    async def body(hub):
+        with pytest.raises(HubError, match="BIZ"):
+            await hub.call("letters__whoami", account="business")
+        return text(await hub.call("letters__whoami", account="family"))
+    assert with_accounts(body, env={"WORK_MAIL": "w@example.org"}) == "family|"
 
 
 def test_bad_names_are_refused():

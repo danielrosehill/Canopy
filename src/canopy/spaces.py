@@ -1,7 +1,8 @@
 """Spaces and profiles: who sees which tools and plugins. The design, with a worked household, is docs/spaces.md.
 
 The unit of ownership is a tool (`<server>__<tool>`) or a plugin, not a server or a machine: one server can
-hold tools for everyone and tools for its admin only. A space claims tools and plugins by name or by pattern,
+hold tools for everyone and tools for its admin only. An account (`<server>:<account>`, one key of a server
+that has several) is owned the same way: tools say what a profile can do, accounts say as whom. A space claims tools and plugins by name or by pattern,
 and a whole server or marketplace is only a pattern (`home-assistant__*`) or a shortcut (`marketplaces`).
 Every tool and plugin resolves to exactly one space:
 
@@ -50,10 +51,10 @@ class Placement:
 
     def __init__(self, operator: str, spaces: dict[str, dict]):
         self.operator, self.order = operator, list(spaces)
-        self.rules: dict[str, list[tuple[str, str]]] = {"tools": [], "plugins": []}   # (pattern, space)
-        self.exact: dict[str, dict[str, str]] = {"tools": {}, "plugins": {}, "marketplaces": {}}
+        self.rules: dict[str, list[tuple[str, str]]] = {"tools": [], "plugins": [], "accounts": []}
+        self.exact: dict[str, dict[str, str]] = {"tools": {}, "plugins": {}, "marketplaces": {}, "accounts": {}}
         for space, s in spaces.items():
-            for kind in ("tools", "plugins", "marketplaces"):
+            for kind in ("tools", "plugins", "marketplaces", "accounts"):
                 for entry in s.get(kind) or ():
                     if kind != "marketplaces" and _pattern(entry):
                         if any(p == entry for p, _ in self.rules[kind]):
@@ -75,6 +76,9 @@ class Placement:
     def tool_space(self, tool: str) -> str:
         return self._match("tools", tool) or self.operator
 
+    def account_space(self, server: str, account: str) -> str:
+        return self._match("accounts", f"{server}:{account}") or self.operator
+
     def plugin_space(self, plugin: str, marketplace: str = "") -> str:
         return self._match("plugins", plugin) or self.exact["marketplaces"].get(marketplace) or self.operator
 
@@ -88,8 +92,9 @@ class Placement:
         return out
 
     def to_dict(self) -> dict:
-        spaces: dict[str, dict] = {s: {"tools": [], "plugins": [], "marketplaces": []} for s in self.order}
-        for kind in ("tools", "plugins"):
+        spaces: dict[str, dict] = {s: {"tools": [], "plugins": [], "marketplaces": [], "accounts": []}
+                                   for s in self.order}
+        for kind in ("tools", "plugins", "accounts"):
             for pat, sp in self.rules[kind]:
                 spaces[sp][kind].append(pat)
         for kind, names in self.exact.items():
@@ -108,6 +113,15 @@ class Profile:
     person: str
     spaces: tuple[str, ...]
     placement: Placement | None   # None: sees everything (no spaces.json)
+    defaults: tuple[tuple[str, str], ...] = ()   # (server, account)
+
+    def accounts_for(self, server: str, every: list[str]) -> list[str]:
+        if self.placement is None:
+            return list(every)
+        return [a for a in every if self.placement.account_space(server, a) in self.spaces]
+
+    def default_account(self, server: str) -> str | None:
+        return dict(self.defaults).get(server)
 
     def allows_tool(self, tool: str) -> bool:
         return self.placement is None or self.placement.tool_space(tool) in self.spaces
@@ -126,8 +140,10 @@ def resolve_scope(request: dict, plugins: Iterable[tuple[str, str]], tools: Iter
     """A profile's scope as the catalogue's lists: `plugins` is every (plugin, marketplace) it indexes,
     `tools` every tool name. Done per request, so a new tool or plugin lands in the right space at once."""
     placement, visible = Placement.from_dict(request["placement"]), set(request["spaces"])
+    no_account = set(request.get("no_account") or ())   # servers with accounts, none of them this profile's
     return Scope(plugins=tuple(sorted(p for p, m in plugins if placement.plugin_space(p, m) in visible)),
-                 tools=tuple(sorted(t for t in tools if placement.tool_space(t) in visible)),
+                 tools=tuple(sorted(t for t in tools if placement.tool_space(t) in visible
+                                    and t.split("__", 1)[0] not in no_account)),
                  call=request.get("call") or "toolbox__call_tool")
 
 
@@ -154,7 +170,11 @@ class Spaces:
                     raise SpacesError(f"profile {pname!r} names unknown space {sp!r}")
                 if person not in members[sp]:
                     raise SpacesError(f"profile {pname!r}: {person!r} is not a member of space {sp!r}")
-            self.profiles[pname] = Profile(pname, person, wanted, self.placement)
+            defaults = p.get("defaults") or {}
+            for server, acct in defaults.items():
+                if self.placement.account_space(server, acct) not in wanted:
+                    raise SpacesError(f"profile {pname!r}: default account {server}:{acct} is not in its spaces")
+            self.profiles[pname] = Profile(pname, person, wanted, self.placement, tuple(sorted(defaults.items())))
 
     @classmethod
     def single(cls) -> Spaces:

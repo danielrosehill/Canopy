@@ -29,10 +29,14 @@ DOC = {"operator": "daniel",
                   "ridgeline": {"members": ["daniel"], "tools": ["invoices__*"]},
                   "hannah": {"members": ["hannah"]},
                   "willow": {"members": ["hannah"], "tools": ["booking__*"]},
-                  "household": {"members": ["daniel", "hannah"], "tools": ["ha__*", "inventory__inventory_a"]}},
-       "profiles": {"daniel-work": {"person": "daniel", "spaces": ["ridgeline"]},
+                  "household": {"members": ["daniel", "hannah"], "tools": ["ha__*", "inventory__inventory_a",
+                                                                         "letters__whoami"],
+                                "accounts": ["letters:family"]}},
+       "profiles": {"daniel": {"person": "daniel", "spaces": ["daniel", "ridgeline", "household"]},
+                    "daniel-work": {"person": "daniel", "spaces": ["ridgeline"]},
                     "hannah": {"person": "hannah", "spaces": ["hannah", "willow", "household"]}}}
-TOKENS = {"tok-work": "daniel-work", "tok-hannah": "hannah"}
+TOKENS = {"tok-work": "daniel-work", "tok-hannah": "hannah", "tok-daniel": "daniel"}
+STDIO = str(Path(__file__).parent / "fixtures" / "stdio_upstream.py")
 sent: list[dict] = []
 
 
@@ -49,6 +53,8 @@ def front_url():
     base = f"http://127.0.0.1:{up.server_port}/mcp"
     servers = [{"name": n, "transport": "streamable_http", "url": f"{base}/{n}"}
                for n in ("invoices", "ha", "booking", "inventory")]
+    servers.append({"name": "letters", "transport": "stdio", "command": sys.executable, "args": [STDIO],
+                    "accounts": {a: {"env": {"ACCOUNT": a}} for a in ("personal", "family")}})
     front = Front(Hub(servers, env={}), Spaces(DOC), TOKENS,
                   catalogue_url="http://catalogue", catalogue_transport=httpx.MockTransport(fake_catalogue))
     with socket.socket() as s:
@@ -85,7 +91,7 @@ def test_list_servers_counts_only_the_tools_a_profile_has(front_url):
     async def body(s):
         return {x["name"]: x["tools"] for x in
                 json.loads((await s.call_tool("list_servers", {})).content[0].text)["servers"]}
-    assert as_profile(front_url, "tok-hannah", body) == {"ha": 2, "booking": 2, "inventory": 1}
+    assert as_profile(front_url, "tok-hannah", body) == {"ha": 2, "booking": 2, "inventory": 1, "letters": 1}
     assert as_profile(front_url, "tok-work", body) == {"invoices": 2}
 
 
@@ -133,3 +139,31 @@ def test_no_token_or_a_wrong_one_is_refused(front_url):
         r = httpx.post(f"{front_url}/mcp", json=init, headers={"Accept": "application/json, text/event-stream",
                                                                  **headers})
         assert r.status_code == 401
+
+
+def test_one_newsletter_server_two_people_each_their_own_accounts(front_url):
+    async def call(s, account=None):
+        args = {"name": "letters__whoami"} | ({"account": account} if account else {})
+        r = await s.call_tool("call_tool", args)
+        return r.isError, r.content[0].text
+
+    async def hannah(s):
+        servers = json.loads((await s.call_tool("list_servers", {})).content[0].text)["servers"]
+        return ({x["name"]: x.get("accounts") for x in servers}["letters"],
+                await call(s), await call(s, "personal"))
+    accounts, own, other = as_profile(front_url, "tok-hannah", hannah)
+    assert accounts == ["family"]
+    assert own == (False, "family|")              # her only account: no need to name it
+    assert other[0] and "no account 'personal'" in other[1]
+
+    async def daniel(s):
+        return await call(s), await call(s, "personal"), await call(s, "family")
+    unnamed, personal, family = as_profile(front_url, "tok-daniel", daniel)
+    assert unnamed[0] and "several accounts" in unnamed[1]
+    assert personal == (False, "personal|") and family == (False, "family|")
+
+    async def work(s):
+        servers = json.loads((await s.call_tool("list_servers", {})).content[0].text)["servers"]
+        return [x["name"] for x in servers], await call(s, "family")
+    names, blocked = as_profile(front_url, "tok-work", work)
+    assert "letters" not in names and blocked[0]

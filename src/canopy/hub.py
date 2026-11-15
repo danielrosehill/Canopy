@@ -14,6 +14,10 @@ the seed depends on"):
   on its own.
 - A server that cannot be reached is reported with its error, and the others keep working. A call to it
   tries to connect once more before failing.
+- Accounts: one server definition can hold several accounts (keys), each in its own space. `call` takes the
+  account apart from the tool's arguments; the caller says which accounts it may use. A server that reads its
+  key at start gets a session per account, started on first use; one that takes the account as an argument
+  (`account_argument`) gets one session, and the hub sets that argument itself.
 - Groups are gone. A caller passes `allow`, a test on each tool name (a profile's, from src/canopy/spaces.py),
   so one server can serve tools to everyone and keep others for its admin. Which tools a client lists
   natively is the front door's choice, not a gateway object to rebuild.
@@ -162,51 +166,114 @@ Allow = Callable[[str], bool] | None   # a test on `<server>__<tool>`; None allo
 
 
 class Hub:
-    """Every upstream in one place."""
+    """Every upstream in one place.
+
+    A server entry may carry `accounts`, `{name: overrides}`. Without `account_argument`, each account's
+    overrides (`env`, `headers`, `bearer_token`, `url`, ...) are merged into the entry and get their own
+    session, `<server>:<account>`. With `account_argument: "<arg>"`, each account is `{"value": ...}` and is
+    passed to every call as that argument, over one session."""
 
     def __init__(self, servers: list[dict], env: dict[str, str] | None = None):
         env = dict(os.environ) if env is None else env
-        self.upstreams: dict[str, Upstream] = {}
+        self.upstreams: dict[str, Upstream] = {}          # session key -> Upstream
+        self.accounts: dict[str, dict[str, str]] = {}     # server -> {account: session key or argument value}
+        self.account_arg: dict[str, str] = {}             # server -> argument name, for argument-mode servers
+        self.description: dict[str, str] = {}
         for raw in servers:
             name = raw["name"]
-            if SEP in name:
-                raise HubError(f"server name {name!r} may not contain {SEP!r}")
-            if name in self.upstreams:
+            if SEP in name or ":" in name:
+                raise HubError(f"server name {name!r} may not contain {SEP!r} or ':'")
+            if name in self.description:
                 raise HubError(f"server {name!r} is declared twice")
-            up = Upstream(name, {}, raw.get("description", ""))
-            try:
-                up.spec = expand(raw, env)
-            except KeyError as e:
-                up.error = f"config: {e.args[0]}"
-            self.upstreams[name] = up
+            self.description[name] = raw.get("description", "")
+            base = {k: v for k, v in raw.items() if k not in ("accounts", "account_argument")}
+            accounts = raw.get("accounts") or {}
+            if not accounts:
+                self._add(name, name, base, env)
+            elif raw.get("account_argument"):
+                self.account_arg[name] = raw["account_argument"]
+                self._add(name, name, base, env)
+                self.accounts[name] = {}
+                for acct, a in accounts.items():
+                    try:
+                        self.accounts[name][acct] = expand(a["value"], env)
+                    except KeyError as e:
+                        self.upstreams[name].error = f"config: account {acct}: {e.args[0]}"
+            else:
+                self.accounts[name] = {}
+                for acct, a in accounts.items():
+                    merged = {**base, **a, "env": {**base.get("env", {}), **a.get("env", {})},
+                              "headers": {**base.get("headers", {}), **a.get("headers", {})}}
+                    self._add(f"{name}:{acct}", name, merged, env)
+                    self.accounts[name][acct] = f"{name}:{acct}"
+
+    def _add(self, key: str, server: str, spec: dict, env: dict[str, str]) -> None:
+        up = Upstream(server, {}, self.description[server])
+        try:
+            up.spec = expand(spec, env)
+        except KeyError as e:
+            up.error = f"config: {e.args[0]}"
+        self.upstreams[key] = up
+
+    def _sessions(self, server: str) -> list[Upstream]:
+        if server in self.accounts and server not in self.account_arg:
+            return [self.upstreams[k] for k in self.accounts[server].values()]
+        return [self.upstreams[server]] if server in self.upstreams else []
+
+    def _lister(self, server: str) -> Upstream | None:
+        """The session whose tool list stands for the server: the first one up, else the first."""
+        ups = self._sessions(server)
+        return next((u for u in ups if u.up), ups[0] if ups else None)
 
     async def start(self) -> None:
-        await asyncio.gather(*(u.connect() for u in self.upstreams.values() if u.spec))
+        """Connect every server. A per-account server connects one account, for its tool list; the others
+        connect on their first call."""
+        firsts = [self._sessions(n)[0] for n in self.description if self._sessions(n)]
+        await asyncio.gather(*(u.connect() for u in firsts if u.spec))
 
     async def stop(self) -> None:
         await asyncio.gather(*(u.close() for u in self.upstreams.values()))
 
-    def servers(self, allow: Allow = None, may_see: Callable[[str], bool] | None = None) -> list[dict]:
+    def servers(self, allow: Allow = None, may_see: Callable[[str], bool] | None = None,
+                accounts: Callable[[str, list[str]], list[str]] | None = None) -> list[dict]:
         """Servers with at least one allowed tool, and their allowed tool count. A server whose tools are
-        unknown (down) is listed if `may_see(name)` says it could hold an allowed one."""
+        unknown (down) is listed if `may_see(name)` says it could hold an allowed one. A server with accounts
+        lists the ones `accounts(server, all)` lets the caller use, and is left out if there are none."""
         out = []
-        for u in self.upstreams.values():
-            n = sum(1 for t in u.tools if allow is None or allow(f"{u.name}{SEP}{t.name}"))
-            if n or (not u.up and (may_see is None or may_see(u.name))) or (allow is None):
-                out.append({"name": u.name, "description": u.description, "up": u.up, "error": u.error,
-                            "tools": n, "listed_at": u.listed_at})
+        for name in self.description:
+            u = self._lister(name)
+            n = sum(1 for t in u.tools if allow is None or allow(f"{name}{SEP}{t.name}"))
+            if not (n or allow is None or (not u.up and (may_see is None or may_see(name)))):
+                continue
+            row = {"name": name, "description": self.description[name], "up": u.up, "error": u.error,
+                   "tools": n, "listed_at": u.listed_at}
+            if name in self.accounts:
+                usable = self._usable(name, accounts)
+                if not usable:
+                    continue
+                row["accounts"] = usable
+            out.append(row)
         return out
+
+    def _usable(self, server: str, accounts: Callable[[str, list[str]], list[str]] | None) -> list[str]:
+        every = sorted(self.accounts.get(server, {}))
+        return every if accounts is None else sorted(accounts(server, every))
 
     def tools(self, allow: Allow = None) -> list[dict]:
         """Every allowed tool of every connected server, as `<server>__<tool>`."""
-        return [{"name": f"{u.name}{SEP}{t.name}", "description": t.description or "",
-                 "inputSchema": t.inputSchema, "server": u.name}
-                for u in self.upstreams.values() if u.up for t in u.tools
-                if allow is None or allow(f"{u.name}{SEP}{t.name}")]
+        out = []
+        for name in self.description:
+            u = self._lister(name)
+            if u and u.up:
+                out += [{"name": f"{name}{SEP}{t.name}", "description": t.description or "",
+                         "inputSchema": t.inputSchema, "server": name}
+                        for t in u.tools if allow is None or allow(f"{name}{SEP}{t.name}")]
+        return out
 
     async def refresh(self, name: str | None = None) -> dict[str, str | None]:
         """Re-list tools, reconnecting a server that is down. Returns each server's error, or None."""
-        targets = [self.upstreams[name]] if name else list(self.upstreams.values())
+        targets = (self._sessions(name) if name else
+                   [u for n in self.description for u in self._sessions(n) if u.up or u is self._sessions(n)[0]])
 
         async def one(u: Upstream) -> None:
             if not u.spec:
@@ -217,15 +284,42 @@ class Hub:
                 u.error = _reason(e)
                 await u.connect()
         await asyncio.gather(*(one(u) for u in targets))
-        return {u.name: u.error for u in targets}
+        return {n: self._lister(n).error for n in ([name] if name else self.description)}
 
-    async def call(self, name: str, arguments: dict | None = None, allow: Allow = None) -> types.CallToolResult:
+    async def call(self, name: str, arguments: dict | None = None, allow: Allow = None, account: str | None = None,
+                   accounts: Callable[[str, list[str]], list[str]] | None = None,
+                   default: Callable[[str], str | None] | None = None) -> types.CallToolResult:
+        """Call `<server>__<tool>`. For a server with accounts, `account` picks one of those `accounts(server,
+        all)` allows; with none given, `default(server)` if usable, else the only usable one."""
         server, sep, tool = name.partition(SEP)
         if not sep or not tool:
             raise HubError(f"{name!r} is not <server>{SEP}<tool>")
-        up = self.upstreams.get(server)
-        if up is None or (allow is not None and not allow(name)):
+        if server not in self.description or (allow is not None and not allow(name)):
             raise HubError(f"no tool {name!r}")   # not allowed looks the same as absent
+        arguments = dict(arguments or {})
+        if server in self.accounts:
+            usable = self._usable(server, accounts)
+            if not usable:
+                raise HubError(f"no tool {name!r}")
+            if account is None:
+                d = default(server) if default else None
+                account = d if d in usable else usable[0] if len(usable) == 1 else None
+            if account is None:
+                raise HubError(f"{server} has several accounts you can use: pass account, one of {usable}")
+            if account not in usable:
+                raise HubError(f"no account {account!r} on {server}; yours: {usable}")
+            if server in self.account_arg:
+                arg, value = self.account_arg[server], self.accounts[server][account]
+                if arguments.get(arg, value) != value:
+                    raise HubError(f"{server}: choose the account with `account`, not `{arg}`")
+                arguments[arg] = value
+                up = self.upstreams[server]
+            else:
+                up = self.upstreams[self.accounts[server][account]]
+        else:
+            if account is not None:
+                raise HubError(f"{server} has no accounts")
+            up = self.upstreams[server]
         if not up.up and up.spec:
             await up.connect()
         if not up.up:
