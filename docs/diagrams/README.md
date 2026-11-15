@@ -57,7 +57,7 @@ uv run docs/diagrams/build.py
 Needs Graphviz, Typst and `pdftoppm`. Fonts are in `fonts/` (Atkinson Hyperlegible for reading, Fredoka for titles), under the SIL Open Font License, and are used without
 installing them. `build.py` holds the components and connections, and `poster.typ` holds the layout.
 
-The Canopy stack in `build.py` was checked against `compose.yaml` and the source on 2026-11-15. Since then the posters also show
+The Canopy stack in `build.py` was checked against `compose.yaml` and the source on 2026-11-15. Since 2026-11-05 the posters also show
 the context volume and its GitHub remote, the config overlay, and, as pink dashed boxes, the front door and hub, which are
 prototypes (`src/canopy/front.py`, `src/canopy/hub.py`), not compose services yet. Docker Hub and the alert webhook are left off
 for space. Change one
