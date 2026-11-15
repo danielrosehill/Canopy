@@ -1,8 +1,9 @@
 # Spaces: who sees what
 
-Decided 2026-11-15. **Status: design.** Nothing here is built yet. Today a catalogue is scoped by
-`CATALOGUE_MARKETPLACES` and `CATALOGUE_SERVERS` (`src/canopy/retrieval.py`), which is one profile set by
-hand, and the gateway uses MCPJungle groups. Spaces replace both, as part of the hub
+Decided 2026-11-15. **Status: prototype.** `src/canopy/spaces.py` reads the config below and
+`src/canopy/front.py` serves it, both tested but not yet a compose service. The shipped stack still scopes a
+catalogue by `CATALOGUE_MARKETPLACES` and `CATALOGUE_SERVERS`, one profile set by hand, and the gateway still
+uses MCPJungle groups. Spaces replace both, as part of the hub
 ([design](design.md#replacing-mcpjungle-with-the-hub)).
 
 Canopy treats an MCP server and a plugin marketplace as the same kind of thing: a **source**, with tools or
@@ -85,10 +86,10 @@ never the default.
 `common` is how a harmless utility reaches every profile without breaking rule 2. Leave out anything with a
 key that costs money or reaches private data: that belongs to whoever owns the key.
 
-## Planned config
+## Config
 
-The `space` key will be added to the existing source configs (`config/servers.json`,
-`config/marketplaces.json`), and one new file will name the spaces and profiles. A source with no `space`
+Each source in `servers.json` and `marketplaces.json` (marketplaces and `context` sources) takes a `space`
+key, and `spaces.json` names the spaces and profiles. A source with no `space`
 key belongs to the operator's own space. With no `spaces.json`, everything is one space, so a single-user
 install doesn't change.
 
@@ -115,18 +116,17 @@ install doesn't change.
 {"name": "home-assistant", "space": "household", "transport": "streamable_http", "url": "...", "bearer_token": "${HA_TOKEN}"}
 ```
 
-Validation will refuse:
+Validation refuses:
 - a profile that names a space its person isn't a member of;
 - a source in an unknown space;
 - two sources with the same name.
 
 ## How it maps onto the parts
 
-- **Hub:** a profile's servers are its `scope` (`Hub.tools(scope)`, `Hub.call(..., scope=)`), which is
-  already built.
-- **Catalogue:** a profile's marketplaces and servers fill `retrieval.scope()`, which already scopes both
-  kinds. This replaces the env vars with a per-request value.
-- **Front door:** one MCP endpoint. The bearer token picks the profile, and the profile sets the scope for
-  search, read, `skills/list` and `call_tool`.
+- **Hub:** a profile's servers are its `scope` (`Hub.tools(scope)`, `Hub.call(..., scope=)`).
+- **Catalogue:** a profile's marketplaces, context sources and servers are a `retrieval.Scope`, set per
+  request with `use_scope`, for search, read, list and `skills/list`.
+- **Front door:** one MCP endpoint. The bearer token (`profile-<name>.token`, made on first start) picks the
+  profile, and every client gets the same five tools, so nobody's tool list grows with what they can reach.
 - **Context and memory:** a context volume is a source, so it has a space like anything else. Memory
   namespaces get a space the same way.

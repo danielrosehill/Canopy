@@ -29,7 +29,8 @@ from . import gateway as gw
 from . import index as ix
 from . import ranking
 from . import scheduler
-from .retrieval import SCOPED, SEARCH_LIMIT, Search, filters as _filters, scope as _scope, summary as _summary
+from .retrieval import (SCOPED, SEARCH_LIMIT, Scope, Search, current_scope, filters as _filters, scope as _scope,
+                        summary as _summary, use_scope)
 from .skills_ext import Skills
 
 # Reachable only on the stack's internal network; the gateway is the front door.
@@ -338,7 +339,7 @@ def _owner_id(rid: str) -> str:
 def _read(ids: list[str], full_readme: bool = False) -> dict:
     out = {}
     for rid in ids:
-        if SCOPED and not _in_scope(_owner_id(rid)):
+        if current_scope() and not _in_scope(_owner_id(rid)):
             out[rid] = {"error": "no such record; use list or search to find the id"}
             continue
         r = db.execute("SELECT * FROM records WHERE id = %s", (rid,)).fetchone()
@@ -370,7 +371,7 @@ def _read(ids: list[str], full_readme: bool = False) -> dict:
             item.pop("content"); item.pop("path")
         elif r["kind"] == "mcp":
             srv = _mcp_servers(name=r["name"])["servers"][0]
-            if SCOPED:   # declaring and referencing records may be outside the scope
+            if current_scope():   # declaring and referencing records may be outside the scope
                 srv = {k: srv[k] for k in ("name", "on_gateway", "routes")}
             item |= srv
             item.pop("content")
@@ -636,13 +637,15 @@ for _t in mcp._tool_manager.list_tools():
 
 
 def _skill_rows(offset: int, limit: int) -> list[dict]:
-    return list(db.execute("SELECT id, plugin, name, path FROM records WHERE kind = 'skill' "
-                           "ORDER BY id OFFSET %s LIMIT %s", [offset, limit]))
+    where, args = _filters("skill", None, None)
+    return list(db.execute(f"SELECT r.id, r.plugin, r.name, r.path FROM records r WHERE {where} "
+                           "ORDER BY r.id OFFSET %s LIMIT %s", [*args, offset, limit]))
 
 
 def _skill_row(plugin: str, name: str) -> dict | None:
-    return db.execute("SELECT id, plugin, name, path FROM records WHERE kind = 'skill' "
-                      "AND plugin = %s AND name = %s", [plugin, name]).fetchone()
+    where, args = _filters("skill", plugin, None)
+    return db.execute(f"SELECT r.id, r.plugin, r.name, r.path FROM records r WHERE {where} AND r.name = %s",
+                      [*args, name]).fetchone()
 
 
 skills = Skills(_skill_rows, _skill_row, _plugin_root)
@@ -662,6 +665,35 @@ async def skills_rpc(request: Request) -> Response:
     """The MCP Skills extension, which the gateway cannot proxy. See skills_ext.py."""
     reply = await run_in_threadpool(skills.handle, await request.json())
     return JSONResponse(reply) if reply else Response(status_code=202)
+
+
+SCOPED_OPS = {"search": search, "read": read, "list": list_records}
+
+
+def _scoped_call(body: dict) -> dict:
+    """One front-door call, run as its profile. The scope is set here, in the worker thread."""
+    if SCOPED:
+        raise ValueError("this catalogue is scoped by its environment, so it takes no scope from a caller")
+    if "scope" not in body:
+        raise ValueError("scope is required: an unscoped call does not come through this route")
+    sc = Scope.from_dict(body["scope"]) if body["scope"] is not None else None   # None: a single-profile install
+    with use_scope(sc):
+        if body.get("op") == "skills":
+            return {"reply": skills.handle(body.get("message") or {})}
+        fn = SCOPED_OPS.get(body.get("op"))
+        if fn is None:
+            raise ValueError(f"op must be one of {sorted(SCOPED_OPS)} or skills")
+        return {"text": fn(**(body.get("args") or {}))}
+
+
+@mcp.custom_route("/scoped", methods=["POST"])
+async def scoped_rest(request: Request) -> Response:
+    """The front door's way in (src/canopy/front.py): search, read, list and the Skills extension, as one
+    profile sees them. Like every route here, reachable only on the stack's internal network."""
+    try:
+        return JSONResponse(await run_in_threadpool(_scoped_call, await request.json()))
+    except (ValueError, TypeError) as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
 
 
 def main() -> None:

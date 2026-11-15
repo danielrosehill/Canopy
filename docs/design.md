@@ -591,16 +591,29 @@ So the aggregator becomes Canopy code: `src/canopy/hub.py`, on the `mcp` SDK alr
   marketplaces. Out of scope answers the same as absent.
 - Who gets which scope is set by spaces and profiles: see [spaces](spaces.md).
 
-Status on 2026-11-15: **prototype.** `tests/test_hub.py` proves the above against the contract fixture
-over HTTP and an SDK server over stdio (`tests/fixtures/stdio_upstream.py`). Not built yet, in order:
+Status on 2026-11-15: **prototype, not in compose.** Built and tested:
 
-1. The front door: one MCP endpoint, the bearer token picks a [profile](spaces.md) and so the scope, listing the catalogue's tools,
-   `call_tool` and the core tools natively, and serving `skills/list` itself.
-2. The catalogue's `gateway_servers` and `gateway_tools` fed from the hub instead of MCPJungle's REST API,
-   and the toolbox calling the hub.
-3. Upstream OAuth, and the API's `/v1/gateway/*` routes on the hub.
-4. Then drop the `gateway` service, the `mcpjungle` database, `compat.json`, `scripts/bump-mcpjungle.py`
-   and the watch workflow, and turn the contract suite into the hub's.
+- `src/canopy/hub.py`: the aggregator above. `tests/test_hub.py`, against the contract fixture over HTTP and an
+  SDK server over stdio (`tests/fixtures/stdio_upstream.py`).
+- `src/canopy/spaces.py`: spaces and profiles from `spaces.json` ([spaces](spaces.md)), and a token per profile
+  in `profile-<name>.token`. `tests/test_spaces.py`.
+- `src/canopy/front.py`: the front door, `python -m canopy.front`. One MCP endpoint; the bearer token picks
+  the profile, and every client gets the same five tools: `search`, `read`, `list` (forwarded to the
+  catalogue's `POST /scoped` with the profile's scope), `list_servers` and `call_tool` (the hub, scoped).
+  `tests/test_front.py` runs two profiles through a real MCP client.
+- The catalogue's scope is per request (`retrieval.use_scope`, a ContextVar), not only per process, and
+  `skills/list` now honours it. A context source is scoped by name, since they all share the `context`
+  marketplace. `tests/contract/test_catalogue.py::test_a_front_door_call_is_scoped_by_its_profile`.
+
+Not built yet, in order:
+
+1. The front door as a compose service, with `skills/list` and `skills/get` on its own endpoint, and the
+   admin tools (`sync`, `embed`, `context_write`) for the operator's profile only. A core list of tools a
+   profile sees natively, if measurement shows the five are not enough.
+2. The catalogue's `gateway_servers` and `gateway_tools` fed from the hub instead of MCPJungle's REST API.
+3. Upstream OAuth, and the API's `/v1/gateway/*` routes and `canopy` CLI on the hub and spaces.
+4. Then drop the `gateway` and `toolbox` services, the `mcpjungle` database, `compat.json`,
+   `scripts/bump-mcpjungle.py` and the watch workflow, and turn the contract suite into the hub's.
 
 ## Order of work
 

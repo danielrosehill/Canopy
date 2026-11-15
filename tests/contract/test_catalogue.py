@@ -538,11 +538,31 @@ def test_a_scoped_catalogue_sees_only_its_marketplaces_and_servers(monkeypatch):
              "description": "Turn lights on", "path": "", "body": "call: listed natively", "hash": "a"},
             {"id": "tool:mail__send", "kind": "tool", "plugin": "", "name": "mail__send",
              "description": "Turn a draft into mail", "path": "", "body": "call: toolbox", "hash": "b"}])
-    monkeypatch.setattr(retrieval, "SCOPE_MARKETPLACES", ["shared"])
-    monkeypatch.setattr(retrieval, "SCOPE_SERVERS", ["ha"])
-    monkeypatch.setattr(retrieval, "SCOPED", True)
-    monkeypatch.setattr(cat, "SCOPED", True)
+    scope = retrieval.Scope(marketplaces=("shared",), servers=("ha",))
+    with retrieval.use_scope(scope):
+        _sees_only_shared_and_ha()
 
+
+def test_a_front_door_call_is_scoped_by_its_profile():
+    cat.db.execute("INSERT INTO plugins (name, marketplace) VALUES ('house', 'shared'), ('mine', 'private'), "
+                   "('notes-h', 'context'), ('notes-d', 'context')")
+    store(rec("skill:house/lights", plugin="house", description="Turn the lights on"), plugin="house")
+    store(rec("skill:mine/diary", plugin="mine", description="Turn the diary page"), plugin="mine")
+    store(rec("habit:notes-h/tidy", plugin="notes-h", description="Turn off when done") | {"kind": "habit"}, plugin="notes-h")
+    store(rec("habit:notes-d/late", plugin="notes-d", description="Turn in late") | {"kind": "habit"}, plugin="notes-d")
+    scope = {"marketplaces": ["shared"], "plugins": ["notes-h"], "servers": [], "call": "call_tool"}
+    ids = {r["id"] for r in json.loads(cat._scoped_call({"op": "list", "args": {}, "scope": scope})["text"])["records"]}
+    assert ids == {"skill:house/lights", "habit:notes-h/tidy"}   # context sources are named one by one
+    skills = cat._scoped_call({"op": "skills", "scope": scope, "message": {
+        "jsonrpc": "2.0", "id": 1, "method": "skills/list", "params": {}}})["reply"]
+    assert "diary" not in json.dumps(skills)
+    with pytest.raises(ValueError, match="scope is required"):
+        cat._scoped_call({"op": "list", "args": {}})
+    everything = json.loads(cat._scoped_call({"op": "list", "args": {}, "scope": None})["text"])
+    assert everything["total"] >= 4
+
+
+def _sees_only_shared_and_ha():
     ids = {r["id"] for r in json.loads(cat.list_records())["records"]}
     assert ids == {"skill:house/lights", "tool:ha__lights_on"}
 

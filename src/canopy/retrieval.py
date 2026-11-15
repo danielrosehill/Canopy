@@ -9,9 +9,11 @@ a line in `Search.__init__`. docs/design.md has the measurements behind each sta
 """
 from __future__ import annotations
 
+import contextlib
 import os
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import NamedTuple
 
@@ -43,24 +45,61 @@ def _env_list(name: str) -> list[str]:
     return [x.strip() for x in os.environ.get(name, "").split(",") if x.strip()]
 
 
-# A scoped catalogue: a second catalogue instance for another user, who must only see some of the
-# marketplaces and some of the gateway's servers. Either variable set turns scoping on, and then
-# anything not listed is invisible to search, list and read: plugin/skill/command/agent records
-# need their plugin in a CATALOGUE_MARKETPLACES marketplace, tool and mcp records need their server
-# in CATALOGUE_SERVERS. Unset (the default), the catalogue sees everything, as before.
+@dataclass(frozen=True)
+class Scope:
+    """What one caller may see. Plugin, skill, command and agent records need their plugin in one of
+    `marketplaces`, or named in `plugins` (context sources share one marketplace, so they are named one by
+    one); tool and mcp records need their server in `servers`. `call` is how a scoped caller reaches a tool
+    that is not in its list."""
+    marketplaces: tuple[str, ...] = ()
+    plugins: tuple[str, ...] = ()
+    servers: tuple[str, ...] = ()
+    call: str = "toolbox__call_tool"
+
+    @classmethod
+    def from_dict(cls, d: dict) -> Scope:
+        return cls(*(tuple(d.get(k) or ()) for k in ("marketplaces", "plugins", "servers")),
+                   d.get("call") or "toolbox__call_tool")
+
+    def to_dict(self) -> dict:
+        return {"marketplaces": list(self.marketplaces), "plugins": list(self.plugins),
+                "servers": list(self.servers), "call": self.call}
+
+
+# A scoped catalogue instance: a second catalogue for another user, set by environment. Either variable set
+# turns it on, and then anything not listed is invisible to search, list and read, and the catalogue serves
+# only those three tools. Unset (the default), the catalogue sees everything, as before. A front-door
+# request is scoped per call instead, by its profile (docs/spaces.md): see `use_scope`.
 SCOPE_MARKETPLACES = _env_list("CATALOGUE_MARKETPLACES")
 SCOPE_SERVERS = _env_list("CATALOGUE_SERVERS")
 SCOPED = bool(SCOPE_MARKETPLACES or SCOPE_SERVERS)
+_scope: ContextVar[Scope | None] = ContextVar(
+    "canopy_scope", default=Scope(tuple(SCOPE_MARKETPLACES), (), tuple(SCOPE_SERVERS)) if SCOPED else None)
+
+
+def current_scope() -> Scope | None:
+    return _scope.get()
+
+
+@contextlib.contextmanager
+def use_scope(sc: Scope | None) -> Iterator[None]:
+    """Run the block as a caller who sees only `sc`. Set it in the thread that does the work."""
+    token = _scope.set(sc)
+    try:
+        yield
+    finally:
+        _scope.reset(token)
 
 
 def scope() -> tuple[str, list] | None:
-    """The WHERE clause (on alias r) that keeps a scoped catalogue to its records; None when unscoped."""
-    if not SCOPED:
+    """The WHERE clause (on alias r) that keeps a scoped caller to its records; None when unscoped."""
+    sc = _scope.get()
+    if sc is None:
         return None
-    return ("((r.kind NOT IN ('tool', 'mcp') AND r.plugin IN "
-            "(SELECT name FROM plugins WHERE marketplace = ANY(%s))) "
+    return ("((r.kind NOT IN ('tool', 'mcp') AND (r.plugin = ANY(%s) OR r.plugin IN "
+            "(SELECT name FROM plugins WHERE marketplace = ANY(%s)))) "
             "OR (r.kind IN ('tool', 'mcp') AND split_part(r.name, '__', 1) = ANY(%s)))",
-            [SCOPE_MARKETPLACES, SCOPE_SERVERS])
+            [list(sc.plugins), list(sc.marketplaces), list(sc.servers)])
 
 
 def filters(kind: str | None, plugin: str | None, marketplace: str | None) -> tuple[str, list]:
@@ -250,8 +289,10 @@ class Search:
                      else desc[:SEARCH_DESC_CHARS - 1] + "…"}
             if r["kind"] == "tool":
                 # "Listed natively" is about the main client group; a scoped user calls through a toolbox.
-                native = not SCOPED and r["body"].startswith("call: listed natively")
-                d["call"] = f"mcp__{ix.CLIENT_NAME}__{r['name']}" if native else "toolbox__call_tool"
+                sc = current_scope()
+                native = sc is None and r["body"].startswith("call: listed natively")
+                d["call"] = (f"mcp__{ix.CLIENT_NAME}__{r['name']}" if native
+                             else sc.call if sc else "toolbox__call_tool")
             return d
 
         out = {"results": [item(rid) for rid in top]}
