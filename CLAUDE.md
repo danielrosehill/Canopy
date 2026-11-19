@@ -10,4 +10,4 @@ Code ported from private repos is rewritten or scanned first, and never brought 
 git history.
 
 This repo takes generic stack code only. Deployment work, debugging tools and parity tracking stay in the private overlay
-(`AI-Gateway-Manager`), and a fix here reaches the live stack only when the overlay moves its image pin.
+(`AI-Gateway-Manager`), and a fix here reaches the live stack once it is released: the overlay follows `CANOPY_TAG=v1` and updates nightly, so tag the next v1.NN after CI passes.
