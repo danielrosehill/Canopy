@@ -106,13 +106,16 @@ def _sync_worker() -> None:
             only, force, mode = _queue.popleft()
             _job["queued"] = len(_queue)
         with _sync_lock:
-            _run_pass(only, force, mode)
+            changed = _run_pass(only, force, mode)
+        if changed and EMBED_ON_SYNC and ix.EMBED_URL:
+            _kick_embed()   # now, not when the queue is empty: new records must not wait for a full pass behind
     if EMBED_ON_SYNC and ix.EMBED_URL:
-        _kick_embed()   # after the lock: a long first embed must not hold up the next sync
+        _kick_embed()   # and once the queue is empty: a sweep that retries what an earlier run left pending
 
 
-def _run_pass(only: str | None, force: bool, mode: str) -> None:
-    """`mode` is quick, full or gateway. A pass that changed nothing leaves the keyword index alone."""
+def _run_pass(only: str | None, force: bool, mode: str) -> bool:
+    """`mode` is quick, full or gateway. A pass that changed nothing leaves the keyword index alone.
+    Returns whether it changed anything."""
     _job["started"] = time.time()
     try:
         if mode == "gateway":
@@ -130,6 +133,7 @@ def _run_pass(only: str | None, force: bool, mode: str) -> None:
         ix.log(f"sync crashed: {e!r}")
     if changed:
         refresh_keywords()   # first: a new record is findable by keyword before it has a vector
+    return changed
 
 
 def refresh_keywords() -> None:

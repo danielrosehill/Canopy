@@ -92,3 +92,28 @@ def test_a_crashed_pass_does_not_stop_the_queue(cat, monkeypatch):
     cat._request_sync("b")
     wait_idle(cat)
     assert "a" in calls and cat._job["last"]["ok"] is False
+
+
+def test_a_pass_that_changed_something_embeds_before_the_queue_is_empty(cat, monkeypatch):
+    """A new plugin must not wait for a full pass queued behind it to get its vectors."""
+    release, events = threading.Event(), []
+
+    def sync(db, only=None, force=False, full=False):
+        events.append(("sync", only))
+        if only == "slow":
+            release.wait(5)
+        return {"ok": True, "changed": only == "new"}
+
+    monkeypatch.setattr(ix, "sync", sync)
+    monkeypatch.setattr(ix, "EMBED_URL", "http://embed")
+    monkeypatch.setattr(cat, "EMBED_ON_SYNC", True)
+    monkeypatch.setattr(cat, "_kick_embed", lambda: events.append(("embed",)))
+    cat._request_sync("new", False, "quick")
+    cat._request_sync("slow", False, "quick")
+    deadline = time.time() + 5
+    while ("embed",) not in events and time.time() < deadline:
+        time.sleep(0.01)
+    assert events[:2] == [("sync", "new"), ("embed",)]   # before the slow pass finished
+    release.set()
+    wait_idle(cat)
+    assert events[-1] == ("embed",)   # and the sweep once the queue is empty

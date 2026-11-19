@@ -442,7 +442,7 @@ named in `jobs.json` with nothing behind it is listed as not `runnable` and left
 number and m, h or d, and `after` chains a job to another's success. `EMBED_ON_SYNC` is off by
 default, so a schedule never spends money by surprise. When on, every sync embeds what it wrote, so a change
 is not half-indexed (measured 2026-11-05: 23 edited records with no vector dropped two of 28 test queries
-out of the top 6). The catalogue does not sync by itself: without `api` nothing is scheduled. Read `canopy jobs`, or `GET /v1/jobs`.
+out of the top 6). Reviewed 2026-11-19 for bursts of new plugins: the embed started only once the sync queue was empty, so a plugin pushed just before the hourly full pass got no vectors until that pass ended; one failed batch ended the whole run; and batches went one at a time. Now an embed starts after each pass that changed something, a failed batch is skipped, and batches go `EMBED_PARALLEL` at once (see architecture.md). Indexing was not the slow part: a quick pass reindexing one plugin took 4.7 s live, and plugins in one pass index 8 at once. The catalogue does not sync by itself: without `api` nothing is scheduled. Read `canopy jobs`, or `GET /v1/jobs`.
 
 ## Cache
 

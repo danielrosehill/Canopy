@@ -41,6 +41,10 @@ EMBED_URL = (os.environ.get("CANOPY_API_URL", "http://api:8090").rstrip("/") + "
              if os.environ.get("EMBED_PROVIDER") else "")
 API_TOKEN_FILE = Path(os.environ.get("CANOPY_API_DIR", "/api")) / "token"
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "bge-m3")   # the canonical name: see system.model_map
+# Records per embedding call, and calls at once. A hosted route takes several at once; a local Ollama
+# serves one at a time, so more would only queue inside it.
+EMBED_BATCH = int(os.environ.get("EMBED_BATCH", "32"))
+EMBED_PARALLEL = int(os.environ.get("EMBED_PARALLEL") or (1 if os.environ.get("EMBED_PROVIDER") == "local" else 4))
 # Tool records come from what this group serves; empty means everything the services
 # identity can see. CORE_GROUP is what agents list natively; other tools go via toolbox.
 TOOLS_GROUP = os.environ.get("TOOLS_GROUP", "")
@@ -415,30 +419,54 @@ def pending_estimate(db: store.Db) -> dict:
             "est_tokens": sum(len(embed_text(dict(r))) for r in rows) // 4}
 
 
-def embed_pending(db: store.Db, batch: int = 32) -> tuple[int, str | None]:
+def embed_pending(db: store.Db, batch: int = EMBED_BATCH, parallel: int = EMBED_PARALLEL,
+                  retry_sec: float = 5) -> tuple[int, str | None]:
     """Embed records whose content has no vector yet. Keyed by content hash, so
-    unchanged records are never embedded twice."""
+    unchanged records are never embedded twice.
+
+    Batches go `parallel` at a time. A batch that fails twice is skipped and its records stay pending
+    for the next run, so one bad batch does not hold up the rest. Once three batches have failed and
+    fewer have worked, the provider is taken to be down and the run stops rather than try every batch."""
     rows = _pending(db)
-    done = 0
-    for i in range(0, len(rows), batch):
-        chunk = rows[i:i + batch]
+    chunks = [rows[i:i + batch] for i in range(0, len(rows), batch)]
+    failures: list[str] = []
+    succeeded = [0]
+    count_lock = threading.Lock()
+
+    def down() -> bool:
+        with count_lock:
+            return len(failures) >= 3 and len(failures) > succeeded[0]
+
+    def one(chunk: list[store.Row]) -> int:
+        if down():
+            return 0
         texts = [embed_text(dict(r)) for r in chunk]
         try:
             try:
                 vecs = embed(texts)
-            except Exception:  # noqa: BLE001 — one retry: a provider blip must not end a long run
-                time.sleep(5)
+            except Exception:  # noqa: BLE001 — one retry: a provider blip must not lose the batch
+                time.sleep(retry_sec)
                 vecs = embed(texts)
         except Exception as e:  # noqa: BLE001 — reported; the records stay pending
-            return done, f"embedding stopped after {done}/{len(rows)}: {e}"
+            with count_lock:
+                failures.append(str(e))
+            return 0
         with write_lock, db:
             for r, v in zip(chunk, vecs):
                 a = np.asarray(v, dtype=np.float32)
                 a /= np.linalg.norm(a) or 1.0
                 db.execute("UPDATE records SET embedding = %s, embed_model = %s WHERE embed_key = %s",
                            (a, EMBED_MODEL, r["embed_key"]))
-        done += len(chunk)
-    return done, None
+        with count_lock:
+            succeeded[0] += 1
+        return len(chunk)
+
+    with ThreadPoolExecutor(max(1, parallel)) as ex:
+        done = sum(ex.map(one, chunks))
+    if not failures:
+        return done, None
+    return done, (f"{len(failures)} of {len(chunks)} batches failed, {len(rows) - done} records still pending"
+                  f"{' (provider looks down, run stopped)' if down() else ''}: {failures[0]}")
 
 
 # --- marketplaces --------------------------------------------------------------

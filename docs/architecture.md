@@ -232,9 +232,16 @@ and `dry_run=false` starts the run. Until it has a vector, a record ranks on its
 
 **Sync requests queue, in order.** `catalogue__sync` adds its request to a queue and one worker drains it,
 so a request made during a pass waits for it rather than replacing an earlier one, and a request identical to
-one still waiting is dropped. `queued` in the reply is how many are waiting. With `EMBED_ON_SYNC=true` the
-embedding runs after the queue is empty and outside the sync lock, so a long first embed does not hold up the
-next sync, and an embed asked for during another runs once more afterwards. The keyword index works the same
+one still waiting is dropped. `queued` in the reply is how many are waiting. With `EMBED_ON_SYNC=true` an
+embed starts after every pass that changed something, outside the sync lock, so new records get vectors while
+later passes still wait in the queue, and a long first embed does not hold up the next sync. Another starts
+once the queue is empty, as a sweep that retries anything an earlier run left pending. An embed asked for
+during another runs once more afterwards.
+
+**Embedding runs batches at once.** `embed_pending` sends `EMBED_BATCH` records (32) per call and
+`EMBED_PARALLEL` calls at a time: 1 for `EMBED_PROVIDER=local`, since Ollama serves one at a time, else 4.
+A batch that fails twice is skipped and its records stay pending for the next sweep. Once three batches
+have failed and fewer have worked, the provider is taken to be down and the run stops. The keyword index works the same
 way: a refresh asked for during another is not dropped.
 
 **Freshness.** `sync-recent` runs every minute, and `canopy sync` with no arguments does the same. One pass
