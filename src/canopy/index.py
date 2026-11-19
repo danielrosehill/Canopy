@@ -43,7 +43,7 @@ API_TOKEN_FILE = Path(os.environ.get("CANOPY_API_DIR", "/api")) / "token"
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "bge-m3")   # the canonical name: see system.model_map
 # Records per embedding call, and calls at once. A hosted route takes several at once; a local Ollama
 # serves one at a time, so more would only queue inside it.
-EMBED_BATCH = int(os.environ.get("EMBED_BATCH", "32"))
+EMBED_BATCH = int(os.environ.get("EMBED_BATCH") or 32)   # compose passes unset as ""
 EMBED_PARALLEL = int(os.environ.get("EMBED_PARALLEL") or (1 if os.environ.get("EMBED_PROVIDER") == "local" else 4))
 # Tool records come from what this group serves; empty means everything the services
 # identity can see. CORE_GROUP is what agents list natively; other tools go via toolbox.
