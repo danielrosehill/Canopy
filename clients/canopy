@@ -6,6 +6,7 @@
     canopy up [compose args]        start the stack and wait for the seed
     canopy down [compose args]      stop it. Data stays in the folders
     canopy update [--no-backup]     back up, move to the newest release of CANOPY_TAG, and go back if unhealthy
+    canopy auto-update on [HH:MM] | off | status    run `canopy update` every night from cron (default 04:30)
     canopy status                   health of every component
     canopy servers | groups | tools list what the gateway has
     canopy add-server FILE [--replace]    FILE is JSON, or - for stdin
@@ -59,6 +60,7 @@ import base64
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -456,6 +458,8 @@ def update(args: list[str] | tuple = ()) -> int:
     runs first, once there is a new version to move to. The backup of a stack that is down is skipped."""
     if IN_CLI:
         sys.exit("run `canopy update` on the host, not in the cli container")
+    if places().overlay:
+        overlay_sync()   # so a CANOPY_TAG changed in the overlay is the one updated to
     before = canopy_images()
     if not before:
         sys.exit("cannot read the stack's images: check `canopy compose config`")
@@ -506,6 +510,51 @@ def update(args: list[str] | tuple = ()) -> int:
         print("if the new version migrated the database, `canopy restore --replace` brings back the backup "
               "taken just now", file=sys.stderr)
     return 1
+
+
+CRON_MARK = "# canopy auto-update"
+
+
+def crontab_lines() -> list[str]:
+    done = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
+    if done.returncode == 0:
+        return done.stdout.splitlines()
+    if "no crontab" in done.stderr:
+        return []
+    sys.exit(f"cannot read the crontab, so nothing was changed: {done.stderr.strip()}")
+
+
+def auto_update(args: list[str]) -> int:
+    """A crontab line per checkout that runs `canopy update` once a day. Safe to leave unattended because
+    `update` backs up first and goes back if the new version is unhealthy. Follow a major (CANOPY_TAG=v1)
+    for it to move to new releases: a full tag such as v1.10 never changes."""
+    if IN_CLI:
+        sys.exit("run `canopy auto-update` on the host, not in the cli container")
+    action = args[0] if args else "status"
+    mark = f"{CRON_MARK} {REPO}"
+    lines = crontab_lines()
+    mine = [ln for ln in lines if ln.endswith(mark)]
+    log = places().data / "auto-update.log"
+    if action == "status":
+        tag = setting("CANOPY_TAG", "")
+        print(f"on: {mine[0]}" if mine else "off")
+        if mine and not re.fullmatch(r"v\d+|main", tag):
+            print(f"CANOPY_TAG is {tag or 'unset'}, a fixed release, so the nightly update has nothing to move to. "
+                  "Set CANOPY_TAG=v1 to follow new releases.")
+        return 0
+    rest = [ln for ln in lines if not ln.endswith(mark)]
+    if action == "on":
+        m = re.fullmatch(r"([01]?\d|2[0-3]):([0-5]\d)", args[1] if len(args) > 1 else "04:30")
+        if not m:
+            sys.exit("the time is HH:MM, such as 04:30")
+        q = shlex.quote
+        rest.append(f"{int(m[2])} {int(m[1])} * * * date >> {q(str(log))}; PATH={q(os.environ.get('PATH', ''))} "
+                    f"{q(sys.executable)} {q(str(REPO / 'clients/canopy'))} update >> {q(str(log))} 2>&1 {mark}")
+    elif action != "off":
+        sys.exit("canopy auto-update on [HH:MM] | off | status")
+    subprocess.run(["crontab", "-"], input="".join(f"{ln}\n" for ln in rest), text=True, check=True)
+    print(f"on: {rest[-1]}" if action == "on" else "off")
+    return 0
 
 
 def seed_exit_code() -> int:
@@ -621,6 +670,8 @@ def main() -> int:
         return up(args)
     if cmd == "update":
         return update(args)
+    if cmd == "auto-update":
+        return auto_update(args)
     if cmd == "down":
         return compose("down", *args)
     if cmd == "compose":

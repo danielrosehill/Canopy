@@ -43,6 +43,12 @@ fails: going back cannot undo a database migration, but `canopy restore --replac
 [Updating](customising.md#updating). Keep your own changes in the agent-data folder, because `update` stops if
 the checkout has local edits.
 
+To have it happen by itself, run `canopy auto-update on` (or `on 05:15`). It adds one line to your crontab that
+runs `canopy update` every night, logged to `$CANOPY_DATA/auto-update.log`; `off` removes it and `status` shows
+it. With `CANOPY_TAG=v1` the stack then follows each new v1 release; a full tag such as `v1.10` never moves, so
+there is nothing to update to. With an overlay, `update` pulls it first, so a `CANOPY_TAG` changed there is the
+one it moves to.
+
 ## Validate and benchmark
 
 Ask your agent to validate Canopy, or run `/canopy-connector:validate`. It is one skill because the two questions

@@ -483,7 +483,7 @@ counts as stale. Not yet run against a real target, or at the size of a real ind
 MCPJungle is the piece we do not control. Canopy depends on specific behaviour of it, listed in
 [architecture](architecture.md#gateway-behaviour-the-seed-depends-on).
 
-1. Every image is pinned. Nothing floats, and auto-updaters are off for Canopy's containers.
+1. Every image is pinned to a tag. A deployment may follow a major (`CANOPY_TAG=v1`), which moves only when a release is cut from a commit CI passed, and `canopy auto-update on` runs `canopy update` nightly from cron. Added 2026-11-19: a fixed tag meant every fix waited for someone to move the pin by hand.
 2. `compat.json` lists the MCPJungle versions Canopy has been tested against.
 3. A scheduled CI job watches MCPJungle releases, starts the real stack on the new version, and runs
    the **contract suite**: one test per behaviour we rely on, including identities, group rebuilds,
@@ -498,7 +498,7 @@ As built, a backup runs only when there is a new version to move to, and only `b
 would cut off a `restore-test`. A failed update goes back to the old images and prints the restore command rather
 than running it, because that would discard whatever was written since. The search comparison is not built.
 
-Canopy ships no Watchtower: the original is archived, and an auto-updater would skip step 3.
+Canopy ships no Watchtower: the original is archived, and an auto-updater would skip step 4's backup, health check and rollback. `canopy auto-update` is cron running step 4 itself, so it keeps them.
 
 ## CLI container
 

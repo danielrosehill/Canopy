@@ -167,6 +167,7 @@ The API listens on `127.0.0.1:8090`, and `canopy` is a client of it:
 ```bash
 canopy status                       # every component in one reply
 canopy update                       # the newest release, and back again if it is unhealthy
+canopy auto-update on               # the same, every night at 04:30, from cron
 canopy servers                      # also groups, tools
 canopy add-server upstream.json     # registers it, confirms by reading back, saves it to config
 canopy remove-server NAME
