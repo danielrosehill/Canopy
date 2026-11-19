@@ -1,11 +1,19 @@
 name: Release
 
-# Pushing a tag such as v1.00 gives that commit's images two more names, v1.00 and v1, on Docker Hub
-# and on the GHCR mirror. Nothing is rebuilt, so a release is the exact image CI tested. Tag a commit
-# only after CI has passed on it.
+# A release gives a commit's images two more names, v1.00 and v1, on Docker Hub and on the GHCR mirror.
+# Nothing is rebuilt, so a release is the exact image CI tested. CI calls this after it tags a commit
+# (a tag pushed by a workflow starts no other workflow); pushing a tag by hand runs it too.
 on:
   push:
     tags: ["v[0-9]*.[0-9]*"]
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
+      sha:
+        type: string
+        required: true
 
 jobs:
   images:
@@ -27,11 +35,12 @@ jobs:
         run: |
           hub=danielrosehill/canopy
           ghcr=ghcr.io/danielrosehill/canopy
-          version="$GITHUB_REF_NAME"
+          version="${{ inputs.tag || github.ref_name }}"
+          sha="${{ inputs.sha || github.sha }}"
           major="${version%%.*}"
           for prefix in "" "cli-"; do
             docker buildx imagetools create \
               -t "$hub:$prefix$version" -t "$hub:$prefix$major" \
               -t "$ghcr:$prefix$version" -t "$ghcr:$prefix$major" \
-              "$hub:$prefix$GITHUB_SHA"
+              "$hub:$prefix$sha"
           done

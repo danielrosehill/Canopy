@@ -5,3 +5,4 @@ __pycache__/
 .pytest_cache/
 backups/
 docs/diagrams/.build/
+CLAUDE.local.md

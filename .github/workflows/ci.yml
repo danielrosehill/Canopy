@@ -97,3 +97,54 @@ jobs:
             danielrosehill/canopy:cli-${{ github.sha }}
             ghcr.io/danielrosehill/canopy:cli-main
             ghcr.io/danielrosehill/canopy:cli-${{ github.sha }}
+
+  # Every push to main that passes and changes what ships becomes the next release, v<major>.<NN>. A push
+  # that only touches docs, tests or plugins makes none: the plugins are served from main, not from a release.
+  tag:
+    needs: image
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    concurrency: { group: release, cancel-in-progress: false }
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.next.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - id: next
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch -q --tags --force
+          last=$(git tag --list 'v[0-9]*.[0-9]*' --sort=-v:refname | head -1)
+          if [ -n "$last" ] && git merge-base --is-ancestor "$GITHUB_SHA" "$last"; then
+            echo "already released in $last"; exit 0
+          fi
+          if [ -n "$last" ] && git diff --quiet "$last" "$GITHUB_SHA" -- \
+              src clients cli config Dockerfile compose.yaml compose.overlay.yaml pyproject.toml uv.lock scripts/db-init.sh; then
+            echo "nothing that ships changed since $last"; exit 0
+          fi
+          major=${last%%.*}; major=${major:-v1}
+          n=$(( ${last:+10#${last#*.}} + 1 ))
+          [ "$n" -le 99 ] || { echo "::error::$major.99 reached: medium tier, the next release is a new major, cut by hand"; exit 1; }
+          tag=$(printf '%s.%02d' "$major" "$n")
+          git config user.name github-actions
+          git config user.email github-actions@users.noreply.github.com
+          git tag -a "$tag" -m "$tag" "$GITHUB_SHA"
+          git push -q origin "$tag"
+          gh release create "$tag" --verify-tag --title "$tag" --generate-notes --notes-start-tag "$last"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: tag
+    if: needs.tag.outputs.tag != ''
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.tag.outputs.tag }}
+      sha: ${{ github.sha }}
+    secrets: inherit

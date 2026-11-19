@@ -2,12 +2,12 @@
 
 Release tier: medium
 
-Public repo. Never commit credentials, private hostnames or addresses, personal upstream lists,
-or private skills. Start from the brief, which lives outside this repo:
-`~/repos/github/mcp-servers/AI-Gateway-Manager/planning/2026-11-05-public-gateway-stack.md`.
+Public repo. It takes generic stack code only. Never commit credentials, private hostnames or addresses,
+personal upstream lists, private skills, or anything about a particular deployment: who runs it, its people,
+its machines, its schedule or its settings. Examples use made-up names. Private context for this checkout,
+if any, is in `CLAUDE.local.md`, which is not committed.
 
-Code ported from private repos is rewritten or scanned first, and never brought over with its
-git history.
+Code ported from private repos is rewritten or scanned first, and never brought over with its git history.
 
-This repo takes generic stack code only. Deployment work, debugging tools and parity tracking stay in the private overlay
-(`AI-Gateway-Manager`), and a fix here reaches the live stack once it is released: the overlay follows `CANOPY_TAG=v1` and updates nightly, so tag the next v1.NN after CI passes.
+Releases are cut by CI: each push to `main` that passes CI is tagged with the next `v1.NN` (see
+`.github/workflows/ci.yml`), and `release.yml` names its images.

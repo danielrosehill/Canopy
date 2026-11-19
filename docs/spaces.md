@@ -11,16 +11,16 @@ Canopy treats tools and plugins alike, and shares them the same way. What is sha
 alone. An inventory server can let both people look things up while only one can change stock; a box-control
 server on a machine is admin, whoever lives in the room it sits in.
 
-## The household this was designed for
+## An example household
 
-Two people at home, each with a small business. The business names here are made up.
+Two people at home, each with a small business. Every name here is made up.
 
 | | Who | Kind |
 | --- | --- | --- |
-| <img src="spaces/daniel.svg" width="48"> | **Daniel** | Person |
-| <img src="spaces/ridgeline.svg" width="48"> | **Ridgeline**, Daniel's business | Organisation |
-| <img src="spaces/hannah.svg" width="48"> | **Hannah**, Daniel's wife | Person |
-| <img src="spaces/willow.svg" width="48"> | **Willow Studio**, Hannah's business | Organisation |
+| <img src="spaces/alex.svg" width="48"> | **Alex** | Person |
+| <img src="spaces/ridgeline.svg" width="48"> | **Ridgeline**, Alex's business | Organisation |
+| <img src="spaces/sam.svg" width="48"> | **Sam**, Alex's partner | Person |
+| <img src="spaces/willow.svg" width="48"> | **Willow Studio**, Sam's business | Organisation |
 | <img src="spaces/household.svg" width="48"> | **Household**, what both use | Shared |
 
 Most things are private to one of them. A few are useful to both, like Home Assistant. This setup isn't an
@@ -47,14 +47,14 @@ only the tools Household claims.
 ```mermaid
 flowchart LR
     subgraph profiles["Profiles (one token each)"]
-        dp["Daniel, personal (everything he has)"]
-        dw["Daniel, work"]
-        hp["Hannah"]
+        dp["Alex, personal (everything he has)"]
+        dw["Alex, work"]
+        hp["Sam"]
     end
     subgraph spaces["Spaces (each tool and plugin in exactly one)"]
-        d["Daniel<br/>his habits, notes, personal Google"]
+        d["Alex<br/>their habits, notes, personal Google"]
         r["Ridgeline<br/>business email, accounts, client repos"]
-        h["Hannah<br/>her habits, notes, personal Google"]
+        h["Sam<br/>their habits, notes, personal Google"]
         w["Willow Studio<br/>booking, studio site"]
         home["Household<br/>Home Assistant, inventory look-up, shared calendar"]
     end
@@ -69,21 +69,21 @@ flowchart LR
 
 | Space | Members | Claims |
 | --- | --- | --- |
-| `daniel` | Daniel | Nothing listed: everything unclaimed, which includes all admin (machines, NAS, firewall), his context volume and the inventory's write tools |
-| `ridgeline` | Daniel | `business-mail__*`, `accounts__*`, the business's marketplace |
-| `hannah` | Hannah | Her context volume (`hannah-notes`), `hannah-mail__*` |
-| `willow` | Hannah | `booking__*`, `studio-site__*` |
-| `household` | Daniel, Hannah | `home-assistant__*`, `inventory__search_items`, `inventory__get_*`, `calendar-home__*`, the household marketplace |
+| `alex` | Alex | Nothing listed: everything unclaimed, which includes all admin (machines, NAS, firewall), their context volume and the inventory's write tools |
+| `ridgeline` | Alex | `business-mail__*`, `accounts__*`, the business's marketplace |
+| `sam` | Sam | Their context volume (`sam-notes`), `sam-mail__*` |
+| `willow` | Sam | `booking__*`, `studio-site__*` |
+| `household` | Alex, Sam | `home-assistant__*`, `inventory__search_items`, `inventory__get_*`, `calendar-home__*`, the household marketplace |
 | `common` | Everyone | Keyless, harmless utilities: `time__*`, `fx__*`, docs lookup |
 
 | Profile | Person | Spaces | New notes and memories go to |
 | --- | --- | --- | --- |
-| `daniel` | Daniel | `daniel`, `ridgeline`, `household`, `common` | `daniel` |
-| `daniel-work` | Daniel | `ridgeline`, `common` | `ridgeline` |
-| `hannah` | Hannah | `hannah`, `willow`, `household`, `common` | `hannah` |
+| `alex` | Alex | `alex`, `ridgeline`, `household`, `common` | `alex` |
+| `alex-work` | Alex | `ridgeline`, `common` | `ridgeline` |
+| `sam` | Sam | `sam`, `willow`, `household`, `common` | `sam` |
 
-Which spaces go in which profile is the user's choice. Daniel's personal profile sees everything he belongs to;
-his work profile is a strict subset for a business-only client, so home and personal tools stay out of business
+Which spaces go in which profile is the user's choice. Alex's personal profile sees everything he belongs to;
+their work profile is a strict subset for a business-only client, so home and personal tools stay out of business
 sessions. A profile writes to its first space unless told otherwise. Writing to Household is a deliberate act,
 never the default.
 
@@ -97,22 +97,22 @@ lives in one place, so it reads as a whole.
 
 ```json
 {
-  "operator": "daniel",
+  "operator": "alex",
   "spaces": {
-    "daniel":    {"members": ["daniel"]},
-    "ridgeline": {"members": ["daniel"], "tools": ["business-mail__*", "accounts__*"],
+    "alex":    {"members": ["alex"]},
+    "ridgeline": {"members": ["alex"], "tools": ["business-mail__*", "accounts__*"],
                   "marketplaces": ["ridgeline-skills"]},
-    "hannah":    {"members": ["hannah"], "tools": ["hannah-mail__*"], "plugins": ["hannah-notes"]},
-    "willow":    {"members": ["hannah"], "tools": ["booking__*", "studio-site__*"]},
-    "household": {"members": ["daniel", "hannah"],
+    "sam":    {"members": ["sam"], "tools": ["sam-mail__*"], "plugins": ["sam-notes"]},
+    "willow":    {"members": ["sam"], "tools": ["booking__*", "studio-site__*"]},
+    "household": {"members": ["alex", "sam"],
                   "tools": ["home-assistant__*", "inventory__search_items", "inventory__get_*", "calendar-home__*"],
                   "marketplaces": ["household-skills"]},
-    "common":    {"members": ["daniel", "hannah"], "tools": ["time__*", "fx__*"]}
+    "common":    {"members": ["alex", "sam"], "tools": ["time__*", "fx__*"]}
   },
   "profiles": {
-    "daniel":      {"person": "daniel", "spaces": ["daniel", "ridgeline", "household", "common"]},
-    "daniel-work": {"person": "daniel", "spaces": ["ridgeline", "common"]},
-    "hannah":      {"person": "hannah", "spaces": ["hannah", "willow", "household", "common"]}
+    "alex":      {"person": "alex", "spaces": ["alex", "ridgeline", "household", "common"]},
+    "alex-work": {"person": "alex", "spaces": ["ridgeline", "common"]},
+    "sam":      {"person": "sam", "spaces": ["sam", "willow", "household", "common"]}
   }
 }
 ```

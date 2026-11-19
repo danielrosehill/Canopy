@@ -20,7 +20,7 @@ def cron(monkeypatch, tmp_path):
     def run(cmd, input=None, capture_output=False, text=False, check=False):
         if cmd == ["crontab", "-l"]:
             if tab["missing"]:
-                return subprocess.CompletedProcess(cmd, 1, "", "no crontab for daniel\n")
+                return subprocess.CompletedProcess(cmd, 1, "", "no crontab for alex\n")
             return subprocess.CompletedProcess(cmd, 0, "".join(f"{x}\n" for x in tab["lines"]), "")
         if cmd == ["crontab", "-"]:
             tab["lines"] = input.splitlines()

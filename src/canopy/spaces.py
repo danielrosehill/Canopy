@@ -14,13 +14,13 @@ everything that resolves to one of its spaces.
 
 `agent-data/config/spaces.json`:
 
-    {"operator": "daniel",
+    {"operator": "alex",
      "spaces": {
-       "daniel":    {"members": ["daniel"]},
-       "household": {"members": ["daniel", "hannah"],
+       "alex":    {"members": ["alex"]},
+       "household": {"members": ["alex", "sam"],
                      "tools": ["home-assistant__*", "inventory__search_items"],
-                     "marketplaces": ["household-skills"], "plugins": ["hannah-notes"]}},
-     "profiles": {"daniel": {"person": "daniel", "spaces": ["daniel", "household"]}, ...}}
+                     "marketplaces": ["household-skills"], "plugins": ["sam-notes"]}},
+     "profiles": {"alex": {"person": "alex", "spaces": ["alex", "household"]}, ...}}
 
 The operator's space, named after the operator, holds everything nobody claimed, so it lists nothing.
 With no spaces.json there is one profile, `default`, that sees everything.

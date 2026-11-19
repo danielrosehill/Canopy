@@ -24,18 +24,18 @@ from canopy.front import Front  # noqa: E402
 from canopy.hub import Hub  # noqa: E402
 from canopy.spaces import Spaces  # noqa: E402
 
-DOC = {"operator": "daniel",
-       "spaces": {"daniel": {"members": ["daniel"]},
-                  "ridgeline": {"members": ["daniel"], "tools": ["invoices__*"]},
-                  "hannah": {"members": ["hannah"]},
-                  "willow": {"members": ["hannah"], "tools": ["booking__*"]},
-                  "household": {"members": ["daniel", "hannah"], "tools": ["ha__*", "inventory__inventory_a",
+DOC = {"operator": "alex",
+       "spaces": {"alex": {"members": ["alex"]},
+                  "ridgeline": {"members": ["alex"], "tools": ["invoices__*"]},
+                  "sam": {"members": ["sam"]},
+                  "willow": {"members": ["sam"], "tools": ["booking__*"]},
+                  "household": {"members": ["alex", "sam"], "tools": ["ha__*", "inventory__inventory_a",
                                                                          "letters__whoami"],
                                 "accounts": ["letters:family"]}},
-       "profiles": {"daniel": {"person": "daniel", "spaces": ["daniel", "ridgeline", "household"]},
-                    "daniel-work": {"person": "daniel", "spaces": ["ridgeline"]},
-                    "hannah": {"person": "hannah", "spaces": ["hannah", "willow", "household"]}}}
-TOKENS = {"tok-work": "daniel-work", "tok-hannah": "hannah", "tok-daniel": "daniel"}
+       "profiles": {"alex": {"person": "alex", "spaces": ["alex", "ridgeline", "household"]},
+                    "alex-work": {"person": "alex", "spaces": ["ridgeline"]},
+                    "sam": {"person": "sam", "spaces": ["sam", "willow", "household"]}}}
+TOKENS = {"tok-work": "alex-work", "tok-sam": "sam", "tok-alex": "alex"}
 STDIO = str(Path(__file__).parent / "fixtures" / "stdio_upstream.py")
 sent: list[dict] = []
 
@@ -84,14 +84,14 @@ def as_profile(url: str, token: str, body):
 def test_everyone_gets_the_same_small_tool_list(front_url):
     async def body(s):
         return sorted(t.name for t in (await s.list_tools()).tools)
-    assert as_profile(front_url, "tok-hannah", body) == ["call_tool", "list", "list_servers", "read", "search"]
+    assert as_profile(front_url, "tok-sam", body) == ["call_tool", "list", "list_servers", "read", "search"]
 
 
 def test_list_servers_counts_only_the_tools_a_profile_has(front_url):
     async def body(s):
         return {x["name"]: x["tools"] for x in
                 json.loads((await s.call_tool("list_servers", {})).content[0].text)["servers"]}
-    assert as_profile(front_url, "tok-hannah", body) == {"ha": 2, "booking": 2, "inventory": 1, "letters": 1}
+    assert as_profile(front_url, "tok-sam", body) == {"ha": 2, "booking": 2, "inventory": 1, "letters": 1}
     assert as_profile(front_url, "tok-work", body) == {"invoices": 2}
 
 
@@ -100,7 +100,7 @@ def test_one_server_can_share_one_tool_and_keep_the_rest(front_url):
         a = await s.call_tool("call_tool", {"name": "inventory__inventory_a"})
         b = await s.call_tool("call_tool", {"name": "inventory__inventory_b"})
         return (a.isError, a.content[0].text), (b.isError, b.content[0].text)
-    shared, kept = as_profile(front_url, "tok-hannah", body)
+    shared, kept = as_profile(front_url, "tok-sam", body)
     assert shared == (False, "inventory:inventory_a")
     assert kept[0] and "no tool 'inventory__inventory_b'" in kept[1]
 
@@ -110,9 +110,9 @@ def test_a_shared_server_answers_both_and_a_private_one_only_its_owner(front_url
         r = await s.call_tool("call_tool", {"name": name})
         return r.isError, r.content[0].text
 
-    async def hannah(s):
+    async def sam(s):
         return await call(s, "ha__ha_a"), await call(s, "invoices__invoices_a")
-    shared, private = as_profile(front_url, "tok-hannah", hannah)
+    shared, private = as_profile(front_url, "tok-sam", sam)
     assert shared == (False, "ha:ha_a")
     assert private[0] and "no tool 'invoices__invoices_a'" in private[1]
 
@@ -128,7 +128,7 @@ def test_search_reaches_the_catalogue_with_the_profiles_scope(front_url):
 
     async def body(s):
         return json.loads((await s.call_tool("search", {"query": "lights"})).content[0].text)
-    assert as_profile(front_url, "tok-hannah", body) == {"op": "search", "spaces": ["hannah", "willow", "household"]}
+    assert as_profile(front_url, "tok-sam", body) == {"op": "search", "spaces": ["sam", "willow", "household"]}
     assert sent[-1]["scope"]["call"] == "call_tool" and sent[-1]["args"] == {"query": "lights"}
 
 
@@ -147,18 +147,18 @@ def test_one_newsletter_server_two_people_each_their_own_accounts(front_url):
         r = await s.call_tool("call_tool", args)
         return r.isError, r.content[0].text
 
-    async def hannah(s):
+    async def sam(s):
         servers = json.loads((await s.call_tool("list_servers", {})).content[0].text)["servers"]
         return ({x["name"]: x.get("accounts") for x in servers}["letters"],
                 await call(s), await call(s, "personal"))
-    accounts, own, other = as_profile(front_url, "tok-hannah", hannah)
+    accounts, own, other = as_profile(front_url, "tok-sam", sam)
     assert accounts == ["family"]
     assert own == (False, "family|")              # her only account: no need to name it
     assert other[0] and "no account 'personal'" in other[1]
 
-    async def daniel(s):
+    async def alex(s):
         return await call(s), await call(s, "personal"), await call(s, "family")
-    unnamed, personal, family = as_profile(front_url, "tok-daniel", daniel)
+    unnamed, personal, family = as_profile(front_url, "tok-alex", alex)
     assert unnamed[0] and "several accounts" in unnamed[1]
     assert personal == (False, "personal|") and family == (False, "family|")
 

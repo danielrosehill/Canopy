@@ -246,8 +246,10 @@ data are not touched. Going back cannot undo a database migration, so read a rel
 | A commit hash | Stays on that commit: the strictest pin, for a deployment you test before moving |
 
 `canopy update` puts your Canopy checkout on the matching commit, detached, and stops if the checkout has
-local changes. A release is the exact image CI tested, under another name: pushing a tag runs
-`.github/workflows/release.yml`, so tag a commit only after CI has passed on it.
+local changes. A release is the exact image CI tested, under another name. CI cuts one by itself: a push to
+`main` that passes and changes what ships (`src`, `clients`, `cli`, `config`, the Dockerfile, compose files or
+dependencies) is tagged with the next `v1.NN` and released. Docs, tests and plugins make none. `canopy
+auto-update on` then moves a deployment that follows `v1` onto it overnight.
 
 Images are on [Docker Hub](https://hub.docker.com/r/danielrosehill/canopy), with the same tags on GHCR
 (`ghcr.io/danielrosehill/canopy`) as a mirror. To use the mirror, add the image to your override file.
