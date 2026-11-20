@@ -58,12 +58,21 @@ def api_get(path: str, timeout: float = 30) -> list | dict:
     return r.json()
 
 
-def parse_mcp_response(text: str) -> dict | None:
-    """A streamable-HTTP reply is plain JSON or an SSE stream with `data:` lines."""
-    for line in text.splitlines():
-        if line.startswith("data:"):
-            return json.loads(line[5:])
-    return json.loads(text) if text.strip() else None
+def parse_mcp_response(text: str, rid: object = None) -> dict | None:
+    """A streamable-HTTP reply is plain JSON or an SSE stream with `data:` lines.
+
+    The stream can carry notifications before the response: after a server is registered, the gateway
+    (mcp-go) sends `notifications/tools/list_changed` to every open session, on that session's next
+    reply. Taking the first `data:` line then read the notification as the result, so the call came
+    back with no content (seen 2026-11-20: `canopy sync` failed with a JSONDecodeError right after the
+    API's startup apply re-registered a server, and the retry worked). So pick the response: the
+    message with this request's id, else the first with a `result` or `error`."""
+    events = [json.loads(line[5:]) for line in text.splitlines() if line.startswith("data:")]
+    if not events:
+        return json.loads(text) if text.strip() else None
+    replies = [e for e in events if isinstance(e, dict) and ("result" in e or "error" in e)]
+    return next((e for e in replies if rid is not None and e.get("id") == rid), None) \
+        or (replies[0] if replies else events[-1])
 
 
 class McpClient:
@@ -109,10 +118,12 @@ class McpClient:
                     self._session = None
             r = self._post(body, self._connect())
         r.raise_for_status()
-        reply = parse_mcp_response(r.text) or {}
+        reply = parse_mcp_response(r.text, body["id"]) or {}
         if "error" in reply:
             raise RuntimeError(f"gateway error: {reply['error']}")
-        return reply.get("result", {})
+        if "result" not in reply:   # never hand back an empty result as if the call had worked
+            raise RuntimeError(f"gateway sent no result for {method}: {r.text[:300]!r}")
+        return reply["result"]
 
     def tools(self) -> list[dict]:
         # The gateway sends `"tools": null` for a group with nothing in it.

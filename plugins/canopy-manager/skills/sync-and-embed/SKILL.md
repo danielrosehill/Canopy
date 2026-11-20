@@ -9,6 +9,13 @@ description: Trigger a Canopy sync or an incremental embedding run, and check th
 
 - Run `canopy sync`. Add a plugin name for just one, `--full` for every plugin, `--force` to reindex unchanged commits, and `--gateway` for the gateway's servers and tools.
 - Poll `catalogue__health` until `sync_running` is false.
+- Agents cannot call `catalogue__sync` or `catalogue__embed` through the gateway: they are control-API
+  tools, and the toolbox answers `… is for the control API: use canopy`. That is by design
+  (`CANOPY_AGENT_ADMIN_TOOLS=true` turns it off). An agent runs `canopy sync` on the server instead.
+- The reply's `last` is the previous pass, not this one. If `canopy sync` returns
+  `internal: JSONDecodeError: Expecting value` (fixed in v1.12, 2026-11-20), the sync
+  still started: the API misread a gateway notification as the reply. Poll `catalogue__health` and
+  don't re-run it.
 
 **Embedding** is a separate step, so that a sync never spends money by surprise. It needs `EMBED_PROVIDER`
 in `agent-data/secrets.env`. Without it, search is keyword only, and works.
