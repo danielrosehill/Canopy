@@ -565,3 +565,45 @@ def test_apply_refreshes_a_builtin_whose_tools_changed_with_an_update(applied, j
     assert "catalogue__context_write" in jungle.tools
     assert "refreshed toolbox" not in out["log"]   # its list already matched
     assert "refreshed" not in applied.apply()["log"]   # and now nothing differs
+
+
+# --- confirmation policy --------------------------------------------------------------
+
+def test_annotations_decide_confirmation_with_mcp_defaults():
+    assert seed.needs_confirmation({"readOnlyHint": True})[0] is False
+    assert seed.needs_confirmation(None) == (True, "no annotations, so the MCP defaults apply: destructive, open world")
+    assert seed.needs_confirmation({"readOnlyHint": False, "destructiveHint": True})[0] is True
+    assert seed.needs_confirmation({"destructiveHint": False, "openWorldHint": True})[0] is True
+    assert seed.needs_confirmation({"destructiveHint": False, "openWorldHint": False})[0] is False
+
+
+def test_policy_lists_stay_out_of_the_gateway_and_decide_first(ctl, jungle):
+    jungle.servers["mail"] = {"name": "mail"}
+    jungle.tools.update({
+        "mail__read": {"name": "mail__read", "enabled": True, "annotations": {"readOnlyHint": True}},
+        "mail__send": {"name": "mail__send", "enabled": True},
+        "mail__label": {"name": "mail__label", "enabled": True},
+        "mail__purge": {"name": "mail__purge", "enabled": True, "annotations": {"readOnlyHint": True}},
+        "mail__off": {"name": "mail__off", "enabled": False},
+    })
+    ctl.set_group({"name": "voice", "included_servers": ["mail"], "excluded_tools": ["mail__label"],
+                   "confirm": ["mail__purge"], "no_confirm": []})
+    assert "confirm" not in jungle.groups["voice"] and "no_confirm" not in jungle.groups["voice"]
+    tools = {t["name"]: t for t in ctl.group_policy("voice")["tools"]}
+    assert set(tools) == {"mail__read", "mail__send", "mail__purge"}
+    assert tools["mail__read"]["confirm"] is False
+    assert tools["mail__send"]["confirm"] is True
+    assert tools["mail__purge"] == {"name": "mail__purge", "confirm": True, "why": "group confirm list",
+                                    "annotations": {"readOnlyHint": True}}
+
+
+def test_policy_for_an_unknown_group_is_a_404(ctl):
+    with pytest.raises(ControlError) as e:
+        ctl.group_policy("nope")
+    assert e.value.status == 404
+
+
+def test_validate_rejects_a_tool_both_confirmed_and_waived(ctl):
+    write_servers(ctl, {"servers": [], "groups": [{"name": "g", "included_tools": ["toolbox__call_tool"],
+                                                   "confirm": ["toolbox__call_tool"], "no_confirm": ["toolbox__call_tool"]}]})
+    assert any("in both" in p for p in ctl.validate()["problems"])

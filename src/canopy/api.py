@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hmac
 import os
+import re
 import secrets
 import threading
 from contextlib import asynccontextmanager
@@ -34,6 +35,8 @@ API_DIR = Path(os.environ.get("CANOPY_API_DIR", "/api"))
 PORT = int(os.environ.get("CANOPY_API_PORT", "8090"))
 
 
+POLICY_PATH = re.compile(r"/v1/gateway/groups/[^/]+/policy")
+
 CATALOGUE_URL = os.environ.get("CATALOGUE_URL", "http://catalogue:3000")
 
 
@@ -49,14 +52,20 @@ def load_token(api_dir: Path = API_DIR) -> str:
 
 
 class RequireToken(BaseHTTPMiddleware):
-    def __init__(self, app, token: str):
+    """The API token opens every route. CANOPY_POLICY_TOKEN, if set, opens only the read-only
+    group policy routes, for a client that enforces confirmation and should hold nothing more."""
+
+    def __init__(self, app, token: str, policy_token: str = ""):
         super().__init__(app)
         self.token = token.encode()
+        self.policy_token = policy_token.encode()
 
     async def dispatch(self, request: Request, call_next):
         if request.url.path != "/health":
-            given = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
-            if not hmac.compare_digest(given.encode(), self.token):
+            given = request.headers.get("authorization", "").removeprefix("Bearer ").strip().encode()
+            policy = (self.policy_token and request.method == "GET" and POLICY_PATH.fullmatch(request.url.path)
+                      and hmac.compare_digest(given, self.policy_token))
+            if not policy and not hmac.compare_digest(given, self.token):
                 return JSONResponse({"error": "missing or wrong API token"}, status_code=401)
         return await call_next(request)
 
@@ -206,6 +215,9 @@ def create_app(control: Control, token: str, embedder: Embedder | None = None,
         doc["name"] = request.path_params["name"]
         return await run(request, control.set_group, doc)
 
+    def group_policy(request: Request) -> JSONResponse:
+        return JSONResponse(control.group_policy(request.path_params["name"]))
+
     async def remove_group(request: Request) -> JSONResponse:
         return await run(request, control.remove_group, request.path_params["name"])
 
@@ -321,6 +333,7 @@ def create_app(control: Control, token: str, embedder: Embedder | None = None,
         Route("/v1/gateway/groups", list_groups),
         Route("/v1/gateway/groups/{name}", set_group, methods=["PUT"]),
         Route("/v1/gateway/groups/{name}", remove_group, methods=["DELETE"]),
+        Route("/v1/gateway/groups/{name}/policy", group_policy),
         Route("/v1/gateway/tools", list_tools),
         Route("/v1/gateway/tools/{name}/enable", enable_tool, methods=["POST"]),
         Route("/v1/gateway/tools/{name}/disable", disable_tool, methods=["POST"]),
@@ -355,7 +368,8 @@ def create_app(control: Control, token: str, embedder: Embedder | None = None,
         Route("/v1/context/{kind}/{name}", context_delete, methods=["DELETE"]),
     ], exception_handlers={ControlError: control_error, BackupError: backup_error, ContextError: context_error, httpx.HTTPError: gateway_error,
                            Exception: unexpected},
-       middleware=[Middleware(RequireToken, token=token)], lifespan=lifespan)
+       middleware=[Middleware(RequireToken, token=token,
+                              policy_token=os.environ.get("CANOPY_POLICY_TOKEN", ""))], lifespan=lifespan)
 
 
 def model_lookup(db: store.Db):

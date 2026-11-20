@@ -156,3 +156,18 @@ def test_backup_with_no_target_is_a_409_and_starts_nothing(tmp_path):
 def test_backup_says_so_when_it_is_not_set_up(client):
     assert client.get("/v1/backup", headers=AUTH).status_code == 503
 
+
+
+def test_the_policy_token_opens_only_policy_reads(monkeypatch):
+    monkeypatch.setenv("CANOPY_POLICY_TOKEN", "pol")
+
+    class Policy(Stub):
+        def group_policy(self, name):
+            return {"group": name, "tools": []}
+
+    c = TestClient(api.create_app(Policy(), "right"), raise_server_exceptions=False)
+    pol = {"Authorization": "Bearer pol"}
+    assert c.get("/v1/gateway/groups/voice/policy", headers=pol).json() == {"group": "voice", "tools": []}
+    assert c.get("/v1/gateway/groups/voice/policy", headers=AUTH).status_code == 200
+    assert c.get("/v1/status", headers=pol).status_code == 401
+    assert c.put("/v1/gateway/groups/voice", headers=pol, json={}).status_code == 401

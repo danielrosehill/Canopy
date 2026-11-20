@@ -122,6 +122,7 @@ services:
     environment:
       <<: [*canopy-env, *canopy-db]
       CANOPY_API_TOKEN: ${CANOPY_API_TOKEN:-}
+      CANOPY_POLICY_TOKEN: ${CANOPY_POLICY_TOKEN:-}
       EMBED_PROVIDER: ${EMBED_PROVIDER:-}
       EMBED_FALLBACK: ${EMBED_FALLBACK:-}
       EMBED_QUERY_PROVIDER: ${EMBED_QUERY_PROVIDER:-}

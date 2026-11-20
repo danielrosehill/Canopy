@@ -276,6 +276,40 @@ from the move, and compare search results with the old stack. Then turn on enter
 step: hand a token to each client, and check every remote route. See the open question in
 [deployment patterns](deployment-patterns.md#4-cloudflare-mcp-server-portal-for-hosted-clients).
 
+## Confirmation before a tool call
+
+A client that acts without a person watching every call, such as a voice assistant, should read the call
+back and wait for an explicit yes before anything destructive or outward. Canopy says which tools need that,
+per group, so the policy lives with the group and not in the client's prompt.
+
+`GET /v1/gateway/groups/<name>/policy` returns every enabled tool in the group:
+
+```json
+{"group": "voice_alex", "tools": [
+  {"name": "mail__send", "confirm": true, "why": "destructiveHint",
+   "annotations": {"readOnlyHint": false, "destructiveHint": true, "openWorldHint": true}},
+  {"name": "lists__add_item", "confirm": false, "why": "group no_confirm list", "annotations": {}}
+]}
+```
+
+The rule, first match wins:
+
+1. The tool is in the group's `confirm` list: confirm.
+2. The tool is in the group's `no_confirm` list: no confirmation.
+3. `readOnlyHint` is true: no confirmation.
+4. Otherwise confirm if `destructiveHint` or `openWorldHint` is true. A missing hint takes the MCP default,
+   which is true, so a tool with no annotations needs confirmation.
+
+The two lists are Canopy-only keys on a group in `servers.json`, and are not sent to the gateway:
+
+```json
+{"name": "voice_alex", "included_tools": ["mail__send", "lists__add_item", "shell__run"],
+ "confirm": ["shell__run"], "no_confirm": ["lists__add_item"]}
+```
+
+The route takes the API token. Set `CANOPY_POLICY_TOKEN` to give such a client a token that opens only
+this route (GET), so it never holds the API token.
+
 ## A scoped catalogue for a second user
 
 The catalogue indexes every configured marketplace. To give another person catalogue search without

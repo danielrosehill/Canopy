@@ -18,6 +18,7 @@ Every route except `/health` needs `Authorization: Bearer <token>`, from
 | `GET` | `/v1/gateway/groups` | Tool groups. |
 | `PUT` | `/v1/gateway/groups/{name}` | Create or replace a tool group. |
 | `DELETE` | `/v1/gateway/groups/{name}` | Remove a tool group. |
+| `GET` | `/v1/gateway/groups/{name}/policy` | Each tool in a group and whether a client must confirm before calling it. Also opened by CANOPY_POLICY_TOKEN. |
 | `GET` | `/v1/gateway/tools` | Tools the gateway serves. |
 | `POST` | `/v1/gateway/tools/{name}/enable` | Put a disabled tool back in service. |
 | `POST` | `/v1/gateway/tools/{name}/disable` | Take one tool out of service. A refresh keeps it disabled. |

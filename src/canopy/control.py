@@ -142,6 +142,38 @@ def merged_groups(groups: list[dict]) -> list[dict]:
     return out
 
 
+# Canopy-only group keys. They set the confirmation policy and are never sent to the gateway.
+POLICY_KEYS = ("confirm", "no_confirm")
+
+
+def gateway_group(group: dict) -> dict:
+    return {k: v for k, v in group.items() if k not in POLICY_KEYS}
+
+
+def needs_confirmation(annotations: dict | None) -> tuple[bool, str]:
+    """Whether a client should read a call back and get an explicit yes first, from the tool's
+    MCP annotations. A missing hint takes the MCP default (readOnlyHint false, destructiveHint
+    true, openWorldHint true), so a tool with no annotations needs confirmation."""
+    a = annotations or {}
+    if a.get("readOnlyHint", False):
+        return False, "readOnlyHint"
+    if not a:
+        return True, "no annotations, so the MCP defaults apply: destructive, open world"
+    if a.get("destructiveHint", True):
+        return True, "destructiveHint"
+    if a.get("openWorldHint", True):
+        return True, "openWorldHint"
+    return False, "not destructive, closed world"
+
+
+def group_members(group: dict, tools: list[dict]) -> list[dict]:
+    """The enabled tools a group resolves to: its named tools plus its servers' tools, less exclusions."""
+    named, servers = set(group.get("included_tools", [])), set(group.get("included_servers", []))
+    excluded = set(group.get("excluded_tools", []))
+    return [t for t in tools if t.get("enabled", True) and t["name"] not in excluded
+            and (t["name"] in named or t["name"].split("__")[0] in servers)]
+
+
 def group_servers(group: dict) -> set[str]:
     named = {t.split("__")[0] for t in group.get("included_tools", [])}
     return set(group.get("included_servers", [])) | named
@@ -262,7 +294,7 @@ class Gateway:
         self.http.delete(f"/api/v0/tool-groups/{name}")
         created, timed_out = False, False
         try:
-            r = self.http.post("/api/v0/tool-groups", json=group)
+            r = self.http.post("/api/v0/tool-groups", json=gateway_group(group))
             created, why = r.is_success, r.text[:300]
         except httpx.TimeoutException as e:   # as with a server, it may have worked anyway
             timed_out, why = True, str(e) or "timed out"
@@ -564,6 +596,11 @@ class Control:
             groups.add(name)
             if missing := group_servers(x) - known:
                 problems.append(f"group {name}: names unregistered servers: {sorted(missing)}")
+            for key in POLICY_KEYS:
+                if not (isinstance(x.get(key, []), list) and all(isinstance(t, str) for t in x.get(key, []))):
+                    problems.append(f"group {name}: `{key}` must be a list of tool names")
+            if both := set(x.get("confirm", [])) & set(x.get("no_confirm", [])):
+                problems.append(f"group {name}: in both confirm and no_confirm: {sorted(both)}")
         return {"ok": not problems, "problems": problems}
 
     def diff(self) -> dict:
@@ -739,6 +776,26 @@ class Control:
                 raise ControlError(400, f"group {name}: {e}") from None
             write_json(self.servers_path, doc)
         return {"group": name}
+
+    def group_policy(self, name: str) -> dict:
+        """Each tool in a group, and whether a client must confirm before calling it. The group's
+        `confirm` and `no_confirm` lists win; otherwise the tool's annotations decide."""
+        check_name(name)
+        group = next((x for x in merged_groups(self.read_config()["groups"]) if x["name"] == name), None)
+        if group is None:
+            raise ControlError(404, f"no group {name} in the config")
+        force, waive = set(group.get("confirm", [])), set(group.get("no_confirm", []))
+        out = []
+        for t in sorted(group_members(group, self.gateway().tools()), key=lambda t: t["name"]):
+            annotations = t.get("annotations") or {}
+            if t["name"] in force:
+                confirm, why = True, "group confirm list"
+            elif t["name"] in waive:
+                confirm, why = False, "group no_confirm list"
+            else:
+                confirm, why = needs_confirmation(annotations)
+            out.append({"name": t["name"], "confirm": confirm, "why": why, "annotations": annotations})
+        return {"group": name, "tools": out}
 
     def remove_group(self, name: str) -> dict:
         check_name(name)
