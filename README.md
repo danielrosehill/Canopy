@@ -210,6 +210,7 @@ Then hand the id to your agent with `/skill <id>` from the Canopy connector:
 | `ui` | Web UI | No | Yes |
 | `tunnel` | Cloudflare Tunnel | No | Not yet |
 | `tailnet` | Tailscale sidecar | No | Not yet |
+| `voice` | [Voice front end](docs/voice.md) on Pipecat: a tool group per speaker, confirmation in code | No | Yes |
 
 `clients/canopy init` writes `COMPOSE_PROFILES=search,storage` to `secrets.env`, so a default install starts
 Ollama, downloads bge-m3 and runs it on the host, which takes about 2 GB of RAM. On a small machine, edit
@@ -233,6 +234,7 @@ follow, so add only sources you trust.
 - [Network diagrams](docs/diagrams/README.md): the posters for both templates, and how to rebuild and print them
 - [User manual](docs/manual.md): connecting a client, and how finding skills works
 - [API reference](docs/api.md): every route
+- [Voice](docs/voice.md): the voice front end, one tool group per speaker
 - [Architecture](docs/architecture.md): how the stack fits together
 - [Hosted and web clients](docs/connect/saas-and-web-clients.md): ChatGPT, claude.ai, Open WebUI and others.
 - [Deployment patterns](docs/deployment-patterns.md): remote access with Tailscale and Cloudflare,

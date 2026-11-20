@@ -1,0 +1,30 @@
+# canopy-voice (docs/voice.md). Start it with the `voice` profile. Secrets are named here, set in secrets.env.
+gateway:
+  url: http://gateway:8080            # groups at /v0/groups/<name>/mcp
+  token_env: VOICE_GATEWAY_TOKEN      # enterprise mode: a client token with access to the groups below
+  policy_url: http://api:8090         # confirmation policy, /v1/gateway/groups/<name>/policy
+  policy_token_env: CANOPY_POLICY_TOKEN
+
+llm: {model: claude-haiku-5-5, effort: low, max_tokens: 1024}   # ANTHROPIC_API_KEY in secrets.env
+prompt_file: voice/prompt.md
+timezone: Europe/London
+session_ttl_s: 180                    # a follow-up within this keeps the conversation
+
+# Wyoming speech servers (faster-whisper, Piper, ...), or any Pipecat service by class path.
+stt: {provider: wyoming, uri: "tcp://speech-host:10300", language: en}
+tts: {provider: wyoming, uri: "tcp://speech-host:10200", voice: en_GB-alan-medium}
+
+# One entry per person. The bearer token their device sends says who is speaking, and picks the group.
+speakers:
+  alex:
+    name: Alex
+    group: voice_alex
+    token_env: VOICE_TOKEN_ALEX
+  sam:
+    name: Sam
+    address: Sam
+    group: voice_household
+    token_env: VOICE_TOKEN_SAM
+    context: Sam keeps the shopping list.
+
+# confirm: {yes: [...], no: [...], max_words: 8}   # the words that approve or refuse a held action

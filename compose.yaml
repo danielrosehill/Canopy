@@ -206,6 +206,36 @@ services:
     volumes:
       - ${CANOPY_DATA:-${HOME}/canopy/data}/tokens:/tokens:ro
 
+  # The voice front end (docs/voice.md): a speaker's bearer token picks their tool group.
+  voice:
+    logging: *logging
+    image: danielrosehill/canopy:voice-${CANOPY_TAG:-v1}
+    build:
+      context: .
+      dockerfile: voice/Dockerfile
+    profiles: [voice]
+    restart: unless-stopped
+    networks: [canopy]
+    env_file:
+      - path: ${CANOPY_AGENT_DATA:-${HOME}/canopy/agent-data}/secrets.env
+        required: false
+    environment:
+      VOICE_CONFIG: /config/voice.yaml
+      CANOPY_POLICY_TOKEN: ${CANOPY_POLICY_TOKEN:-}
+    ports:
+      - "${CANOPY_VOICE_BIND:-127.0.0.1}:${CANOPY_VOICE_PORT:-8797}:8797"
+    volumes:
+      - ${CANOPY_AGENT_DATA:-${HOME}/canopy/agent-data}/config:/config:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8797/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+    depends_on:
+      api:
+        condition: service_healthy
+
   # S3-compatible staging. Unmodified, and it has no shell, so `api` bootstraps it on first use.
   storage:
     logging: *logging

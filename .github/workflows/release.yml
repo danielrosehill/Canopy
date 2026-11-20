@@ -38,7 +38,7 @@ jobs:
           version="${{ inputs.tag || github.ref_name }}"
           sha="${{ inputs.sha || github.sha }}"
           major="${version%%.*}"
-          for prefix in "" "cli-"; do
+          for prefix in "" "cli-" "voice-"; do
             docker buildx imagetools create \
               -t "$hub:$prefix$version" -t "$hub:$prefix$major" \
               -t "$ghcr:$prefix$version" -t "$ghcr:$prefix$major" \

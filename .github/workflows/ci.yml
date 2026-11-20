@@ -16,6 +16,8 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - run: uv sync --frozen
       - run: uv run pytest
+      - run: uv sync --frozen && uv run pytest
+        working-directory: voice
       - run: docker compose config --quiet
       - run: docker compose -f compose.yaml -f examples/overlay/compose.override.yaml config --quiet
       - run: docker compose -f compose.yaml -f compose.overlay.yaml config --quiet
@@ -97,6 +99,17 @@ jobs:
             danielrosehill/canopy:cli-${{ github.sha }}
             ghcr.io/danielrosehill/canopy:cli-main
             ghcr.io/danielrosehill/canopy:cli-${{ github.sha }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: voice/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            danielrosehill/canopy:voice-main
+            danielrosehill/canopy:voice-${{ github.sha }}
+            ghcr.io/danielrosehill/canopy:voice-main
+            ghcr.io/danielrosehill/canopy:voice-${{ github.sha }}
 
   # Every push to main that passes and changes what ships becomes the next release, v<major>.<NN>. A push
   # that only touches docs, tests or plugins makes none: the plugins are served from main, not from a release.
@@ -123,7 +136,7 @@ jobs:
             echo "already released in $last"; exit 0
           fi
           if [ -n "$last" ] && git diff --quiet "$last" "$GITHUB_SHA" -- \
-              src clients cli config Dockerfile compose.yaml compose.overlay.yaml pyproject.toml uv.lock scripts/db-init.sh; then
+              src clients cli voice/src voice/pyproject.toml voice/uv.lock voice/Dockerfile config Dockerfile compose.yaml compose.overlay.yaml pyproject.toml uv.lock scripts/db-init.sh; then
             echo "nothing that ships changed since $last"; exit 0
           fi
           major=${last%%.*}; major=${major:-v1}
