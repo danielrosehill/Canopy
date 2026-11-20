@@ -180,6 +180,30 @@ def group_members(group: dict, tools: list[dict]) -> list[dict]:
             and (t["name"] in named or t["name"].split("__")[0] in servers)]
 
 
+SIGNER_PORT = 8100
+
+
+def federated(servers: list[dict]) -> list[dict]:
+    """A server entry with `profiles` is one upstream serving several identities (docs/federation.md).
+    Each profile becomes its own registration, `<name>-<profile>`, at the signer that sits in front of
+    the upstream and signs that profile's identity onto every request. The identities stay in the
+    config and the signer: the gateway only ever sees the profile names."""
+    out = []
+    for s in servers:
+        if not isinstance(s, dict) or "profiles" not in s:
+            out.append(s)
+            continue
+        host = s.get("signer_host", s["name"])
+        base = s.get("description") or s["name"]
+        extra = {k: s[k] for k in SERVER_KEYS if k in s}
+        for profile in s["profiles"]:
+            out.append({"name": f"{s['name']}-{profile}", "transport": "streamable_http",
+                        "url": f"http://{host}:{SIGNER_PORT}/p/{profile}/mcp",
+                        "bearer_token": "${CANOPY_SIGNER_TOKEN}",
+                        "description": f"{base} (profile {profile})", **extra})
+    return out
+
+
 def buildable(group: dict, disabled: set[str]) -> dict:
     """The definition the gateway will accept: Canopy-only keys gone, and disabled tools left out."""
     out = gateway_group(group)
@@ -402,8 +426,14 @@ class Control:
         return self.config / "servers.json"
 
     def read_config(self) -> dict:
+        """servers.json as written. Change it through this, never through `effective_config`."""
         doc = read_json(self.servers_path)
         return {"servers": doc.get("servers", []), "groups": doc.get("groups", [])}
+
+    def effective_config(self) -> dict:
+        """What the gateway should have: federated entries expanded into one server per profile."""
+        doc = self.read_config()
+        return {**doc, "servers": federated(doc["servers"])}
 
     @property
     def state_path(self) -> Path:
@@ -544,7 +574,7 @@ class Control:
                                          ("client", "canopy-agent", self.admin_dir / AGENT_TOKEN)):
                     if g.ensure_identity(kind, name, path):
                         log.append(f"created {kind} {name}")
-            doc = self.read_config()
+            doc = self.effective_config()
             state = self.read_state()
             changed, failures = self._register_all(g, doc["servers"], state, log.append)
             self.write_state(state)
@@ -588,6 +618,17 @@ class Control:
             return {"ok": False, "problems": ["servers.json must be an object with `servers` and `groups` lists"]}
         problems, seen = [], set()
         for s in doc.get("servers", []):
+            if isinstance(s, dict) and "profiles" in s:
+                profiles = s["profiles"]
+                if not (isinstance(profiles, dict) and profiles and all(isinstance(v, str) for v in profiles.values())):
+                    problems.append(f"{s.get('name')}: `profiles` maps profile names to identities")
+                    continue
+                for profile in profiles:
+                    if not re.fullmatch(r"[a-z0-9][a-z0-9_]*", profile):
+                        problems.append(f"{s.get('name')}: profile {profile!r}: lower case letters, digits, _")
+                if "CANOPY_SIGNER_TOKEN" not in self.env:
+                    problems.append(f"{s.get('name')}: CANOPY_SIGNER_TOKEN is not set, and the signer needs it")
+        for s in federated(doc.get("servers", [])):
             name = s.get("name") if isinstance(s, dict) else None
             try:
                 check_name(name)
@@ -635,7 +676,7 @@ class Control:
         checked = self.validate()
         if not checked["ok"]:
             return {**checked, "register": [], "remove": [], "blocked": {}, "rebuild_groups": []}
-        doc, state, live = self.read_config(), self.read_state(), self.gateway().server_names()
+        doc, state, live = self.effective_config(), self.read_state(), self.gateway().server_names()
         register = []
         for raw in [*BUILTIN_SERVERS, *doc["servers"]]:
             name = raw["name"]
@@ -736,7 +777,7 @@ class Control:
         for tool in sorted(after):
             if before.get(tool) is False and record.get("enabled") is not False:
                 self._bad_gateway(g.set_tool_enabled, tool, False)
-        doc = self.read_config()
+        doc = self.effective_config()
         added = sorted(after - set(before))
         held: list[str] = []
         configured = next((s for s in doc["servers"] if s.get("name") == name), {})
@@ -939,7 +980,7 @@ class Control:
         """A server list that answers also proves the gateway can reach its database."""
         servers = self.gateway().servers()
         names = {s["name"] for s in servers}
-        wanted = {s.get("name") for s in self.read_config()["servers"]} | BUILTIN_NAMES
+        wanted = {s.get("name") for s in self.effective_config()["servers"]} | BUILTIN_NAMES
         missing = sorted(wanted - names)
         disabled = sorted(s["name"] for s in servers if s.get("enabled") is False)
         return {"ok": not missing, "registered": len(names), "missing": missing, "disabled": disabled}

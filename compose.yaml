@@ -236,6 +236,54 @@ services:
       api:
         condition: service_healthy
 
+  # Google Workspace, federated (docs/federation.md): one server for every account in the
+  # `google-workspace` entry's profiles. It trusts only the signer beside it, which signs each
+  # profile's identity onto the gateway's requests. Sign-in callbacks: 127.0.0.1:CANOPY_GWS_OAUTH_PORT.
+  google-workspace:
+    logging: *logging
+    image: ${GOOGLE_WORKSPACE_IMAGE:-ghcr.io/taylorwilsdon/google_workspace_mcp:latest}
+    profiles: [google-workspace]
+    restart: unless-stopped
+    networks: [canopy]
+    env_file:
+      - path: ${CANOPY_AGENT_DATA:-${HOME}/canopy/agent-data}/secrets.env
+        required: false
+    environment:
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
+      GOOGLE_MCP_CREDENTIALS_DIR: /creds
+      WORKSPACE_MCP_PORT: "8000"
+      OAUTHLIB_INSECURE_TRANSPORT: "1"   # the sign-in callback is http://localhost:8000, through a tunnel
+      TRUST_GATEWAY_IDENTITY: "true"
+      GATEWAY_IDENTITY_JWKS_URL: http://127.0.0.1:8100/jwks
+      GATEWAY_IDENTITY_AUDIENCE: google-workspace
+      GATEWAY_IDENTITY_HEADER: x-pomerium-jwt-assertion
+      GATEWAY_IDENTITY_ALGORITHMS: ES256
+    ports:
+      - "127.0.0.1:${CANOPY_GWS_OAUTH_PORT:-8000}:8000"
+    volumes:
+      - ${CANOPY_DATA:-${HOME}/canopy/data}/google-workspace:/creds
+
+  google-workspace-signer:
+    image: danielrosehill/canopy:${CANOPY_TAG:-v1}
+    build: .
+    restart: unless-stopped
+    logging: *logging
+    profiles: [google-workspace]
+    command: ["python", "-m", "canopy.signer"]
+    network_mode: service:google-workspace   # the upstream reads the signer's key over loopback
+    env_file:
+      - path: ${CANOPY_AGENT_DATA:-${HOME}/canopy/agent-data}/secrets.env
+        required: false
+    environment:
+      SIGNER_FOR: google-workspace
+      CANOPY_SIGNER_TOKEN: ${CANOPY_SIGNER_TOKEN:-}
+      CANOPY_CONFIG: /config
+    volumes:
+      - ${CANOPY_AGENT_DATA:-${HOME}/canopy/agent-data}/config:/config:ro
+    depends_on:
+      - google-workspace
+
   # S3-compatible staging. Unmodified, and it has no shell, so `api` bootstraps it on first use.
   storage:
     logging: *logging

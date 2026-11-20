@@ -11,6 +11,7 @@ dependencies = [
     "numpy>=1.26",
     "pgvector>=0.4",
     "psycopg[binary,pool]>=3.2",
+    "pyjwt[crypto]>=2.8",
     "pyyaml>=6.0",
     "starlette>=0.40",
     "tantivy>=0.27,<0.28",
