@@ -47,13 +47,30 @@ class GroupTools:
         logger.info(f"group {self.group}: {len(self.schema.standard_tools)} tools, {held} need confirmation "
                     f"(policy: {self.policy.source})")
 
+    def kept_open(self, handler):
+        """Pipecat's MCP handlers carry a cleanup that closes the connection when the LLM service that ran
+        them is torn down. A pipeline here lasts one turn and the connection is shared by every turn, so
+        the plain function below hides that cleanup. Found 2026-11-20: after a turn that ran a tool, the
+        next tool call failed with "MCPClient is not connected". A call that finds the connection closed
+        anyway (a gateway restart) opens it again and runs once more."""
+        async def call(params):
+            try:
+                await handler(params)
+            except RuntimeError as e:
+                if "not connected" not in str(e):
+                    raise
+                logger.warning(f"group {self.group}: MCP connection was closed, opening it again")
+                await self.mcp.start()
+                await handler(params)
+        return call
+
     def gated(self, gate: Gate) -> ToolsSchema:
         """The group's tools with each handler behind this conversation's gate, in a stable order so the
         prompt cache holds."""
         tools = []
         for t in sorted(self.schema.standard_tools, key=lambda t: t.name):
             copy = type(t)(name=t.name, description=t.description, properties=t.properties,
-                           required=t.required, handler=gate.wrap(t.name, t.handler))
+                           required=t.required, handler=gate.wrap(t.name, self.kept_open(t.handler)))
             tools.append(copy)
         return ToolsSchema(standard_tools=tools)
 
