@@ -13,7 +13,7 @@ description: Trigger a Canopy sync or an incremental embedding run, and check th
   tools, and the toolbox answers `… is for the control API: use canopy`. That is by design
   (`CANOPY_AGENT_ADMIN_TOOLS=true` turns it off). An agent runs `canopy sync` on the server instead.
 - The reply's `last` is the previous pass, not this one. If `canopy sync` returns
-  `internal: JSONDecodeError: Expecting value` (fixed in v1.12, 2026-11-20), the sync
+  `internal: JSONDecodeError: Expecting value` (fixed in v1.13, 2026-11-20), the sync
   still started: the API misread a gateway notification as the reply. Poll `catalogue__health` and
   don't re-run it.
 
