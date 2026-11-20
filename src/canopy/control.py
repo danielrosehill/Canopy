@@ -11,6 +11,10 @@ Group rules, each learned from a failure:
   checked first, and the old definition is restored if the create still fails.
 - A new server does not join an existing group by itself, so groups are rebuilt
   whenever a server was registered.
+- A create is refused if the group would hold a disabled tool, named or through its server
+  ("does not exist or is disabled"). One disabled tool once made every rebuild of a whole-server
+  group fail, after the delete and with no way back, so disabled tools are left out of every
+  definition sent, the restored one too. A disabled tool is out of every group anyway.
 
 The gateway has no update for a server or a group, so a change is a delete and a create. If the
 create fails, whatever was there goes back: a bad edit must not cost something that worked. A
@@ -142,8 +146,10 @@ def merged_groups(groups: list[dict]) -> list[dict]:
     return out
 
 
-# Canopy-only group keys. They set the confirmation policy and are never sent to the gateway.
+# Canopy-only keys, never sent to the gateway. On a group: the confirmation policy. On a server:
+# what happens to tools a refresh finds that were not there before.
 POLICY_KEYS = ("confirm", "no_confirm")
+SERVER_KEYS = ("new_tools",)
 
 
 def gateway_group(group: dict) -> dict:
@@ -174,6 +180,20 @@ def group_members(group: dict, tools: list[dict]) -> list[dict]:
             and (t["name"] in named or t["name"].split("__")[0] in servers)]
 
 
+def buildable(group: dict, disabled: set[str]) -> dict:
+    """The definition the gateway will accept: Canopy-only keys gone, and disabled tools left out."""
+    out = gateway_group(group)
+    if not disabled:
+        return out
+    if "included_tools" in out:
+        out["included_tools"] = [t for t in out["included_tools"] if t not in disabled]
+    servers = set(out.get("included_servers", []))
+    extra = sorted(t for t in disabled if t.split("__")[0] in servers)
+    if extra:
+        out["excluded_tools"] = list(dict.fromkeys([*out.get("excluded_tools", []), *extra]))
+    return out
+
+
 def group_servers(group: dict) -> set[str]:
     named = {t.split("__")[0] for t in group.get("included_tools", [])}
     return set(group.get("included_servers", [])) | named
@@ -190,6 +210,9 @@ class Gateway:
         r = self.http.get("/api/v0/servers")
         r.raise_for_status()
         return r.json()
+
+    def disabled_tools(self) -> set[str]:
+        return {t["name"] for t in self.tools() if t.get("enabled") is False}
 
     def server_names(self) -> set[str]:
         return {s["name"] for s in self.servers()}
@@ -240,6 +263,7 @@ class Gateway:
         """A registration can time out even though it worked, so the server list decides. The
         gateway lists a server before it has fetched the tools, so after a timeout the tools
         have to arrive too, or a group built next would miss them."""
+        server = {k: v for k, v in server.items() if k not in SERVER_KEYS}
         name = server["name"]
         previous = self.saved_server(name)
         self.http.delete(f"/api/v0/servers/{name}")
@@ -283,18 +307,19 @@ class Gateway:
         write_secret(path, token)
         return True
 
-    def rebuild_group(self, group: dict, registered: set[str]) -> None:
+    def rebuild_group(self, group: dict, registered: set[str], disabled: set[str] | None = None) -> None:
         name = group["name"]
         missing = group_servers(group) - registered
         if missing:
             raise RuntimeError(f"names unregistered servers: {sorted(missing)}")
+        disabled = self.disabled_tools() if disabled is None else disabled
         live = self.http.get(f"/api/v0/tool-groups/{name}")
         if not live.is_success and live.status_code != 404:   # no copy to go back to, so change nothing
             raise RuntimeError(f"cannot read the current group: {live.status_code}")
         self.http.delete(f"/api/v0/tool-groups/{name}")
         created, timed_out = False, False
         try:
-            r = self.http.post("/api/v0/tool-groups", json=gateway_group(group))
+            r = self.http.post("/api/v0/tool-groups", json=buildable(group, disabled))
             created, why = r.is_success, r.text[:300]
         except httpx.TimeoutException as e:   # as with a server, it may have worked anyway
             timed_out, why = True, str(e) or "timed out"
@@ -310,7 +335,7 @@ class Gateway:
             raise RuntimeError("the gateway accepted it, but does not list it")
         if not live.is_success:
             raise RuntimeError(f"create failed: {why}")
-        old = {k: v for k, v in live.json().items() if not k.endswith("_endpoint")}
+        old = buildable({k: v for k, v in live.json().items() if not k.endswith("_endpoint")}, disabled)
         try:
             restored = self.http.post("/api/v0/tool-groups", json=old).is_success
         except httpx.HTTPError:
@@ -527,11 +552,11 @@ class Control:
             wanted = merged_groups(doc["groups"])
             d = digest(wanted)
             if changed or state.get("#groups") != d:
-                registered = g.server_names()
+                registered, disabled = g.server_names(), g.disabled_tools()
                 ok = True
                 for group in wanted:
                     try:
-                        g.rebuild_group(group, registered)
+                        g.rebuild_group(group, registered, disabled)
                         log.append(f"built group {group['name']}")
                     except (RuntimeError, httpx.HTTPError) as e:
                         ok = False
@@ -574,6 +599,8 @@ class Control:
             if name in BUILTIN_NAMES:
                 problems.append(f"{name}: is built in")
             seen.add(name)
+            if s.get("new_tools", "enabled") not in ("enabled", "disabled"):
+                problems.append(f"{name}: `new_tools` is enabled or disabled")
             try:
                 expand(s, self.env)
             except KeyError as e:
@@ -709,8 +736,19 @@ class Control:
         for tool in sorted(after):
             if before.get(tool) is False and record.get("enabled") is not False:
                 self._bad_gateway(g.set_tool_enabled, tool, False)
-        return {"refreshed": name, "tools": len(after), "added": sorted(after - set(before)),
-                "removed": sorted(set(before) - after), "rebuilt_groups": self._rebuild_for(g, self.read_config(), name)}
+        doc = self.read_config()
+        added = sorted(after - set(before))
+        held: list[str] = []
+        configured = next((s for s in doc["servers"] if s.get("name") == name), {})
+        if added and before and configured.get("new_tools") == "disabled":
+            for tool in added:   # a group that takes the whole server would list them at once
+                self._bad_gateway(g.set_tool_enabled, tool, False)
+            held = added
+        joined = {x["name"]: [t for t in added if t not in held and t not in set(x.get("excluded_tools", []))]
+                  for x in merged_groups(doc["groups"]) if name in x.get("included_servers", [])}
+        return {"refreshed": name, "tools": len(after), "added": added, "removed": sorted(set(before) - after),
+                "held_disabled": held, "joined_groups": {k: v for k, v in joined.items() if v},
+                "rebuilt_groups": self._rebuild_for(g, doc, name)}
 
     def refresh_server(self, name: str) -> dict:
         with self.lock:
@@ -729,7 +767,8 @@ class Control:
                 try:
                     r = self._refresh(g, s["name"])
                     if r["added"] or r["removed"]:
-                        lines.append(f"{s['name']}: +{len(r['added'])} -{len(r['removed'])}")
+                        held = f" ({len(r['held_disabled'])} held disabled)" if r["held_disabled"] else ""
+                        lines.append(f"{s['name']}: +{len(r['added'])} -{len(r['removed'])}{held}")
                 except (ControlError, httpx.HTTPError) as e:
                     failures.append(f"{s['name']}: {e}")
         err = self.sync()

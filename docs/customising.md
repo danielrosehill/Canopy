@@ -276,6 +276,20 @@ from the move, and compare search results with the old stack. Then turn on enter
 step: hand a token to each client, and check every remote route. See the open question in
 [deployment patterns](deployment-patterns.md#4-cloudflare-mcp-server-portal-for-hosted-clients).
 
+## Tools a server adds later
+
+A group that takes a whole server (`included_servers`) lists every tool that server has, including tools
+it starts offering after an upgrade, as soon as a refresh picks them up. For a server whose tool list can
+grow in ways you would not choose, such as one that re-exports other services, hold new tools back:
+
+```json
+{"name": "home", "url": "http://home-mcp:8000/mcp", "new_tools": "disabled"}
+```
+
+A refresh then disables what it finds new, and its reply lists those under `held_disabled`. Enable the ones
+you want with `POST /v1/gateway/tools/<name>/enable`. Without the key, the reply's `joined_groups` names
+the groups that gained tools.
+
 ## Confirmation before a tool call
 
 A client that acts without a person watching every call, such as a voice assistant, should read the call

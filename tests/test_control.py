@@ -87,6 +87,12 @@ class FakeJungle:
             if self.time_out_group:
                 self.time_out_group = False
                 raise httpx.ReadTimeout("timed out")
+            servers, excluded = set(doc.get("included_servers", [])), set(doc.get("excluded_tools", []))
+            members = set(doc.get("included_tools", [])) | {
+                t for t in self.tools if t.split("__")[0] in servers and t not in excluded}
+            off = sorted(t for t in members if self.tools.get(t, {}).get("enabled") is False)
+            if off:   # as the real gateway: see the contract suite
+                return httpx.Response(400, json={"error": f"tool {off[0]} does not exist or is disabled"})
             self.groups[doc["name"]] = doc
             return httpx.Response(201, json={})
         if path.startswith("/api/v0/tool-groups/"):
@@ -456,6 +462,31 @@ def test_refresh_reports_the_change_and_keeps_what_was_disabled(ctl, jungle):
     assert jungle.tools["up__a"]["enabled"] is False and jungle.tools["up__new"]["enabled"] is True
 
 
+def test_refresh_says_which_groups_took_the_new_tools(ctl, jungle):
+    jungle.servers["up"] = {"name": "up", "url": "http://u"}
+    jungle.tools = {"up__a": {"name": "up__a", "enabled": True}}
+    jungle.upstream["up"] = ["up__a", "up__new"]
+    write_servers(ctl, {"servers": [], "groups": [{"name": "all", "included_servers": ["up"]},
+                                                  {"name": "one", "included_tools": ["up__a"]}]})
+    out = ctl.refresh_server("up")
+    assert out["joined_groups"] == {"all": ["up__new"]} and out["held_disabled"] == []
+
+
+def test_new_tools_disabled_holds_what_a_refresh_finds(ctl, jungle):
+    """2026-11-20: a refresh found 85 new tools on an upstream that had started re-exporting other
+    services, and every group taking the whole server listed them at once."""
+    jungle.servers["up"] = {"name": "up", "url": "http://u"}
+    jungle.tools = {"up__a": {"name": "up__a", "enabled": True}}
+    jungle.upstream["up"] = ["up__a", "up__new"]
+    write_servers(ctl, {"servers": [{"name": "up", "url": "http://u", "new_tools": "disabled"}],
+                        "groups": [{"name": "all", "included_servers": ["up"]}]})
+    out = ctl.refresh_server("up")
+    assert out["held_disabled"] == ["up__new"] and out["joined_groups"] == {}
+    assert jungle.tools["up__new"]["enabled"] is False and jungle.tools["up__a"]["enabled"] is True
+    assert jungle.groups["all"]["excluded_tools"] == ["up__new"]
+    assert "new_tools" not in jungle.servers["up"]
+
+
 def test_refresh_keeps_a_disabled_server_disabled(ctl, jungle):
     jungle.servers["up"] = {"name": "up", "enabled": False}
     ctl.refresh_server("up")
@@ -607,3 +638,27 @@ def test_validate_rejects_a_tool_both_confirmed_and_waived(ctl):
     write_servers(ctl, {"servers": [], "groups": [{"name": "g", "included_tools": ["toolbox__call_tool"],
                                                    "confirm": ["toolbox__call_tool"], "no_confirm": ["toolbox__call_tool"]}]})
     assert any("in both" in p for p in ctl.validate()["problems"])
+
+
+# --- disabled tools and groups ----------------------------------------------------------
+
+def test_a_disabled_tool_is_left_out_of_a_rebuilt_group_instead_of_breaking_it(ctl, jungle):
+    jungle.servers["home"] = {"name": "home"}
+    jungle.tools.update({"home__on": {"name": "home__on", "enabled": True},
+                         "home__secret": {"name": "home__secret", "enabled": False}})
+    ctl.set_group({"name": "house", "included_servers": ["home"]})
+    assert jungle.groups["house"]["excluded_tools"] == ["home__secret"]
+    ctl.set_group({"name": "pick", "included_tools": ["home__on", "home__secret"]})
+    assert jungle.groups["pick"]["included_tools"] == ["home__on"]
+
+
+def test_a_failed_create_restores_the_old_group_even_with_a_tool_disabled_since(ctl, jungle):
+    jungle.servers["home"] = {"name": "home"}
+    jungle.tools.update({"home__on": {"name": "home__on", "enabled": True},
+                         "home__new": {"name": "home__new", "enabled": True}})
+    ctl.set_group({"name": "house", "included_servers": ["home"]})
+    jungle.tools["home__new"]["enabled"] = False
+    jungle.time_out_group = True   # the create does not land, so the old definition has to go back
+    with pytest.raises(ControlError, match="previous definition restored"):
+        ctl.set_group({"name": "house", "included_servers": ["home"]})
+    assert "house" in jungle.groups and jungle.groups["house"]["excluded_tools"] == ["home__new"]

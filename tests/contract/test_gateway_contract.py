@@ -270,6 +270,30 @@ def test_included_and_excluded_tools_are_honoured(g, uid):
     assert group_tools(f"x{uid}") == [f"{b}__{b}_b"]
 
 
+def test_a_group_holding_a_disabled_tool_is_refused(g, uid):
+    """Pinned because it cost five groups on 2026-11-20: one disabled tool in a whole-server group
+    makes every create of that group fail, after Canopy has deleted it."""
+    a = f"a{uid}"
+    g.register(server(a))
+    g.set_tool_enabled(f"{a}__{a}_a", False)
+    r = g.http.post("/api/v0/tool-groups", json={"name": f"raw{uid}", "included_servers": [a]})
+    assert r.status_code >= 400 and "disabled" in r.text
+    r = g.http.post("/api/v0/tool-groups", json={"name": f"rawx{uid}", "included_servers": [a],
+                                                 "excluded_tools": [f"{a}__{a}_a"]})
+    assert r.is_success, r.text   # excluding the disabled tool is accepted
+
+
+def test_rebuild_leaves_disabled_tools_out(g, uid):
+    a, group = f"a{uid}", f"g{uid}"
+    g.register(server(a))
+    g.rebuild_group({"name": group, "included_servers": [a]}, {a})
+    g.set_tool_enabled(f"{a}__{a}_a", False)
+    g.rebuild_group({"name": group, "included_servers": [a]}, {a})
+    g.rebuild_group({"name": f"n{uid}", "included_tools": two_tools(a)}, {a})
+    assert group_tools(group) == [f"{a}__{a}_b"]
+    assert group_tools(f"n{uid}") == [f"{a}__{a}_b"]
+
+
 def test_delete_group_is_verified_by_a_read(g, uid):
     a, group = f"a{uid}", f"g{uid}"
     g.register(server(a))

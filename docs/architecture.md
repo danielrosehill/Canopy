@@ -176,6 +176,13 @@ version. `compat.json` records what has passed. Measured on 0.4.7, 2026-11-05.
   only copy of the expanded credentials, and what it returns registers as it is.
 - Enable and disable work on a server or a tool, and take it out of a group's tools. Registering again
   clears them, so a refresh disables again whatever was disabled.
+- A group create is refused if the group would hold a disabled tool, whether it names the tool or takes
+  it through its server ("does not exist or is disabled"); excluding the tool is accepted. Canopy leaves
+  disabled tools out of every definition it sends, the restored one too. Found 2026-11-20, when one
+  disabled tool made every rebuild of five whole-server groups fail after their delete.
+- A refresh adds the server's new tools to every group that takes the whole server, at once. A server
+  entry with `"new_tools": "disabled"` holds them disabled instead; the refresh reply lists them under
+  `held_disabled`, and under `joined_groups` the groups that did gain tools.
 - `GET /api/v0/tools?server=` lists one server's tools, each with `enabled`.
 - Writes use the REST API. The gateway's CLI is in a different image.
 - `GET /api/v0/tools` lists tools for an admin token.
