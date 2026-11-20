@@ -397,6 +397,16 @@ def canopy_images() -> dict[str, str]:
             for n in names if re.search(r"(^|/)canopy:", n)}   # either registry
 
 
+def running_images() -> dict[str, str]:
+    """Canopy's images in the running stack. For when the config cannot be read here: an overlay that
+    names a service only a newer release has fails `compose config` until the checkout moves to it."""
+    project = setting("COMPOSE_PROJECT_NAME", "canopy")
+    names = capture("docker", "ps", "--filter", f"label=com.docker.compose.project={project}",
+                    "--format", "{{.Image}}").split()
+    return {n: capture("docker", "image", "inspect", "--format", "{{.Id}}", n)
+            for n in sorted(set(names)) if re.search(r"(^|/)canopy:", n)}
+
+
 def release_ref(tag: str) -> str:
     """The commit of this repo that matches an image tag, so compose.yaml and the images agree."""
     if tag == "main":
@@ -460,7 +470,7 @@ def update(args: list[str] | tuple = ()) -> int:
         sys.exit("run `canopy update` on the host, not in the cli container")
     if places().overlay:
         overlay_sync()   # so a CANOPY_TAG changed in the overlay is the one updated to
-    before = canopy_images()
+    before = canopy_images() or running_images()
     if not before:
         sys.exit("cannot read the stack's images: check `canopy compose config`")
     tag = next(n.rsplit(":", 1)[1] for n in before if ":cli-" not in n)

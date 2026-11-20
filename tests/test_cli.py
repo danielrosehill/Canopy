@@ -128,6 +128,18 @@ def test_update_stops_on_local_changes(stack):
     assert stack["ran"] == []
 
 
+def test_update_works_when_the_overlay_is_ahead_of_the_checkout(stack, monkeypatch):
+    """An overlay naming a service only the next release has makes `compose config` fail here, so the
+    images come from the running stack, and the update moves the checkout to the release that has it."""
+    running = dict(stack["images"])
+    monkeypatch.setattr(cli, "canopy_images", lambda: {} if stack["head"] == "aaa" else
+                        {n: i + "-new" for n, i in running.items()})
+    monkeypatch.setattr(cli, "running_images", lambda: dict(running))
+    assert cli.update() == 0
+    assert ("git", "checkout", "-q", "--detach", "v1.01") in stack["ran"]
+    assert ("up",) in stack["ran"]
+
+
 def test_update_with_nothing_new_restarts_nothing(stack):
     stack["newer"] = False
     assert cli.update() == 0
