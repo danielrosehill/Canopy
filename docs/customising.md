@@ -290,6 +290,10 @@ A refresh then disables what it finds new, and its reply lists those under `held
 you want with `POST /v1/gateway/tools/<name>/enable`. Without the key, the reply's `joined_groups` names
 the groups that gained tools.
 
+To keep tools off for good, list them on the server: `"disabled_tools": ["home__set_secret", ...]`. Every
+apply and refresh disables them again, so the config, not the gateway, is the record. A tool disabled by
+hand also stays off when its server is registered again after a config change.
+
 ## Confirmation before a tool call
 
 A client that acts without a person watching every call, such as a voice assistant, should read the call

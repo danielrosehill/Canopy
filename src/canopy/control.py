@@ -149,7 +149,7 @@ def merged_groups(groups: list[dict]) -> list[dict]:
 # Canopy-only keys, never sent to the gateway. On a group: the confirmation policy. On a server:
 # what happens to tools a refresh finds that were not there before.
 POLICY_KEYS = ("confirm", "no_confirm")
-SERVER_KEYS = ("new_tools",)
+SERVER_KEYS = ("new_tools", "disabled_tools")
 
 
 def gateway_group(group: dict) -> dict:
@@ -508,19 +508,44 @@ class Control:
                 except (ControlError, RuntimeError, httpx.HTTPError) as e:
                     failures.append(f"{name}: {e}")
                 continue
+            was_off = set()
+            if name in live and not builtin:   # registering again enables every tool: note what was off
+                try:
+                    was_off = {t["name"] for t in g.tools(name) if t.get("enabled") is False}
+                except httpx.HTTPError:
+                    pass
             for attempt in range(20 if builtin else 1):   # built-ins may still be starting
                 try:
                     g.register(server)
                     state[name] = d
                     changed = True
                     say(f"registered {name}")
+                    if was_off:
+                        self._keep_off(g, name, was_off, failures)
                     break
                 except (RuntimeError, httpx.HTTPError) as e:
                     if attempt == (19 if builtin else 0):
                         failures.append(f"{name}: {e}")
                     else:
                         time.sleep(3)
+        for raw in servers:   # the config's own list of tools to keep off, on every apply
+            off = set(raw.get("disabled_tools", [])) if isinstance(raw, dict) else set()
+            if off and raw.get("name") in g.server_names():
+                self._keep_off(g, raw["name"], off, failures)
         return changed, failures
+
+    def _keep_off(self, g: Gateway, server: str, names: set[str], failures: list[str]) -> None:
+        """Disable whichever of `names` the server has and are enabled. Gone tools are skipped."""
+        try:
+            on = {t["name"] for t in g.tools(server) if t.get("enabled") is not False}
+        except httpx.HTTPError as e:
+            failures.append(f"{server}: cannot read its tools to keep some disabled: {e}")
+            return
+        for tool in sorted(names & on):
+            try:
+                g.set_tool_enabled(tool, False)
+            except (RuntimeError, httpx.HTTPError) as e:
+                failures.append(f"{tool}: could not disable: {e}")
 
     @staticmethod
     def _builtin_current(g: Gateway, server: dict) -> bool:
@@ -646,6 +671,9 @@ class Control:
             seen.add(name)
             if s.get("new_tools", "enabled") not in ("enabled", "disabled"):
                 problems.append(f"{name}: `new_tools` is enabled or disabled")
+            off = s.get("disabled_tools", [])
+            if not (isinstance(off, list) and all(isinstance(t, str) and t.startswith(f"{name}__") for t in off)):
+                problems.append(f"{name}: `disabled_tools` lists this server's tool names ({name}__...)")
             try:
                 expand(s, self.env)
             except KeyError as e:
@@ -785,6 +813,9 @@ class Control:
         added = sorted(after - set(before))
         held: list[str] = []
         configured = next((s for s in doc["servers"] if s.get("name") == name), {})
+        listed_off = set(configured.get("disabled_tools", [])) & after
+        for tool in sorted(listed_off):
+            self._bad_gateway(g.set_tool_enabled, tool, False)
         if added and before and configured.get("new_tools") == "disabled":
             for tool in added:   # a group that takes the whole server would list them at once
                 self._bad_gateway(g.set_tool_enabled, tool, False)

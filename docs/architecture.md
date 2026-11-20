@@ -175,7 +175,8 @@ version. `compat.json` records what has passed. Measured on 0.4.7, 2026-11-05.
   `GET /api/v0/server_configs` beforehand, and registers it again if the new one fails. That route is the
   only copy of the expanded credentials, and what it returns registers as it is.
 - Enable and disable work on a server or a tool, and take it out of a group's tools. Registering again
-  clears them, so a refresh disables again whatever was disabled.
+  clears them, so a refresh, and since 2026-11-20 an apply that registers a changed server, disables again
+  whatever was disabled. A server's `disabled_tools` in the config are disabled on every apply.
 - A group create is refused if the group would hold a disabled tool, whether it names the tool or takes
   it through its server ("does not exist or is disabled"); excluding the tool is accepted. Canopy leaves
   disabled tools out of every definition it sends, the restored one too. Found 2026-11-20, when one

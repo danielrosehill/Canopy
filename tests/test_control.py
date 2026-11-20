@@ -662,3 +662,34 @@ def test_a_failed_create_restores_the_old_group_even_with_a_tool_disabled_since(
     with pytest.raises(ControlError, match="previous definition restored"):
         ctl.set_group({"name": "house", "included_servers": ["home"]})
     assert "house" in jungle.groups and jungle.groups["house"]["excluded_tools"] == ["home__new"]
+
+
+def test_a_config_change_keeps_what_was_disabled(applied, jungle):
+    """2026-11-20: changing a server's entry registered it again, which enabled the 77 tools disabled
+    on it by hand. Only group exclusions kept them out of groups."""
+    jungle.upstream["a"] = ["a__keep", "a__off"]
+    write_servers(applied, {"servers": [{"name": "a", "description": "v2"}, {"name": "b"}], "groups": []})
+    applied.apply()
+    applied.set_tool_enabled("a__off", False)
+    write_servers(applied, {"servers": [{"name": "a", "description": "v3"}, {"name": "b"}], "groups": []})
+    out = applied.apply()
+    assert "registered a" in out["log"] and out["ok"]
+    assert jungle.tools["a__off"]["enabled"] is False and jungle.tools["a__keep"]["enabled"] is True
+
+
+def test_disabled_tools_in_the_config_are_kept_off_on_every_apply(applied, jungle):
+    jungle.upstream["a"] = ["a__keep", "a__dup"]
+    write_servers(applied, {"servers": [{"name": "a", "disabled_tools": ["a__dup"]}, {"name": "b"}],
+                            "groups": [{"name": "all", "included_servers": ["a"]}]})
+    assert applied.apply()["ok"]
+    assert jungle.tools["a__dup"]["enabled"] is False
+    assert "disabled_tools" not in jungle.servers["a"]
+    assert jungle.groups["all"]["excluded_tools"] == ["a__dup"]
+    jungle.tools["a__dup"]["enabled"] = True   # turned on by hand: the next apply turns it off again
+    applied.apply()
+    assert jungle.tools["a__dup"]["enabled"] is False
+
+
+def test_disabled_tools_must_name_the_servers_own_tools(ctl):
+    write_servers(ctl, {"servers": [{"name": "a", "url": "http://a", "disabled_tools": ["b__x"]}], "groups": []})
+    assert any("disabled_tools" in p for p in ctl.validate()["problems"])
