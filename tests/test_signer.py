@@ -66,3 +66,13 @@ def test_the_assertion_verifies_against_the_published_key(app):
 def test_no_signer_token_refuses_to_start():
     with pytest.raises(SignerError):
         Signer(ENTRY, "")
+
+
+def test_a_profile_can_carry_its_own_description():
+    entry = {"name": "gw", "description": "Workspace",
+             "profiles": {"work": {"identity": "alex@corp.example", "description": "Workspace: the WORK account only"},
+                          "home": "alex@example.com"}}
+    out = {s["name"]: s for s in federated([entry])}
+    assert out["gw-work"]["description"] == "Workspace: the WORK account only"
+    assert out["gw-home"]["description"] == "Workspace (profile home)"
+    assert Signer(entry, "t").profiles == {"work": "alex@corp.example", "home": "alex@example.com"}

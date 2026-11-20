@@ -60,7 +60,8 @@ class Signer:
         if not token:
             raise SignerError("CANOPY_SIGNER_TOKEN is not set")
         opts = entry.get("signer", {})
-        self.profiles: dict[str, str] = entry["profiles"]
+        self.profiles: dict[str, str] = {p: v["identity"] if isinstance(v, dict) else v
+                                          for p, v in entry["profiles"].items()}
         self.upstream = opts.get("upstream", "http://127.0.0.1:8000/mcp")
         self.header = opts.get("header", "x-pomerium-jwt-assertion").lower()
         self.claim = opts.get("claim", "email")

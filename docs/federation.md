@@ -31,6 +31,8 @@ the OAuth client it was issued under, so accounts from different OAuth clients c
    ```
 
    The gateway gets `google-workspace-personal`, `google-workspace-work` and `google-workspace-sam`.
+   A profile can also be `{"identity": "...", "description": "..."}`, to give its upstream its own
+   description, which is what search and agents read to choose between accounts.
    Name those in groups as any other server.
 2. In `secrets.env`: `CANOPY_SIGNER_TOKEN` (any long random string), `GOOGLE_OAUTH_CLIENT_ID` and
    `GOOGLE_OAUTH_CLIENT_SECRET` (a Google Cloud OAuth client of type Desktop or Web with redirect

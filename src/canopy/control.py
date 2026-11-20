@@ -196,11 +196,12 @@ def federated(servers: list[dict]) -> list[dict]:
         host = s.get("signer_host", s["name"])
         base = s.get("description") or s["name"]
         extra = {k: s[k] for k in SERVER_KEYS if k in s}
-        for profile in s["profiles"]:
+        for profile, value in s["profiles"].items():
+            described = value.get("description") if isinstance(value, dict) else None
             out.append({"name": f"{s['name']}-{profile}", "transport": "streamable_http",
                         "url": f"http://{host}:{SIGNER_PORT}/p/{profile}/mcp",
                         "bearer_token": "${CANOPY_SIGNER_TOKEN}",
-                        "description": f"{base} (profile {profile})", **extra})
+                        "description": described or f"{base} (profile {profile})", **extra})
     return out
 
 
@@ -620,8 +621,11 @@ class Control:
         for s in doc.get("servers", []):
             if isinstance(s, dict) and "profiles" in s:
                 profiles = s["profiles"]
-                if not (isinstance(profiles, dict) and profiles and all(isinstance(v, str) for v in profiles.values())):
-                    problems.append(f"{s.get('name')}: `profiles` maps profile names to identities")
+                if not (isinstance(profiles, dict) and profiles and all(
+                        isinstance(v, str) or (isinstance(v, dict) and isinstance(v.get("identity"), str))
+                        for v in profiles.values())):
+                    problems.append(f"{s.get('name')}: `profiles` maps each profile to an identity, "
+                                    "or to {identity, description}")
                     continue
                 for profile in profiles:
                     if not re.fullmatch(r"[a-z0-9][a-z0-9_]*", profile):
