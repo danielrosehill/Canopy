@@ -82,3 +82,19 @@ def test_drop_thinking_keeps_everything_but_assistant_thinking():
     out = drop_thinking(msgs)
     assert out[0] == msgs[0] and out[2] == msgs[2]
     assert out[1]["content"] == [{"type": "tool_use", "id": "t1", "name": "fx", "input": {}}]
+
+
+def test_each_turn_is_appended_to_the_turn_log_and_a_bad_path_does_not_raise(tmp_path):
+    import json
+    from types import SimpleNamespace
+    from canopy_voice.engine import Engine
+    e = Engine.__new__(Engine)
+    e.cfg = SimpleNamespace(turn_log=str(tmp_path / "logs" / "turns.jsonl"))
+    e.log_turn({"text": "what's the weather", "reply": "Sunny, 24."})
+    e.log_turn({"text": "שלום", "reply": "hi"})
+    lines = (tmp_path / "logs" / "turns.jsonl").read_text().splitlines()
+    assert [json.loads(x)["text"] for x in lines] == ["what's the weather", "שלום"]
+    e.cfg.turn_log = str(tmp_path / "logs" / "turns.jsonl" / "not-a-dir" / "x.jsonl")
+    e.log_turn({"text": "x"})   # logged as a warning, not raised
+    e.cfg.turn_log = ""
+    e.log_turn({"text": "x"})   # off

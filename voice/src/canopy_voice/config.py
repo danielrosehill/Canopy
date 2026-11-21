@@ -51,6 +51,8 @@ class Config:
     # Claude's tool search: None = off (every tool's schema is sent and loaded). A list = on, and these
     # fnmatch patterns name the tools kept loaded; every other tool is deferred until Claude searches for it.
     tool_search_loaded: list[str] | None = None
+    # One JSON line per turn (heard text, tool calls, reply, errors, timing) appended here; "" = no log.
+    turn_log: str = ""
     host: str = "0.0.0.0"
     port: int = 8797
 
@@ -125,6 +127,7 @@ def load(path: str | Path, env: dict | None = None) -> Config:
         no=confirm.get("no", list(DEFAULT_NO)),
         max_confirm_words=int(confirm.get("max_words", 8)),
         tool_search_loaded=_tool_search(doc.get("tool_search")),
+        turn_log=str(doc.get("turn_log") or ""),
         host=server.get("host", "0.0.0.0"),
         port=int(server.get("port", 8797)),
     )

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import fnmatch
+import json
 import os
 import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from loguru import logger
@@ -210,8 +212,20 @@ class Engine:
         line = f"[Speaker: {speaker.name} (address as \"{speaker.address}\") | Local time: {now:%A %d %B %Y, %H:%M}"
         return line + (f" | {speaker.context}]" if speaker.context else "]")
 
+    def log_turn(self, record: dict) -> None:
+        """Append one turn to `turn_log` (JSONL). A failed write is logged, never raised: the reply matters more."""
+        if not self.cfg.turn_log:
+            return
+        try:
+            path = Path(self.cfg.turn_log)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+        except OSError as e:
+            logger.warning(f"turn log {self.cfg.turn_log}: {e}")
+
     async def turn(self, speaker: Speaker, text: str, conversation_id: str | None = None,
-                   timeout: float = 60) -> dict:
+                   timeout: float = 60, client: str = "") -> dict:
         c = self.conversation(speaker, conversation_id)
         async with c.lock:
             t0 = time.time()
@@ -238,5 +252,8 @@ class Engine:
             reply = "".join(collect.text).strip()
             if collect.errors and not reply:
                 reply = "Sorry, something went wrong."
-            return {"reply": reply, "conversation_id": c.id, "speaker": speaker.id, "tool_calls": collect.calls,
-                    "held": c.gate.held, "errors": collect.errors, "seconds": round(time.time() - t0, 2)}
+            out = {"reply": reply, "conversation_id": c.id, "speaker": speaker.id, "tool_calls": collect.calls,
+                   "held": c.gate.held, "errors": collect.errors, "seconds": round(time.time() - t0, 2)}
+            self.log_turn({"ts": datetime.now(self.tz).isoformat(timespec="seconds"), "client": client,
+                           "model": self.cfg.model, "text": text, "gate_note": note or "", **out})
+            return out

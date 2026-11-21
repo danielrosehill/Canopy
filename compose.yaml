@@ -226,6 +226,7 @@ services:
       - "${CANOPY_VOICE_BIND:-127.0.0.1}:${CANOPY_VOICE_PORT:-8797}:8797"
     volumes:
       - ${CANOPY_AGENT_DATA:-${HOME}/canopy/agent-data}/config:/config:ro
+      - ${CANOPY_AGENT_DATA:-${HOME}/canopy/agent-data}/voice:/data   # turn_log, if set (e.g. /data/turns.jsonl)
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8797/health', timeout=2)"]
       interval: 10s

@@ -1,7 +1,7 @@
 """The HTTP API for thin wake-word clients. The bearer token says who is speaking.
 
     GET  /health                    {"ok", "groups": {name: {tools, confirm, policy}}}
-    POST /v1/turn                   JSON {text, conversation_id?, speak?}  -> JSON reply (+ audio_b64 WAV if speak)
+    POST /v1/turn                   JSON {text, conversation_id?, speak?, client?}  -> JSON reply (+ audio_b64 WAV if speak)
     POST /v1/turn/audio             multipart audio (any format ffmpeg reads), conversation_id?, reply=wav|json
 """
 from __future__ import annotations
@@ -61,7 +61,7 @@ def create_app(cfg: Config, engine: Engine | None = None) -> Starlette:
             return JSONResponse({"error": "body must be JSON with `text`"}, status_code=400)
         if not text:
             return JSONResponse({"error": "`text` is empty"}, status_code=400)
-        out = await engine.turn(speaker, text, body.get("conversation_id"))
+        out = await engine.turn(speaker, text, body.get("conversation_id"), client=str(body.get("client") or ""))
         if body.get("speak") and tts and out["reply"]:
             out["audio_b64"] = base64.b64encode(await speak(out["reply"])).decode()
         return JSONResponse(out)
@@ -83,7 +83,8 @@ def create_app(cfg: Config, engine: Engine | None = None) -> Starlette:
         transcript = await speech.transcribe(stt, pcm)
         if not transcript:
             return JSONResponse({"error": "heard nothing", "transcript": ""}, status_code=422)
-        out = await engine.turn(speaker, transcript, form.get("conversation_id") or None)
+        out = await engine.turn(speaker, transcript, form.get("conversation_id") or None,
+                                client=str(form.get("client") or "audio"))
         out["transcript"] = transcript
         if form.get("reply") == "json" or tts is None or not out["reply"]:
             return JSONResponse(out)
