@@ -49,6 +49,32 @@ All but `/health` take `Authorization: Bearer <speaker token>`.
 From a checkout, without Docker: `cd voice && uv run canopy-voice --config <voice.yaml> tools alex` lists a
 speaker's tools and which need a yes; `ask alex "text" "follow-up"` runs a conversation from the command line.
 
+## Wide groups: tool search
+
+Every tool's schema goes to the model on every turn, so a group of a few hundred tools is slow and costly. Turn on
+Claude's [tool search](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool) in
+`voice.yaml` and the group can hold the whole surface a speaker's accounts reach:
+
+```yaml
+tool_search:
+  loaded: ["home__*", "calendar__get_events", "mail__send"]   # fnmatch patterns kept loaded on every turn
+```
+
+Every other tool is sent with `defer_loading: true`, and the BM25 search tool goes first; Claude searches, then
+calls what it found. A deferred tool costs no context until it is loaded, and the prompt cache still holds.
+Say in the prompt that more tools exist and to search before saying it can't do something: without that rule
+Haiku answered "I have no currency feed" with an exchange-rate tool one search away.
+
+- The confirmation gate works as before: a found tool is a real tool name, judged by the group policy. Build a
+  wide group as a deny-list (`included_servers` with `excluded_tools`), and let annotations decide what needs a
+  yes; a tool with no `readOnlyHint` does.
+- Keep `toolbox__call_tool` out: it would bypass the gate by name.
+- How it fits Pipecat: the search runs on Anthropic's side, so no handler sees it, and Pipecat keeps neither its
+  blocks nor (here) the thinking blocks in the context it sends back. The API accepts that (a follow-up with only
+  `tool_use` + `tool_result` succeeds, and the next turn calls a found tool again without searching), but not a
+  thinking block left without its neighbours, so `DeferringAdapter` drops assistant thinking when tool search is on.
+- Supported models: Claude Haiku 4.5 and later, Sonnet 4.5+, Opus 4.5+ (up to 10,000 deferred tools a request).
+
 ## Speech
 
 `stt` and `tts` take `provider: wyoming` with a `uri` (`tcp://host:port`): the protocol Home Assistant's

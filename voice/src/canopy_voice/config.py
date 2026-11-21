@@ -48,6 +48,9 @@ class Config:
     yes: list[str] = field(default_factory=lambda: list(DEFAULT_YES))
     no: list[str] = field(default_factory=lambda: list(DEFAULT_NO))
     max_confirm_words: int = 8
+    # Claude's tool search: None = off (every tool's schema is sent and loaded). A list = on, and these
+    # fnmatch patterns name the tools kept loaded; every other tool is deferred until Claude searches for it.
+    tool_search_loaded: list[str] | None = None
     host: str = "0.0.0.0"
     port: int = 8797
 
@@ -57,6 +60,20 @@ class Config:
             if s.token and hmac.compare_digest(s.token.encode(), token.encode()):
                 return s
         return None
+
+
+def _tool_search(ts) -> list[str] | None:
+    """`tool_search: {loaded: [patterns]}` turns it on; `false`, `{enabled: false}` or nothing leaves it off."""
+    if not ts or (isinstance(ts, dict) and ts.get("enabled") is False):
+        return None
+    if ts is True:
+        return []
+    if not isinstance(ts, dict):
+        raise ConfigError("tool_search: expected a mapping with `loaded`, or true/false")
+    loaded = ts.get("loaded", [])
+    if not isinstance(loaded, list) or not all(isinstance(x, str) for x in loaded):
+        raise ConfigError("tool_search.loaded: expected a list of tool name patterns")
+    return loaded
 
 
 def load(path: str | Path, env: dict | None = None) -> Config:
@@ -107,6 +124,7 @@ def load(path: str | Path, env: dict | None = None) -> Config:
         yes=confirm.get("yes", list(DEFAULT_YES)),
         no=confirm.get("no", list(DEFAULT_NO)),
         max_confirm_words=int(confirm.get("max_words", 8)),
+        tool_search_loaded=_tool_search(doc.get("tool_search")),
         host=server.get("host", "0.0.0.0"),
         port=int(server.get("port", 8797)),
     )

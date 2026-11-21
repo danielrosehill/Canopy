@@ -3,6 +3,7 @@ behind the confirmation gate."""
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import os
 import time
 import uuid
@@ -13,6 +14,7 @@ from zoneinfo import ZoneInfo
 from loguru import logger
 from mcp.client.session_group import StreamableHttpParameters
 from pipecat.adapters.llm.schemas.tools_schema import ToolsSchema
+from pipecat.adapters.llm.services.anthropic_adapter import AnthropicLLMAdapter
 from pipecat.frames.frames import (EndFrame, ErrorFrame, Frame, FunctionCallResultFrame, FunctionCallsStartedFrame,
                                    LLMFullResponseEndFrame, LLMMessagesAppendFrame, LLMTextFrame)
 from pipecat.pipeline.pipeline import Pipeline
@@ -26,6 +28,55 @@ from pipecat.workers.runner import WorkerRunner
 
 from .config import Config, Speaker
 from .gate import Gate, Policy, fetch_policy
+
+
+TOOL_SEARCH = {"type": "tool_search_tool_bm25_20251119", "name": "tool_search_tool_bm25"}
+
+
+class DeferringAdapter(AnthropicLLMAdapter):
+    """Claude's tool search for a wide group. Every tool's definition is still sent, but a tool marked
+    `deferred` gets `defer_loading: true`, so Claude only loads it after finding it with the search tool,
+    which goes first. The search runs on Anthropic's side: its blocks (server_tool_use,
+    tool_search_tool_result) never reach a handler, and Pipecat leaves them out of the kept context. That
+    is accepted by the API (checked 2026-11-21: the follow-up with only tool_use + tool_result succeeds, and
+    the next turn calls the found tool again without searching).
+
+    Thinking blocks are dropped from the assistant messages sent back. Pipecat keeps them but not the search
+    blocks around them, and the API refuses a latest assistant message whose thinking block lost its
+    neighbours ("thinking or redacted_thinking blocks in the latest assistant message cannot be modified",
+    seen 2026-11-21 on a long fx tool loop). An assistant message with no thinking at all is accepted."""
+
+    async def get_llm_invocation_params(self, context, *args, **kwargs):
+        params = await super().get_llm_invocation_params(context, *args, **kwargs)
+        if any(getattr(t, "deferred", False) for t in getattr(context.tools, "standard_tools", None) or []):
+            params["messages"] = drop_thinking(params["messages"])
+        return params
+
+    def to_provider_tools_format(self, tools_schema: ToolsSchema) -> list[dict]:
+        tools = super().to_provider_tools_format(tools_schema)
+        deferred = {t.name for t in tools_schema.standard_tools if getattr(t, "deferred", False)}
+        if not deferred:
+            return tools
+        for t in tools:
+            if t["name"] in deferred:
+                t["defer_loading"] = True
+        return [dict(TOOL_SEARCH), *tools]
+
+
+def drop_thinking(messages: list) -> list:
+    out = []
+    for m in messages:
+        content = m.get("content")
+        if m.get("role") == "assistant" and isinstance(content, list):
+            kept = [b for b in content if (b.get("type") if isinstance(b, dict) else getattr(b, "type", None))
+                    not in ("thinking", "redacted_thinking")]
+            m = {**m, "content": kept or [{"type": "text", "text": "..."}]}
+        out.append(m)
+    return out
+
+
+class SearchingAnthropicLLMService(AnthropicLLMService):
+    adapter_class = DeferringAdapter
 
 
 class GroupTools:
@@ -44,8 +95,11 @@ class GroupTools:
         self.policy = await fetch_policy(self.cfg.policy_url, self.cfg.policy_token, self.group)
         self.loaded_at = time.time()
         held = sum(1 for t in self.schema.standard_tools if self.policy.needs(t.name))
+        loaded = self.cfg.tool_search_loaded
+        search = "off" if loaded is None else \
+            f"{sum(any(fnmatch.fnmatch(t.name, p) for p in loaded) for t in self.schema.standard_tools)} loaded"
         logger.info(f"group {self.group}: {len(self.schema.standard_tools)} tools, {held} need confirmation "
-                    f"(policy: {self.policy.source})")
+                    f"(policy: {self.policy.source}), tool search: {search}")
 
     def kept_open(self, handler):
         """Pipecat's MCP handlers carry a cleanup that closes the connection when the LLM service that ran
@@ -66,11 +120,13 @@ class GroupTools:
 
     def gated(self, gate: Gate) -> ToolsSchema:
         """The group's tools with each handler behind this conversation's gate, in a stable order so the
-        prompt cache holds."""
+        prompt cache holds. With tool search on, a tool no `tool_search.loaded` pattern names is deferred."""
+        loaded = self.cfg.tool_search_loaded
         tools = []
         for t in sorted(self.schema.standard_tools, key=lambda t: t.name):
             copy = type(t)(name=t.name, description=t.description, properties=t.properties,
                            required=t.required, handler=gate.wrap(t.name, self.kept_open(t.handler)))
+            copy.deferred = loaded is not None and not any(fnmatch.fnmatch(t.name, p) for p in loaded)
             tools.append(copy)
         return ToolsSchema(standard_tools=tools)
 
@@ -133,7 +189,8 @@ class Engine:
                                                 enable_prompt_caching=True, system_instruction=self.cfg.prompt)
         if self.cfg.effort:
             settings.effort = self.cfg.effort
-        return AnthropicLLMService(api_key=os.environ["ANTHROPIC_API_KEY"], settings=settings)
+        cls = SearchingAnthropicLLMService if self.cfg.tool_search_loaded is not None else AnthropicLLMService
+        return cls(api_key=os.environ["ANTHROPIC_API_KEY"], settings=settings)
 
     def conversation(self, speaker: Speaker, conversation_id: str | None) -> Conversation:
         now = time.time()

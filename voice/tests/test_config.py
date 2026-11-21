@@ -36,3 +36,14 @@ def test_two_speakers_cannot_share_a_token(tmp_path):
     (tmp_path / "prompt.md").write_text("x")
     with pytest.raises(ConfigError, match="share"):
         load(write(tmp_path, BASE), {"T_ALEX": "x", "T_SAM": "x"})
+
+
+def test_tool_search_is_off_unless_configured_and_takes_loaded_patterns():
+    import pytest
+    from canopy_voice.config import ConfigError, _tool_search
+    assert _tool_search(None) is None and _tool_search(False) is None
+    assert _tool_search({"enabled": False, "loaded": ["a"]}) is None
+    assert _tool_search(True) == []
+    assert _tool_search({"loaded": ["home__*", "mail__send"]}) == ["home__*", "mail__send"]
+    with pytest.raises(ConfigError):
+        _tool_search({"loaded": "home__*"})

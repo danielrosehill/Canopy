@@ -39,3 +39,46 @@ async def test_a_closed_connection_is_opened_again_and_the_call_runs_once_more()
     g, h = group(), Wrapper(fail_first=True)
     await g.kept_open(h)(object())
     assert g.mcp.started == 1 and h.calls == 2
+
+
+def schemas(*names):
+    from pipecat.adapters.llm.schemas.function_schema import FunctionSchema
+    from pipecat.adapters.llm.schemas.tools_schema import ToolsSchema
+    return ToolsSchema(standard_tools=[FunctionSchema(name=n, description=n, properties={}, required=[])
+                                       for n in names])
+
+
+def searching_group(loaded):
+    from types import SimpleNamespace
+    g = group()
+    g.cfg = SimpleNamespace(tool_search_loaded=loaded)
+    g.schema = schemas("home__lights_on", "mail__send", "calendar__events")
+    return g
+
+
+def test_with_tool_search_off_nothing_is_deferred_and_no_search_tool_is_sent():
+    from canopy_voice.engine import DeferringAdapter
+    from canopy_voice.gate import Gate, Policy
+    tools = DeferringAdapter().to_provider_tools_format(searching_group(None).gated(Gate(Policy({}, "test"))))
+    assert [t["name"] for t in tools] == ["calendar__events", "home__lights_on", "mail__send"]
+    assert not any("defer_loading" in t for t in tools)
+
+
+def test_tool_search_defers_every_tool_no_pattern_keeps_loaded_and_puts_the_search_tool_first():
+    from canopy_voice.engine import TOOL_SEARCH, DeferringAdapter
+    from canopy_voice.gate import Gate, Policy
+    tools = DeferringAdapter().to_provider_tools_format(searching_group(["home__*"]).gated(Gate(Policy({}, "t"))))
+    assert tools[0] == TOOL_SEARCH
+    deferred = {t["name"]: t.get("defer_loading", False) for t in tools[1:]}
+    assert deferred == {"calendar__events": True, "home__lights_on": False, "mail__send": True}
+
+
+def test_drop_thinking_keeps_everything_but_assistant_thinking():
+    from canopy_voice.engine import drop_thinking
+    msgs = [{"role": "user", "content": "hi"},
+            {"role": "assistant", "content": [{"type": "thinking", "thinking": "x", "signature": "s"},
+                                              {"type": "tool_use", "id": "t1", "name": "fx", "input": {}}]},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "1"}]}]
+    out = drop_thinking(msgs)
+    assert out[0] == msgs[0] and out[2] == msgs[2]
+    assert out[1]["content"] == [{"type": "tool_use", "id": "t1", "name": "fx", "input": {}}]
