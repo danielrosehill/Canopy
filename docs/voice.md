@@ -97,7 +97,7 @@ stays the same between turns and is served from the prompt cache.
 ## Turn log
 
 `turn_log: /data/turns.jsonl` in `voice.yaml` appends one JSON line per turn (off when unset). `/data` is
-`<agent-data>/voice` on the host. A record has `ts` (local, ISO), `client` (the `client` field of a `/v1/turn` body,
+`$CANOPY_DATA/voice` on the host (runtime state, not the overlay). A record has `ts` (local, ISO), `client` (the `client` field of a `/v1/turn` body,
 `audio` for `/v1/turn/audio`, else empty), `model`, `text` (what was heard or typed), `gate_note` (the note added when a
 held call was waiting for a yes), and the reply fields: `reply`, `conversation_id`, `speaker`, `tool_calls` (tool,
 arguments, result cut to 500 characters), `held`, `errors`, `seconds`. Server-side tool-search blocks are not in it.
