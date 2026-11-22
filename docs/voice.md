@@ -49,11 +49,48 @@ All but `/health` take `Authorization: Bearer <speaker token>`.
 From a checkout, without Docker: `cd voice && uv run canopy-voice --config <voice.yaml> tools alex` lists a
 speaker's tools and which need a yes; `ask alex "text" "follow-up"` runs a conversation from the command line.
 
-## Wide groups: tool search
+## Wide groups: Canopy tool discovery
+
+A speaker's group can hold the whole surface their accounts reach. Tools are found the way every Canopy client
+finds them: the group's catalogue search ranks them (hybrid keyword and vector search, then the reranker; see
+[architecture](architecture.md#search)), and the model calls what it found. Only the everyday tools are sent on
+every turn.
+
+```yaml
+tool_discovery:
+  search: catalogue__search                                  # the group's Canopy catalogue search tool
+  loaded: ["home__*", "calendar__get_events", "mail__send"]  # fnmatch patterns sent natively on every turn
+speakers:
+  sam:
+    group: voice_sam
+    tool_discovery: {search: household__search}              # a scoped catalogue's search, for this speaker
+```
+
+What the model gets: the loaded tools, the search tool, and a built-in `call_tool(name, arguments)`, the voice
+twin of `toolbox__call_tool`. canopy-voice rewrites each search result before the model reads it:
+
+- A tool outside the speaker's group is dropped, and `call_tool` refuses one too. The group stays the allow-list,
+  so build it as a deny-list (`included_servers` with `excluded_tools`) and the search can't reach past it.
+- A found tool that isn't loaded gets `call: call_tool` and its `input_schema` (from the group's own tools/list),
+  so the model calls it in the next step instead of reading the tool first. A loaded one gets its own name.
+- The confirmation gate judges the real tool: `call_tool` for `mail__send` is held and keyed as `mail__send` with
+  its arguments, and runs after a yes exactly like a native call. That is why `toolbox__call_tool` itself stays out
+  of the group: it would carry every tool under one name.
+
+Say in the prompt that more tools exist and to search the catalogue before saying it can't do something: without
+such a rule Haiku answered "I have no currency feed" with an exchange-rate tool one search away. A search tool
+missing from the group is logged at start, and that speaker then reaches only the loaded tools.
+
+### Claude's tool search (legacy)
+
+`tool_search` is the older way, kept for groups with no Canopy catalogue: every tool's schema is sent, deferred,
+and Claude's own BM25 search picks from them. It bypasses Canopy's ranking, so use `tool_discovery` where a
+catalogue exists. The two are exclusive.
+
 
 Every tool's schema goes to the model on every turn, so a group of a few hundred tools is slow and costly. Turn on
 Claude's [tool search](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool) in
-`voice.yaml` and the group can hold the whole surface a speaker's accounts reach:
+`voice.yaml`:
 
 ```yaml
 tool_search:

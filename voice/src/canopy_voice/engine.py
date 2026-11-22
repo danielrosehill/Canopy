@@ -8,7 +8,7 @@ import json
 import os
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -30,6 +30,7 @@ from pipecat.workers.runner import WorkerRunner
 
 from .config import Config, Speaker
 from .gate import Gate, Policy, fetch_policy
+from . import discovery
 from . import timers as timers_mod
 
 
@@ -99,8 +100,14 @@ class GroupTools:
         self.loaded_at = time.time()
         held = sum(1 for t in self.schema.standard_tools if self.policy.needs(t.name))
         loaded = self.cfg.tool_search_loaded
-        search = "off" if loaded is None else \
-            f"{sum(any(fnmatch.fnmatch(t.name, p) for p in loaded) for t in self.schema.standard_tools)} loaded"
+        if self.cfg.discovery_loaded is not None:
+            n = sum(any(fnmatch.fnmatch(t.name, p) for p in self.cfg.discovery_loaded)
+                    for t in self.schema.standard_tools)
+            search = f"Canopy discovery, {n} loaded"
+        elif loaded is None:
+            search = "off"
+        else:
+            search = f"{sum(any(fnmatch.fnmatch(t.name, p) for p in loaded) for t in self.schema.standard_tools)} loaded"
         logger.info(f"group {self.group}: {len(self.schema.standard_tools)} tools, {held} need confirmation "
                     f"(policy: {self.policy.source}), tool search: {search}")
 
@@ -134,9 +141,13 @@ class GroupTools:
         failed = text.startswith(("Error calling mcp tool", "Sorry, could not call the mcp tool"))
         return not failed, text
 
-    def gated(self, gate: Gate) -> ToolsSchema:
+    def gated(self, gate: Gate, search: str | None = None) -> ToolsSchema:
         """The group's tools with each handler behind this conversation's gate, in a stable order so the
-        prompt cache holds. With tool search on, a tool no `tool_search.loaded` pattern names is deferred."""
+        prompt cache holds. With Canopy discovery on, only the loaded tools and the catalogue search `search`
+        are sent, plus call_tool. With Claude's tool search on, a tool no `tool_search.loaded` pattern names
+        is deferred."""
+        if getattr(self.cfg, "discovery_loaded", None) is not None:
+            return self.discovering(gate, search or self.cfg.discovery_search)
         loaded = self.cfg.tool_search_loaded
         tools = []
         for t in sorted(self.schema.standard_tools, key=lambda t: t.name):
@@ -145,6 +156,64 @@ class GroupTools:
             copy.deferred = loaded is not None and not any(fnmatch.fnmatch(t.name, p) for p in loaded)
             tools.append(copy)
         return ToolsSchema(standard_tools=tools)
+
+
+    def native(self, search: str) -> set[str]:
+        """The tools sent to the model natively under Canopy discovery: the loaded ones and the search."""
+        pats = self.cfg.discovery_loaded or []
+        return {t.name for t in self.schema.standard_tools
+                if t.name == search or any(fnmatch.fnmatch(t.name, p) for p in pats)}
+
+    def discovering(self, gate: Gate, search: str) -> ToolsSchema:
+        from pipecat.adapters.llm.schemas.function_schema import FunctionSchema
+        by_name = {t.name: t for t in self.schema.standard_tools}
+        native = self.native(search)
+        shapes = {n: {"properties": t.properties, "required": t.required} for n, t in by_name.items()}
+        tools = []
+        for name in sorted(native):
+            t = by_name[name]
+            handler = self.kept_open(t.handler)
+            if name == search:
+                handler = self.searching(handler, shapes, native)
+            tools.append(type(t)(name=t.name, description=t.description, properties=t.properties,
+                                 required=t.required, handler=gate.wrap(name, handler)))
+        tools.append(FunctionSchema(name=discovery.CALL_TOOL, description=discovery.CALL_TOOL_DOC,
+                                    properties=discovery.CALL_TOOL_PROPS, required=["name"],
+                                    handler=self.calling(gate, by_name, {search})))
+        return ToolsSchema(standard_tools=tools)
+
+    @staticmethod
+    def searching(handler, shapes: dict[str, dict], native: set[str]):
+        """The catalogue search, its result narrowed to the group and given each found tool's schema."""
+        async def search(params):
+            reply = params.result_callback
+
+            async def narrowed(result, *args, **kwargs):
+                text = result if isinstance(result, str) else str(result)
+                await reply(discovery.rewrite_search(text, shapes, native), *args, **kwargs)
+            await handler(replace(params, result_callback=narrowed))
+        return search
+
+    def calling(self, gate: Gate, by_name: dict, blocked: set[str]):
+        """call_tool: runs a discovered tool of this group, behind the gate under the tool's own name."""
+        async def call(params):
+            args = dict(params.arguments or {})
+            name = args.get("name")
+            if isinstance(name, str) and name.startswith("tool:"):
+                name = name[5:]
+            inner = args.get("arguments")
+            if isinstance(inner, str):   # a model sometimes sends the object as JSON text
+                try:
+                    inner = json.loads(inner)
+                except ValueError:
+                    pass
+            why = discovery.check_call(name, inner, set(by_name), blocked)
+            if why:
+                await params.result_callback(why)
+                return
+            run = gate.wrap(name, self.kept_open(by_name[name].handler), again=discovery.CALL_TOOL)
+            await run(replace(params, function_name=name, arguments=inner or {}))
+        return call
 
 
 @dataclass
@@ -203,6 +272,10 @@ class Engine:
         for g in sorted({s.group for s in self.cfg.speakers}):
             self.groups[g] = GroupTools(self.cfg, g)
             await self.groups[g].load()
+        for s in self.cfg.speakers if self.cfg.discovery_loaded is not None else []:
+            if self.cfg.search_tool(s) not in {t.name for t in self.groups[s.group].schema.standard_tools}:
+                logger.warning(f"tool discovery: {s.id}'s search tool {self.cfg.search_tool(s)} is not in "
+                               f"group {s.group}, so only the loaded tools are reachable")
         for s in self.cfg.speakers if self.timers else []:
             names = {t.name for t in self.groups[s.group].schema.standard_tools}
             for c in s.timer_deliver:
@@ -268,7 +341,7 @@ class Engine:
         if c is None or c.speaker.id != speaker.id:
             group = self.groups[speaker.group]
             gate = Gate(group.policy)
-            tools = group.gated(gate)
+            tools = group.gated(gate, self.cfg.search_tool(speaker))
             tools = ToolsSchema(standard_tools=[*tools.standard_tools, *self.timer_tools(speaker)])
             c = Conversation(uuid.uuid4().hex[:12], speaker, LLMContext(tools=tools), gate)
             self.conversations[c.id] = c

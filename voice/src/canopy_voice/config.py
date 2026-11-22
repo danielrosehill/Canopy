@@ -33,6 +33,9 @@ class Speaker:
     context: str = ""
     # Delivery calls for this speaker's timers: [{tool, arguments}], run through their group. [] = no timers.
     timer_deliver: list[dict] = field(default_factory=list)
+    # tool_discovery.search for this speaker, when their group's catalogue search is another tool (a scoped
+    # catalogue). "" = the top-level tool_discovery.search.
+    discovery_search: str = ""
 
 
 @dataclass
@@ -56,6 +59,14 @@ class Config:
     # Claude's tool search: None = off (every tool's schema is sent and loaded). A list = on, and these
     # fnmatch patterns name the tools kept loaded; every other tool is deferred until Claude searches for it.
     tool_search_loaded: list[str] | None = None
+    # Canopy tool discovery (discovery.py), the standard way: None = off. A list = on: these fnmatch patterns
+    # name the tools sent natively, the group's Canopy catalogue search (`discovery_search`) finds the rest,
+    # and the built-in call_tool runs them. Exclusive with tool_search.
+    discovery_loaded: list[str] | None = None
+    discovery_search: str = "catalogue__search"
+
+    def search_tool(self, speaker: "Speaker") -> str:
+        return speaker.discovery_search or self.discovery_search
     # One JSON line per turn (heard text, tool calls, reply, errors, timing) appended here; "" = no log.
     turn_log: str = ""
     # Timers and reminders (timers.py): the JSON file they persist in; "" = the timer tools are off.
@@ -87,6 +98,21 @@ def _tool_search(ts) -> list[str] | None:
     if not isinstance(loaded, list) or not all(isinstance(x, str) for x in loaded):
         raise ConfigError("tool_search.loaded: expected a list of tool name patterns")
     return loaded
+
+
+def _tool_discovery(td) -> tuple[list[str] | None, str]:
+    """`tool_discovery: {search: <group tool>, loaded: [patterns]}`; nothing or `enabled: false` = off."""
+    if not td or (isinstance(td, dict) and td.get("enabled") is False):
+        return None, "catalogue__search"
+    if not isinstance(td, dict):
+        raise ConfigError("tool_discovery: expected a mapping with `search` and `loaded`")
+    loaded = td.get("loaded", [])
+    if not isinstance(loaded, list) or not all(isinstance(x, str) for x in loaded):
+        raise ConfigError("tool_discovery.loaded: expected a list of tool name patterns")
+    search = td.get("search", "catalogue__search")
+    if not isinstance(search, str) or not search:
+        raise ConfigError("tool_discovery.search: expected the name of the group's catalogue search tool")
+    return loaded, search
 
 
 def _deliver(calls, where: str) -> list[dict]:
@@ -134,10 +160,15 @@ def load(path: str | Path, env: dict | None = None) -> Config:
                                 context=s.get("context", ""),
                                 timer_deliver=_deliver((s.get("timers") or {}).get("deliver"),
                                                        f"speakers.{sid}.timers.deliver")
-                                if "deliver" in (s.get("timers") or {}) else list(default_deliver)))
+                                if "deliver" in (s.get("timers") or {}) else list(default_deliver),
+                                discovery_search=str((s.get("tool_discovery") or {}).get("search") or "")))
     if len({s.token for s in speakers}) != len(speakers):
         raise ConfigError("two speakers share a token, so the token would not say who is speaking")
 
+    discovery_loaded, discovery_search = _tool_discovery(doc.get("tool_discovery"))
+    tool_search = _tool_search(doc.get("tool_search"))
+    if discovery_loaded is not None and tool_search is not None:
+        raise ConfigError("tool_discovery and tool_search are two ways to find tools: set one")
     llm = doc.get("llm", {})
     prompt = doc.get("prompt", "")
     if doc.get("prompt_file"):
@@ -163,7 +194,9 @@ def load(path: str | Path, env: dict | None = None) -> Config:
         yes=confirm.get("yes", list(DEFAULT_YES)),
         no=confirm.get("no", list(DEFAULT_NO)),
         max_confirm_words=int(confirm.get("max_words", 8)),
-        tool_search_loaded=_tool_search(doc.get("tool_search")),
+        tool_search_loaded=tool_search,
+        discovery_loaded=discovery_loaded,
+        discovery_search=discovery_search,
         turn_log=str(doc.get("turn_log") or ""),
         timers_store=str(timers.get("store") or ""),
         timers_max_seconds=int(timers.get("max_seconds", 7 * 86400)),

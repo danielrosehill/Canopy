@@ -94,8 +94,10 @@ class Gate:
             return "[The speaker declined the held action. It was not done. Acknowledge briefly.]"
         return "[The held action was dropped: the speaker did not confirm it. Do not call it unless they ask again.]"
 
-    def wrap(self, name: str, handler):
-        """A Pipecat function handler that runs `handler` only when the policy and the speaker allow it."""
+    def wrap(self, name: str, handler, again: str | None = None):
+        """A Pipecat function handler that runs `handler` only when the policy and the speaker allow it.
+        The held call is keyed on `name` and the arguments the handler gets. `again` is what the model is told
+        to call once the speaker says yes, when that is not `name` itself (call_tool, for a discovered tool)."""
         if not self.policy.needs(name):
             return handler
 
@@ -107,5 +109,5 @@ class Gate:
                 return await handler(params)
             self.held = key
             self.log.append({"held": key})
-            await params.result_callback(HELD.format(name=name))
+            await params.result_callback(HELD.format(name=again or name))
         return gated
