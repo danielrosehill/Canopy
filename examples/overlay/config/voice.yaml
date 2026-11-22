@@ -14,6 +14,15 @@ session_ttl_s: 180                    # a follow-up within this keeps the conver
 stt: {provider: wyoming, uri: "tcp://speech-host:10300", language: en}
 tts: {provider: wyoming, uri: "tcp://speech-host:10200", voice: en_GB-alan-medium}
 
+# Timers and reminders that fire at their time (docs/voice.md#timers-and-reminders). Off without `store`.
+# At the time, each `deliver` call runs through the speaker's own group; {speaker} {name} {message} {label}
+# {text} {duration} {kind} {id} in an argument are filled in.
+timers:
+  store: /data/timers.json            # $CANOPY_DATA/voice on the host: survives a restart
+  deliver:
+    - tool: notify__push              # any tool in the speaker's group that reaches their phone
+      arguments: {to: "{speaker}", message: "{message}"}
+
 # One entry per person. The bearer token their device sends says who is speaking, and picks the group.
 speakers:
   alex:
@@ -26,5 +35,7 @@ speakers:
     group: voice_household
     token_env: VOICE_TOKEN_SAM
     context: Sam keeps the shopping list.
+    timers:                           # a speaker's own delivery replaces the default; [] = no timers for them
+      deliver: [{tool: notify-sam__push, arguments: {message: "{message}"}}]
 
 # confirm: {yes: [...], no: [...], max_words: 8}   # the words that approve or refuse a held action

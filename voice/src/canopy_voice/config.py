@@ -15,6 +15,9 @@ DEFAULT_YES = ["yes", "yeah", "yep", "yup", "sure", "ok", "okay", "go ahead", "d
                "correct", "please do", "send it", "affirmative", "that's right"]
 DEFAULT_NO = ["no", "nope", "cancel", "stop", "don't", "do not", "wait", "never mind", "hold on", "not"]
 
+DEFAULT_TIMER_MESSAGES = {"timer": "Timer done: {label}", "timer_unlabelled": "Your {duration} timer is done",
+                          "reminder": "Reminder: {text}"}
+
 
 class ConfigError(ValueError):
     pass
@@ -28,6 +31,8 @@ class Speaker:
     token: str
     address: str = ""
     context: str = ""
+    # Delivery calls for this speaker's timers: [{tool, arguments}], run through their group. [] = no timers.
+    timer_deliver: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -53,6 +58,12 @@ class Config:
     tool_search_loaded: list[str] | None = None
     # One JSON line per turn (heard text, tool calls, reply, errors, timing) appended here; "" = no log.
     turn_log: str = ""
+    # Timers and reminders (timers.py): the JSON file they persist in; "" = the timer tools are off.
+    timers_store: str = ""
+    timers_max_seconds: int = 7 * 86400
+    timers_late_grace_s: int = 3600
+    timers_poll_s: float = 15
+    timers_messages: dict = field(default_factory=lambda: dict(DEFAULT_TIMER_MESSAGES))
     host: str = "0.0.0.0"
     port: int = 8797
 
@@ -78,6 +89,25 @@ def _tool_search(ts) -> list[str] | None:
     return loaded
 
 
+def _deliver(calls, where: str) -> list[dict]:
+    """`deliver: [{tool, arguments}]` (a single mapping is one call)."""
+    if calls is None:
+        return []
+    if isinstance(calls, dict):
+        calls = [calls]
+    if not isinstance(calls, list):
+        raise ConfigError(f"{where}: expected a list of {{tool, arguments}}")
+    out = []
+    for i, c in enumerate(calls):
+        if not isinstance(c, dict) or not isinstance(c.get("tool"), str) or not c["tool"]:
+            raise ConfigError(f"{where}[{i}]: `tool` (a gateway tool name in the speaker's group) is required")
+        args = c.get("arguments", {})
+        if not isinstance(args, dict):
+            raise ConfigError(f"{where}[{i}].arguments: expected a mapping")
+        out.append({"tool": c["tool"], "arguments": args})
+    return out
+
+
 def load(path: str | Path, env: dict | None = None) -> Config:
     env = os.environ if env is None else env
     path = Path(path)
@@ -89,6 +119,10 @@ def load(path: str | Path, env: dict | None = None) -> Config:
             raise ConfigError(f"{where}: `{key}` is required")
         return d[key]
 
+    timers = doc.get("timers") or {}
+    if not isinstance(timers, dict):
+        raise ConfigError("timers: expected a mapping")
+    default_deliver = _deliver(timers.get("deliver"), "timers.deliver")
     speakers = []
     for sid, s in (need(doc, "speakers", "voice.yaml") or {}).items():
         token_env = need(s, "token_env", f"speakers.{sid}")
@@ -97,7 +131,10 @@ def load(path: str | Path, env: dict | None = None) -> Config:
             raise ConfigError(f"speakers.{sid}: environment variable {token_env} is not set")
         speakers.append(Speaker(id=sid, name=s.get("name", sid), group=need(s, "group", f"speakers.{sid}"),
                                 token=token, address=s.get("address", s.get("name", sid)),
-                                context=s.get("context", "")))
+                                context=s.get("context", ""),
+                                timer_deliver=_deliver((s.get("timers") or {}).get("deliver"),
+                                                       f"speakers.{sid}.timers.deliver")
+                                if "deliver" in (s.get("timers") or {}) else list(default_deliver)))
     if len({s.token for s in speakers}) != len(speakers):
         raise ConfigError("two speakers share a token, so the token would not say who is speaking")
 
@@ -128,6 +165,11 @@ def load(path: str | Path, env: dict | None = None) -> Config:
         max_confirm_words=int(confirm.get("max_words", 8)),
         tool_search_loaded=_tool_search(doc.get("tool_search")),
         turn_log=str(doc.get("turn_log") or ""),
+        timers_store=str(timers.get("store") or ""),
+        timers_max_seconds=int(timers.get("max_seconds", 7 * 86400)),
+        timers_late_grace_s=int(timers.get("late_grace_s", 3600)),
+        timers_poll_s=float(timers.get("poll_s", 15)),
+        timers_messages={**DEFAULT_TIMER_MESSAGES, **(timers.get("messages") or {})},
         host=server.get("host", "0.0.0.0"),
         port=int(server.get("port", 8797)),
     )

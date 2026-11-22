@@ -30,6 +30,7 @@ def create_app(cfg: Config, engine: Engine | None = None) -> Starlette:
     async def lifespan(_):
         if not engine.groups:
             await engine.start()
+        engine.start_timers()
         yield
 
     def who(request: Request):

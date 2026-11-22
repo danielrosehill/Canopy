@@ -94,6 +94,49 @@ Everything personal lives in the overlay: speakers, tokens, groups, the prompt, 
 speaker's `context` is added to their per-turn line, which also gives the local time, so the system prompt
 stays the same between turns and is served from the prompt cache.
 
+## Timers and reminders
+
+"Set a timer for ten minutes" and "remind me at six to call the plumber" are kept by canopy-voice itself and fire
+at their time, wherever the speaker is. No calendar event, no satellite device, no change to the client: a device
+only posts turns and never holds a connection, so the server cannot ring it directly. Instead each timer, when
+due, runs the speaker's **delivery calls**: gateway tools in their own group that reach them (a phone push, a
+message spoken on their desktop). Which tools is config.
+
+```yaml
+timers:
+  store: /data/timers.json      # required; without it the tools are off. /data = $CANOPY_DATA/voice
+  deliver:                      # default for every speaker: one or more {tool, arguments}
+    - tool: notify__push
+      arguments: {to: "{speaker}", message: "{message}"}
+  # max_seconds: 604800         # furthest ahead a timer may be (7 days)
+  # late_grace_s: 3600          # a timer found overdue by more than this after downtime is dropped, not sent
+  # poll_s: 15                  # how often the file is re-read (timers added by another process)
+  # messages: {timer: "Timer done: {label}", timer_unlabelled: "Your {duration} timer is done",
+  #            reminder: "Reminder: {text}"}
+speakers:
+  sam:
+    timers: {deliver: [{tool: notify-sam__push, arguments: {message: "{message}"}}]}   # replaces the default
+```
+
+In argument strings `{speaker}` (id), `{name}`, `{address}`, `{message}` (from `messages`), `{label}` / `{text}`,
+`{duration}` (as spoken, "10 minutes"), `{kind}` and `{id}` are filled in; any other `{...}` is left as is.
+
+- **Tools** (built in, offered only to a speaker with at least one delivery call, never deferred by tool
+  search, no confirmation): `set_timer(seconds, label?)`, `set_reminder(at, text)` with `at` local
+  `"HH:MM"` (next occurrence) or `"YYYY-MM-DD HH:MM"`, `list_timers()`, `cancel_timer(id? | label? | all?)`
+  (with one running and nothing named, that one). Each speaker sees and cancels only their own.
+- **Delivery** calls the tool through the speaker's group connection, outside a turn and outside the
+  confirmation gate: the operator chose the call, the model did not. It counts as delivered if any call
+  succeeded. A tool not in the group is a warning at start-up. Logged as `timer <id> for <speaker> fired|failed
+  (...)`, and kept in the file's `history` (last 50) with the tool's reply.
+- **Restarts.** The file is the source of truth. A timer that came due while the service was down fires on
+  start if it is late by less than `late_grace_s`, else it is recorded `missed`.
+- **One firing process.** Only `serve` runs the timer loop; `canopy-voice ask` can set timers (the server
+  picks them up within `poll_s`) but never fires them.
+- Precision is about a second for timers set through the server (its loop wakes on each new timer).
+- Tell the prompt to use these for countdowns and reminders within the next days, and the calendar for
+  appointments, or "remind me in twenty minutes" may still become a calendar event.
+
 ## Turn log
 
 `turn_log: /data/turns.jsonl` in `voice.yaml` appends one JSON line per turn (off when unset). `/data` is

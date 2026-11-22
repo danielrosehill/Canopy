@@ -30,6 +30,7 @@ from pipecat.workers.runner import WorkerRunner
 
 from .config import Config, Speaker
 from .gate import Gate, Policy, fetch_policy
+from . import timers as timers_mod
 
 
 TOOL_SEARCH = {"type": "tool_search_tool_bm25_20251119", "name": "tool_search_tool_bm25"}
@@ -120,6 +121,19 @@ class GroupTools:
                 await handler(params)
         return call
 
+    async def call(self, tool: str, arguments: dict) -> tuple[bool, str]:
+        """Calls one of the group's tools outside a turn (a timer's delivery). Returns (ok, result text)."""
+        try:
+            text = await self.mcp._call_tool_text(tool, arguments)   # Pipecat's own call, as a handler makes
+        except RuntimeError as e:
+            if "not connected" not in str(e):
+                raise
+            logger.warning(f"group {self.group}: MCP connection was closed, opening it again")
+            await self.mcp.start()
+            text = await self.mcp._call_tool_text(tool, arguments)
+        failed = text.startswith(("Error calling mcp tool", "Sorry, could not call the mcp tool"))
+        return not failed, text
+
     def gated(self, gate: Gate) -> ToolsSchema:
         """The group's tools with each handler behind this conversation's gate, in a stable order so the
         prompt cache holds. With tool search on, a tool no `tool_search.loaded` pattern names is deferred."""
@@ -180,11 +194,63 @@ class Engine:
         self.groups: dict[str, GroupTools] = {}
         self.conversations: dict[str, Conversation] = {}
         self.tz = ZoneInfo(cfg.timezone)
+        self.timers = timers_mod.Scheduler(
+            timers_mod.TimerStore(cfg.timers_store), self.tz, self.deliver_timer, cfg.timers_max_seconds,
+            cfg.timers_late_grace_s, cfg.timers_poll_s) if cfg.timers_store else None
+        self._timer_task: asyncio.Task | None = None
 
     async def start(self) -> None:
         for g in sorted({s.group for s in self.cfg.speakers}):
             self.groups[g] = GroupTools(self.cfg, g)
             await self.groups[g].load()
+        for s in self.cfg.speakers if self.timers else []:
+            names = {t.name for t in self.groups[s.group].schema.standard_tools}
+            for c in s.timer_deliver:
+                if c["tool"] not in names:
+                    logger.warning(f"timers: {s.id}'s delivery tool {c['tool']} is not in group {s.group}")
+
+    def start_timers(self) -> None:
+        """Runs the timer loop (the server only: a second process firing the same file would deliver twice)."""
+        if self.timers and self._timer_task is None:
+            self._timer_task = asyncio.create_task(self.timers.run(), name="timers")
+
+    def timer_message(self, t: timers_mod.Timer) -> str:
+        m = self.cfg.timers_messages
+        key = t.kind if t.kind != "timer" or t.text else "timer_unlabelled"
+        duration = timers_mod.spoken_duration(t.due - t.created)
+        return timers_mod.fill(m.get(key) or m["timer"], {"label": t.text, "text": t.text, "duration": duration})
+
+    async def deliver_timer(self, t: timers_mod.Timer) -> tuple[bool, str]:
+        """Every delivery call of the timer's speaker, through their group. Ok if at least one succeeded."""
+        s = next((s for s in self.cfg.speakers if s.id == t.speaker), None)
+        if s is None or not s.timer_deliver:
+            return False, f"speaker {t.speaker} has no timer delivery configured"
+        values = {"speaker": s.id, "name": s.name, "address": s.address, "kind": t.kind, "id": t.id,
+                  "label": t.text, "text": t.text, "message": self.timer_message(t),
+                  "duration": timers_mod.spoken_duration(t.due - t.created)}
+        results, ok = [], False
+        for c in s.timer_deliver:
+            try:
+                good, text = await self.groups[s.group].call(c["tool"], timers_mod.fill(c["arguments"], values))
+            except Exception as e:
+                good, text = False, f"{type(e).__name__}: {e}"
+            ok = ok or good
+            results.append(f"{c['tool']}: {'ok' if good else 'FAILED'}: {text[:200]}")
+        return ok, " | ".join(results)
+
+    def timer_tools(self, speaker: Speaker) -> list:
+        """The built-in timer tools, bound to the speaker. None for a speaker without delivery."""
+        if not self.timers or not speaker.timer_deliver:
+            return []
+        from pipecat.adapters.llm.schemas.function_schema import FunctionSchema
+        out = []
+        for name, (doc, props, required) in timers_mod.TOOL_DOCS.items():
+            async def handler(params, name=name):
+                result = await timers_mod.call_tool(self.timers, speaker.id, name, dict(params.arguments or {}))
+                await params.result_callback(json.dumps(result, ensure_ascii=False))
+            out.append(FunctionSchema(name=name, description=doc, properties=props, required=required,
+                                      handler=handler))
+        return out
 
     def _llm(self) -> AnthropicLLMService:
         settings = AnthropicLLMService.Settings(model=self.cfg.model, max_tokens=self.cfg.max_tokens,
@@ -202,7 +268,9 @@ class Engine:
         if c is None or c.speaker.id != speaker.id:
             group = self.groups[speaker.group]
             gate = Gate(group.policy)
-            c = Conversation(uuid.uuid4().hex[:12], speaker, LLMContext(tools=group.gated(gate)), gate)
+            tools = group.gated(gate)
+            tools = ToolsSchema(standard_tools=[*tools.standard_tools, *self.timer_tools(speaker)])
+            c = Conversation(uuid.uuid4().hex[:12], speaker, LLMContext(tools=tools), gate)
             self.conversations[c.id] = c
         c.touched = now
         return c
