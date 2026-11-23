@@ -111,6 +111,11 @@ The connector already tells an agent how to search. If you want that in `CLAUDE.
 the `claude-md-snippet` skill in `canopy-manager` shows a short recommended block and adds it if you agree. It costs
 about 140 tokens per session, sits between markers, and can be updated or removed. Setup offers it.
 
+## Trim what a client loads
+
+`check-launch-context` in `canopy-manager` measures what a fresh session loads, suggests cuts, and checks that each one
+leaves search working. It lists what a Canopy client must keep.
+
 ## How finding skills works
 
 Skills are not installed. They live in the catalogue, and an agent reaches them in three steps.
