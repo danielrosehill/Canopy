@@ -51,7 +51,7 @@ def test_every_plugin_resolves_to_one_space(plugin, market, space):
     assert Spaces(DOC).placement.plugin_space(plugin, market) == space
 
 
-def test_hannah_can_look_up_the_inventory_but_not_change_it():
+def test_sam_can_look_up_the_inventory_but_not_change_it():
     sam = Spaces(DOC).profiles["sam"]
     assert sam.allows_tool("inventory__search_items") and sam.allows_tool("inventory__get_item")
     assert not sam.allows_tool("inventory__delete_item")
