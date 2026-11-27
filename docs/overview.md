@@ -168,7 +168,8 @@ flowchart LR
 Discovery can stay in the cloud, since only the tool call needs the shortcut. One way to do it is for the connector
 to add a second connection to the proxy when it can see the proxy on the local network, and drop it
 when it can't. That bends "one connector" a little, so it is worth doing only if local calls are frequent.
-This is an idea, and it is not built.
+The automatic switch is not built. The rules that avoid hairpins between any two hubs, which need no code,
+are in [hubs](hubs.md#anti-hairpin-rules).
 
 ### How many gateways?
 
@@ -181,6 +182,9 @@ out of date unnoticed. Registering the box directly over the tailnet did the sam
 
 Separate from gateways, you can run more than one Cloudflare portal in front of a single gateway, for example
 one for shared tools and one that is private to you, each with its own gateway group.
+
+When there is more than one, the relationship between them is one-way: the home hub registers the remote
+one as a single upstream, never the reverse. See [hubs](hubs.md).
 
 For a household of a few people, each with their own business and some things in common, see
 [spaces](spaces.md): who sees which tools and skills, planned to replace groups.

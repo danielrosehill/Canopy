@@ -237,6 +237,7 @@ follow, so add only sources you trust.
 - [API reference](docs/api.md): every route
 - [Voice](docs/voice.md): the voice front end, one tool group per speaker
 - [Federated upstreams](docs/federation.md): one server for many accounts, a profile per account
+- [Hubs](docs/hubs.md): home and remote gateways, how they relate, and the anti-hairpin rules
 - [Architecture](docs/architecture.md): how the stack fits together
 - [Hosted and web clients](docs/connect/saas-and-web-clients.md): ChatGPT, claude.ai, Open WebUI and others.
 - [Deployment patterns](docs/deployment-patterns.md): remote access with Tailscale and Cloudflare,
