@@ -294,6 +294,9 @@ To keep tools off for good, list them on the server: `"disabled_tools": ["home__
 apply and refresh disables them again, so the config, not the gateway, is the record. A tool disabled by
 hand also stays off when its server is registered again after a config change.
 
+An upstream that is itself a gateway at another site gets a `hub` block, and `servers.json` can name this
+hub's own `site`. Apply then catches loops and second routes between hubs: see [hubs](hubs.md#the-hub-block).
+
 ## Confirmation before a tool call
 
 A client that acts without a person watching every call, such as a voice assistant, should read the call

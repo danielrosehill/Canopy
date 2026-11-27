@@ -9,6 +9,7 @@
     canopy auto-update on [HH:MM] | off | status    run `canopy update` every night from cron (default 04:30)
     canopy status                   health of every component
     canopy servers | groups | tools list what the gateway has
+    canopy hubs                     the remote hubs, their direct URLs, and any loop or hairpin
     canopy add-server FILE [--replace]    FILE is JSON, or - for stdin
     canopy remove-server NAME
     canopy set-group FILE
@@ -704,7 +705,7 @@ def main() -> int:
         return run(args)
     if cmd == "status":
         return status()
-    if cmd in ("servers", "groups", "tools"):
+    if cmd in ("servers", "groups", "tools", "hubs"):
         return show("GET", f"/v1/gateway/{cmd}")
     if cmd == "add-server" and args:
         replace = "?replace=true" if "--replace" in args else ""

@@ -22,6 +22,7 @@ ROUTES = {
     "POST /v1/gateway/servers/{name}/enable": "Put a disabled upstream back in service.",
     "POST /v1/gateway/servers/{name}/disable": "Take an upstream out of service without removing it. This is the gateway's state, not the config's. A built-in cannot be disabled.",
     "POST /v1/gateway/servers/{name}/refresh": "Register an upstream again as it stands, to re-read its tools, and report what was added and removed. Its tools vanish briefly. If it fails, the old definition is put back.",
+    "GET /v1/gateway/hubs": "The remote hubs in `servers.json` (entries with a `hub` block): site, `direct_url`, what each exposes and its tool count, plus the loops and hairpins their tool names show. See docs/hubs.md.",
     "GET /v1/gateway/groups": "Tool groups.",
     "PUT /v1/gateway/groups/{name}": "Create or replace a tool group.",
     "DELETE /v1/gateway/groups/{name}": "Remove a tool group.",

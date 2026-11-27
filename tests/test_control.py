@@ -693,3 +693,74 @@ def test_disabled_tools_in_the_config_are_kept_off_on_every_apply(applied, jungl
 def test_disabled_tools_must_name_the_servers_own_tools(ctl):
     write_servers(ctl, {"servers": [{"name": "a", "url": "http://a", "disabled_tools": ["b__x"]}], "groups": []})
     assert any("disabled_tools" in p for p in ctl.validate()["problems"])
+
+
+# --- hubs (docs/hubs.md) ----------------------------------------------------------------
+
+HUB = {"name": "site-b", "url": "http://site-b/mcp",
+       "hub": {"role": "remote", "direct_url": "http://site-b.tailnet:8080/mcp", "exposes": "household"}}
+
+
+def test_a_hub_block_is_checked(ctl):
+    config(ctl, site="home", servers=[
+        {"name": "x", "url": "http://x", "hub": {"role": "parent", "colour": "red"}},
+        {"name": "y", "url": "http://y", "hub": {"role": "remote", "direct_url": "ftp://y"}},
+        {"name": "z", "url": "http://z", "hub": {"role": "remote", "site": "home"}},
+        HUB, {"name": "b2", "url": "http://b2", "hub": {"role": "remote", "site": "site-b"}}])
+    problems = " | ".join(ctl.validate()["problems"])
+    for word in ("no field 'colour'", "never its parent", "http(s) URL", "this hub's own site",
+                 "already reached through site-b"):
+        assert word in problems
+
+
+def test_a_good_hub_validates(ctl):
+    config(ctl, site="home", servers=[HUB])
+    assert ctl.validate() == {"ok": True, "problems": []}
+
+
+@pytest.fixture
+def no_wait(monkeypatch):
+    monkeypatch.setattr("canopy.control.wait_for_gateway", lambda: None)
+
+
+def test_the_hub_block_never_reaches_the_gateway(ctl, jungle, no_wait):
+    config(ctl, servers=[HUB])
+    ctl.apply()
+    assert "hub" not in jungle.servers["site-b"]
+
+
+def test_site_survives_a_write(ctl):
+    config(ctl, site="home", servers=[])
+    ctl.add_server({"name": "t", "url": "http://t"})
+    assert json.loads((ctl.config / "servers.json").read_text())["site"] == "home"
+
+
+def test_hub_routes_finds_loops_and_second_routes():
+    servers = [HUB, {"name": "site-c", "url": "http://c", "hub": {"role": "remote"}}, {"name": "local", "url": "u"}]
+    loops, twice = seed.hub_routes(servers, [
+        "site-b__home-assistant__turn_on",      # fine: a different house's server of the same name
+        "site-b__home__shell__run",             # names this hub's site: a loop
+        "site-b__x__site-b__y__z",              # repeats a prefix: a loop
+        "site-b__site-c__printer__print",       # site-c is registered here too: the long way
+        "local__home__thing",                   # not through a hub: not checked
+    ], "home")
+    assert [x.split(":")[0] for x in loops] == ["site-b__home__shell__run", "site-b__x__site-b__y__z"]
+    assert [x.split(":")[0] for x in twice] == ["site-b__site-c__printer__print"]
+
+
+def test_apply_fails_on_a_hub_loop_and_warns_on_a_hairpin(ctl, jungle, no_wait):
+    jungle.upstream["site-b"] = ["site-b__home__shell__run", "site-b__site-c__p__print", "site-b__ok__t"]
+    config(ctl, site="home", servers=[HUB, {"name": "site-c", "url": "http://c", "hub": {"role": "remote"}}])
+    out = ctl.apply()
+    assert out["ok"] is False and any("hub loop: site-b__home__shell__run" in f for f in out["failures"])
+    assert any("site-b__site-c__p__print" in w for w in out["warnings"])
+
+
+def test_hubs_lists_direct_urls_and_tool_counts(ctl, jungle, no_wait):
+    jungle.upstream["site-b"] = ["site-b__ha__on", "site-b__ha__off"]
+    config(ctl, site="home", servers=[HUB, {"name": "plain", "url": "http://p"}])
+    ctl.apply()
+    out = ctl.hubs()
+    assert out["site"] == "home" and out["checked"] and out["loops"] == []
+    assert out["hubs"] == [{"name": "site-b", "site": "site-b", "role": "remote", "exposes": "household",
+                            "direct_url": "http://site-b.tailnet:8080/mcp", "tools": 2}]

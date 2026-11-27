@@ -150,6 +150,9 @@ def merged_groups(groups: list[dict]) -> list[dict]:
 # what happens to tools a refresh finds that were not there before.
 POLICY_KEYS = ("confirm", "no_confirm")
 SERVER_KEYS = ("new_tools", "disabled_tools")
+HUB_KEY = "hub"   # Canopy's own, never sent to the gateway (docs/hubs.md)
+HUB_ROLES = ("remote",)
+HUB_FIELDS = ("role", "site", "direct_url", "exposes")
 
 
 def gateway_group(group: dict) -> dict:
@@ -203,6 +206,56 @@ def federated(servers: list[dict]) -> list[dict]:
                         "bearer_token": "${CANOPY_SIGNER_TOKEN}",
                         "description": described or f"{base} (profile {profile})", **extra})
     return out
+
+
+def hub_problems(server: dict) -> list[str]:
+    """What is wrong with a server entry's `hub` block (docs/hubs.md). None when it has none."""
+    name, hub = server.get("name"), server.get(HUB_KEY)
+    if hub is None:
+        return []
+    if not isinstance(hub, dict):
+        return [f"{name}: `hub` is an object: {{role, site, direct_url, exposes}}"]
+    out = [f"{name}: `hub` has no field {k!r}" for k in hub if k not in HUB_FIELDS]
+    if hub.get("role") not in HUB_ROLES:
+        out.append(f"{name}: `hub.role` is one of {list(HUB_ROLES)}: a hub registers remote hubs, never its parent")
+    if "site" in hub and not (isinstance(hub["site"], str) and _NAME.fullmatch(hub["site"])):
+        out.append(f"{name}: `hub.site` is a name: letters, digits, . _ -")
+    url = hub.get("direct_url")
+    if url is not None and not (isinstance(url, str) and re.match(r"https?://", url)):
+        out.append(f"{name}: `hub.direct_url` is an http(s) URL")
+    if "exposes" in hub and not isinstance(hub["exposes"], str):
+        out.append(f"{name}: `hub.exposes` names the group or profile the remote hub serves")
+    if "profiles" in server:
+        out.append(f"{name}: a hub entry cannot have `profiles`")
+    return out
+
+
+def hub_site(server: dict) -> str:
+    return (server.get(HUB_KEY) or {}).get("site") or server["name"]
+
+
+def hub_routes(servers: list[dict], tools: list[str], site: str | None) -> tuple[list[str], list[str]]:
+    """Read the tool names that came in through remote hubs for the two hairpins they can show
+    (docs/hubs.md, rules 1 and 2). A name is `<hub>__<server>__...__<tool>`, one prefix per hop.
+
+    Loops (rule 2), returned first: a prefix repeats, or names this hub's own site, so the call goes
+    out and comes back. Second routes (rule 1), returned second: a hop names another hub that is
+    registered here directly, so the same site is reached two ways and one of them is the long way."""
+    hubs = {s["name"]: s for s in servers if isinstance(s, dict) and s.get(HUB_KEY)}
+    loops, twice = [], []
+    for t in tools:
+        hops = t.split("__")[:-1]
+        if not hops or hops[0] not in hubs:
+            continue
+        via, rest = hops[0], hops[1:]
+        if len(set(hops)) < len(hops) or (site and site in rest):
+            loops.append(f"{t}: came back round through {via}")
+            continue
+        for other in hubs:
+            if other != via and (other in rest or hub_site(hubs[other]) in rest):
+                twice.append(f"{t}: reaches {other} through {via}, and {other} is registered here directly")
+                break
+    return loops, twice
 
 
 def buildable(group: dict, disabled: set[str]) -> dict:
@@ -288,7 +341,7 @@ class Gateway:
         """A registration can time out even though it worked, so the server list decides. The
         gateway lists a server before it has fetched the tools, so after a timeout the tools
         have to arrive too, or a group built next would miss them."""
-        server = {k: v for k, v in server.items() if k not in SERVER_KEYS}
+        server = {k: v for k, v in server.items() if k not in SERVER_KEYS and k != HUB_KEY}
         name = server["name"]
         previous = self.saved_server(name)
         self.http.delete(f"/api/v0/servers/{name}")
@@ -429,7 +482,10 @@ class Control:
     def read_config(self) -> dict:
         """servers.json as written. Change it through this, never through `effective_config`."""
         doc = read_json(self.servers_path)
-        return {"servers": doc.get("servers", []), "groups": doc.get("groups", [])}
+        out = {"servers": doc.get("servers", []), "groups": doc.get("groups", [])}
+        if "site" in doc:   # this hub's own site (docs/hubs.md)
+            out["site"] = doc["site"]
+        return out
 
     def effective_config(self) -> dict:
         """What the gateway should have: federated entries expanded into one server per profile."""
@@ -623,13 +679,25 @@ class Control:
 
             self._prune(g, doc, state, log.append, failures)
 
+            warnings: list[str] = []
+            if any(isinstance(s, dict) and s.get(HUB_KEY) for s in doc["servers"]):
+                try:
+                    loops, twice = hub_routes(doc["servers"], [t["name"] for t in g.tools()], doc.get("site"))
+                    failures += [f"hub loop: {x}" for x in loops]
+                    warnings += [f"hub hairpin: {x}" for x in twice]
+                except httpx.HTTPError as e:
+                    failures.append(f"hub check: {e}")
+
             err = self.sync()
             if err:
                 failures.append(f"catalogue sync: {err}")
             else:
                 log.append("asked the catalogue to sync")
             self.last_apply = {"at": time.time(), "ok": not failures, "failures": failures}
-            return {"ok": not failures, "log": log, "failures": failures}
+            out = {"ok": not failures, "log": log, "failures": failures}
+            if warnings:
+                out["warnings"] = warnings
+            return out
 
     # --- check before applying ------------------------------------------------------
 
@@ -643,6 +711,21 @@ class Control:
         if not isinstance(doc, dict) or not all(isinstance(doc.get(k, []), list) for k in ("servers", "groups")):
             return {"ok": False, "problems": ["servers.json must be an object with `servers` and `groups` lists"]}
         problems, seen = [], set()
+        site = doc.get("site")
+        if site is not None and not (isinstance(site, str) and _NAME.fullmatch(site)):
+            problems.append("`site` is this hub's site name: letters, digits, . _ -")
+        hub_sites: dict[str, str] = {}
+        for s in doc.get("servers", []):
+            if not isinstance(s, dict) or s.get(HUB_KEY) is None or not isinstance(s.get("name"), str):
+                continue
+            if bad := hub_problems(s):
+                problems += bad
+                continue
+            other = hub_sites.setdefault(hub_site(s), s["name"])
+            if other != s["name"]:
+                problems.append(f"{s['name']}: site {hub_site(s)!r} is already reached through {other}")
+            if site and hub_site(s) == site:
+                problems.append(f"{s['name']}: site {site!r} is this hub's own site: that is a loop")
         for s in doc.get("servers", []):
             if isinstance(s, dict) and "profiles" in s:
                 profiles = s["profiles"]
@@ -702,6 +785,27 @@ class Control:
             if both := set(x.get("confirm", [])) & set(x.get("no_confirm", [])):
                 problems.append(f"group {name}: in both confirm and no_confirm: {sorted(both)}")
         return {"ok": not problems, "problems": problems}
+
+    def hubs(self) -> dict:
+        """The remote hubs in the config, where clients can reach each one directly, and the hairpins
+        their tool names show (docs/hubs.md)."""
+        doc = self.effective_config()
+        entries = [s for s in doc["servers"] if isinstance(s, dict) and s.get(HUB_KEY)]
+        try:
+            tools = [t["name"] for t in self.gateway().tools()]
+        except (httpx.HTTPError, ControlError):
+            tools = None
+        out = []
+        for s in entries:
+            hub = s[HUB_KEY]
+            row = {"name": s["name"], "site": hub_site(s), "role": hub.get("role"),
+                   "direct_url": hub.get("direct_url"), "exposes": hub.get("exposes")}
+            if tools is not None:
+                row["tools"] = sum(t.startswith(f"{s['name']}__") for t in tools)
+            out.append(row)
+        loops, twice = hub_routes(doc["servers"], tools or [], doc.get("site"))
+        return {"site": doc.get("site"), "hubs": out, "loops": loops, "hairpins": twice,
+                "checked": tools is not None}
 
     def diff(self) -> dict:
         """What `apply` would do now, by name only. Values stay out: they may hold credentials."""

@@ -227,6 +227,9 @@ def create_app(control: Control, token: str, embedder: Embedder | None = None,
     async def diff(request: Request) -> JSONResponse:
         return await run(request, control.diff)
 
+    async def hubs(request: Request) -> JSONResponse:
+        return await run(request, control.hubs)
+
     async def enable_server(request: Request) -> JSONResponse:
         return await run(request, control.set_server_enabled, request.path_params["name"], True)
 
@@ -330,6 +333,7 @@ def create_app(control: Control, token: str, embedder: Embedder | None = None,
         Route("/v1/gateway/servers/{name}/enable", enable_server, methods=["POST"]),
         Route("/v1/gateway/servers/{name}/disable", disable_server, methods=["POST"]),
         Route("/v1/gateway/servers/{name}/refresh", refresh_server, methods=["POST"]),
+        Route("/v1/gateway/hubs", hubs),
         Route("/v1/gateway/groups", list_groups),
         Route("/v1/gateway/groups/{name}", set_group, methods=["PUT"]),
         Route("/v1/gateway/groups/{name}", remove_group, methods=["DELETE"]),

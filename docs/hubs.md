@@ -4,8 +4,8 @@ A **hub** is a gateway that serves one site: a house, an office or a VPS. Most s
 second one is worth having only when a site has to keep working on its own (see [overview](overview.md#how-many-gateways)).
 This page covers how two or more hubs relate to each other, and how to stop calls going the long way round.
 
-Status, 2026-11-27: relationships work today as ordinary upstream entries (below). The `hub` block in
-[Planned: first-class hub entries](#planned-first-class-hub-entries) is a design, and it is not built. None of the
+Status, 2026-11-27: a remote hub is an ordinary upstream entry with a [`hub` block](#the-hub-block), which
+`validate` checks and `apply` uses to catch loops and hairpins. None of the
 anti-hairpin rules need code: they are rules about where you register things and where clients connect.
 
 ## Terms
@@ -32,7 +32,7 @@ flowchart LR
     siteclients -- "direct, rule 3" --> remote
 ```
 
-## Registering a remote hub today
+## Registering a remote hub
 
 One entry in `servers.json`, on the home hub:
 
@@ -55,6 +55,7 @@ One entry in `servers.json`, on the home hub:
 - **Expose a group, not everything.** Point `url` at the remote hub's group endpoint (for MCPJungle,
   `/v0/groups/<group>/mcp`) when the home hub should not see all of it.
 - **Use a tailnet URL where both ends are on the tailnet.** It skips Cloudflare and needs no Access token.
+- **Add a [`hub` block](#the-hub-block)** so `validate` and `apply` know it is a hub.
 
 A VPS with only a box-control server on it is not a hub. Register that server directly, as in
 [overview](overview.md#home-canopy): "a VPS is just another offsite remote".
@@ -105,46 +106,66 @@ tool at home should go straight to the local proxy ([overview](overview.md#advan
 
 ### Auditing a deployment
 
-1. List the home hub's upstream URLs (`canopy servers`, or `servers.json`). Each one that is a hub: confirm
+1. Run `canopy hubs`: it lists loops and second routes it can see from tool names. Then list the home hub's
+   upstream URLs (`canopy servers`, or `servers.json`). Each one that is a hub: confirm
    its own upstreams hold no address at the home site (rule 1) and no entry for the home hub (rule 2).
 2. List the tool names on each hub and look for a repeated prefix (rule 2).
 3. For each client, write down its site and its connectors. A client at a site with a hub should have a
    connector to that hub (rule 3).
 
-## Planned: first-class hub entries
+## The `hub` block
 
-Not built. The goal is that the stack knows which upstreams are hubs, so it can enforce rules 1 and 2 and tell
-connectors where to go for rules 3 and 4. A server entry gains a `hub` block:
+Mark a remote hub's entry with a `hub` block, and name this hub's own site at the top of `servers.json`:
 
 ```json
 {
-  "name": "site-b",
-  "transport": "streamable_http",
-  "url": "https://mcp.site-b.example.com/mcp",
-  "hub": {
-    "role": "remote",
-    "site": "site-b",
-    "direct_url": "http://site-b-hub.tailnet.example:8080/mcp",
-    "exposes": "household"
-  }
+  "site": "home",
+  "servers": [
+    {
+      "name": "site-b",
+      "transport": "streamable_http",
+      "url": "https://mcp.site-b.example.com/mcp",
+      "hub": {
+        "role": "remote",
+        "site": "site-b",
+        "direct_url": "http://site-b-hub.tailnet.example:8080/mcp",
+        "exposes": "household"
+      }
+    }
+  ],
+  "groups": []
 }
 ```
 
 | Field | Meaning |
 | --- | --- |
-| `role` | `remote`: this entry is a hub at another site. `parent` is reserved for the reverse direction, and is refused while a `remote` entry points at the same hub. |
-| `site` | The site's name. Defaults to the entry's `name`. |
-| `direct_url` | Where a client at that site, or one away from home, reaches the hub without going through this one (rules 3 and 4). |
-| `exposes` | The group or profile the remote hub serves on `url`, recorded so the catalogue can say what it holds. |
+| `site` (top level) | This hub's own site. Optional, but without it a loop back to this hub can only be caught by a repeated prefix. |
+| `hub.role` | `remote`, the only value. A hub registers hubs at other sites, never its parent (rule 2). |
+| `hub.site` | The remote site's name. Defaults to the entry's `name`. |
+| `hub.direct_url` | Where a client at that site, or one away from home, reaches the hub without going through this one (rules 3 and 4). |
+| `hub.exposes` | The group or profile the remote hub serves on `url`. Recorded, so a reader knows what the entry holds. |
 
-What the stack would do with it:
+The block is Canopy's own: it is taken off before the entry goes to the gateway.
 
-- **Apply** refuses a config where a remote hub's tool names carry this hub's own prefix (rule 2), and warns
-  when a remote hub lists a tool whose server is also registered here directly (rule 1).
-- **The catalogue** shows a hub as one source whose tools are grouped by the remote server, and says which
-  site it is.
-- **`canopy` connector setup** offers `direct_url` as a second connector for a client that says it is at
-  that site (rule 3), and for one that is travelling (rule 4).
+What the stack does with it (since 2026-11-27):
+
+- **`canopy validate`** refuses an unknown field, a role other than `remote`, a `direct_url` that is not
+  http(s), two entries for the same site, and an entry whose site is this hub's own.
+- **`canopy apply`** reads the tool names that came in through each hub, `<hub>__<server>__...__<tool>`,
+  one prefix per hop:
+  - a prefix that repeats, or a hop named after this hub's `site`, is a **loop** (rule 2). Apply reports
+    it as a failure, `hub loop: ...`. It removes nothing: fix the remote hub's config.
+  - a hop named after another hub registered here directly is a **second route** to that site (rule 1),
+    the long way round. Apply reports it under `warnings`, `hub hairpin: ...`.
+- **`canopy hubs`** (`GET /v1/gateway/hubs`) lists each hub with its site, `direct_url`, `exposes` and tool
+  count, plus any loops and hairpins. Use it to set up the direct connectors in rules 3 and 4.
+
+What it cannot see: rule 1 for an ordinary server. A remote hub's `home-assistant` and this hub's
+`home-assistant` are usually two different houses, so a shared server name is not a duplicate, and a remote
+hub's upstream URLs are not visible from here. Check those by hand (the audit above).
+
+Not built yet: connector setup that offers `direct_url` on its own, and the catalogue saying which site a
+hub's tools are at. Until then, write the site into the entry's `description`.
 
 ## Related
 
