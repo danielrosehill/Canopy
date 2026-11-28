@@ -12,5 +12,6 @@ add it only while setting up, then remove it:
 Everyday use needs only [`canopy-connector`](../canopy-connector/README.md). A server indexes this
 plugin, so its skills can still be found by search from any client.
 
-Hosted clients: `debug-chatgpt` and `debug-claude-ai` find why ChatGPT or claude.ai cannot reach Canopy, or reach it
-and miss a skill or tool. They share the server-side checks in `references/hosted-client-checks.md`.
+Hosted clients: `test-chatgpt` and `test-claude-ai` check reach, retrieval accuracy and use (`scripts/front_probe.py`
+is the server baseline); `debug-chatgpt` and `debug-claude-ai` find why one fails. Setup:
+[docs/connect/third-party-ai-tools.md](../../docs/connect/third-party-ai-tools.md).

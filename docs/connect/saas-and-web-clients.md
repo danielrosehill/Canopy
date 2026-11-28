@@ -10,6 +10,9 @@ the map. Vendor details were read from their docs on 2026-11-05 and change often
 | claude.ai | Custom connector to an OAuth ingress. Anthropic's tunnel on Enterprise | Not run with Canopy yet. The ingress is live in that deployment. The tunnel has not been tried |
 | Open WebUI, LibreChat and similar | Direct, with a bearer token | From their docs, not yet run |
 
+**Start with the [setup guide](third-party-ai-tools.md):** one OAuth connector per person, in front of the
+front door, used by ChatGPT and claude.ai alike. The rest of this page is the background and the alternatives.
+
 ## The design: one lane per vendor
 
 One ingress for every hosted client sounds tidier, but each vendor has its own way in, and going with it

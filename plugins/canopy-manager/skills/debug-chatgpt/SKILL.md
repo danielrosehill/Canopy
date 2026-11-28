@@ -43,7 +43,7 @@ it: reconnect and tick it.
 
 ## 3. The chat uses that app
 
-ChatGPT picks apps per chat. Type `@<app name>` (or + → the app) before the prompt, in a temporary chat, with the
+ChatGPT picks apps per chat. Type `@<app name>` and press Tab (a click on the suggestion does not always attach it), before the prompt, in a temporary chat, with the
 read-only test prompt. Pass: it lists the front door's five tools (`<server>_search`, `_read`, `_list`,
 `_list_servers`, `_call_tool`, prefixed by the portal server's id) and returns search results. The front door log
 shows the calls.
