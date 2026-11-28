@@ -102,6 +102,19 @@ so the URL must be reachable from the internet, unless you use Anthropic's tunne
 but they are a research preview, for Enterprise by request. For most home users the ingress is the route.
 Static **Request headers** would suit Canopy's token, but they are in beta and limited to some organizations.
 
+## When a hosted client fails
+
+Skills `debug-chatgpt` and `debug-claude-ai` in `canopy-manager` walk the hops. Seen on a front door deployment
+(2026-11-28), in order of how often they fooled us:
+
+- **The chat used another app.** ChatGPT picks apps per chat. A chat with no app selected answered from an older
+  household app and said there was "no skill" and "only QR-code labels". Selecting the app with `@` fixed it.
+- **A stale tool list.** A ChatGPT workspace app keeps the tool list it had when published; refresh it in the
+  admin console. Behind a front door the list is always five tools.
+- **Consent without the new server.** A grant covers only the servers ticked when it was made: reconnect.
+- **A retired token.** Adding `spaces.json` retires the `default` profile; the ingress gets 401 until it sends a
+  profile's token.
+
 ## Open WebUI, LibreChat and other clients you run yourself
 
 These are the easy case. If a client speaks Streamable HTTP and can send a header, it needs no ingress:

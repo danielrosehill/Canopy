@@ -25,7 +25,7 @@ in development mode). Then [validate it](#validate-and-benchmark), on every devi
 | Plugin | Where | Holds |
 | --- | --- | --- |
 | `canopy-connector` | User level, every device | The connection, the `find` and `validate` skills, `/skill` and the prompt hook |
-| `canopy-manager` | On the server | Setup, diagnosis, upstreams, marketplaces, sync, backup, staging, CLIs, the CLAUDE.md snippet |
+| `canopy-manager` | On the server | Setup, diagnosis (including ChatGPT and claude.ai connectivity), upstreams, marketplaces, sync, backup, staging, CLIs, the CLAUDE.md snippet |
 
 On a client, add `canopy-manager` only while setting up, then remove it. Its skills stay findable by
 search, because the server indexes them like any others.
