@@ -1,4 +1,4 @@
-"""The front door: one MCP endpoint for every person, scoped by profile. A prototype, not yet in compose.
+"""The front door: one MCP endpoint for every person, scoped by profile. Compose service `front` (profile `front`).
 
 A client sends `Authorization: Bearer <token>`; the token names a profile (src/canopy/spaces.py,
 docs/spaces.md), and the profile is the scope of everything in the reply. The client's native tool list is
@@ -16,7 +16,9 @@ of a `skill://` URI go to the catalogue with the profile's scope. MCP SDK 1.30 r
 know, so these are answered before the SDK sees the request.
 
 Run: `python -m canopy.front`. Settings: CANOPY_CONFIG (servers.json, marketplaces.json, spaces.json),
-CANOPY_TOKEN_DIR (profile-<name>.token), CATALOGUE_URL, FRONT_HOST, FRONT_PORT.
+FRONT_SERVERS (the hub's server list, default CANOPY_CONFIG/servers.json; a file with one `"transparent": true`
+entry fronts an existing gateway, docs/connect/saas-and-web-clients.md), CANOPY_TOKEN_DIR (profile-<name>.token),
+CATALOGUE_URL, FRONT_HOST, FRONT_PORT.
 """
 from __future__ import annotations
 
@@ -221,7 +223,8 @@ class Front:
 
 
 def build() -> Front:
-    servers = json.loads((CONFIG / "servers.json").read_text()).get("servers", [])
+    path = Path(os.environ.get("FRONT_SERVERS") or CONFIG / "servers.json")
+    servers = json.loads(path.read_text()).get("servers", [])
     spaces = Spaces.load(CONFIG)
     return Front(Hub(servers), spaces, load_tokens(TOKEN_DIR, list(spaces.profiles)))
 

@@ -158,7 +158,7 @@ picker for people.
 ## Other clients
 
 A host that supports the MCP Skills extension (SEP-2640) can list and read skills at `POST /v1/skills/mcp` on
-the API, with the API token. The front door (prototype, `src/canopy/front.py`) also serves it on its own `/mcp`
+the API, with the API token. The front door (compose service `front`, `src/canopy/front.py`) also serves it on its own `/mcp`
 endpoint, scoped to the caller's profile. The gateway cannot carry these methods, and the extension has no
 search, so `catalogue__search` remains the way to find one.
 

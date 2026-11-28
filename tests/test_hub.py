@@ -215,3 +215,32 @@ def test_bad_names_are_refused():
         Hub([{"name": "a__b", "transport": "stdio", "command": "true"}])
     with pytest.raises(HubError, match="twice"):
         Hub([{"name": "a", "command": "true"}, {"name": "a", "command": "true"}])
+
+
+def test_a_transparent_server_keeps_its_tools_names():
+    """A gateway in front of other servers: its `mail__send` stays `mail__send`, a bare `echo` gets its prefix,
+    and a declared server keeps its own prefix."""
+    gw = {"name": "gw", "transparent": True, "transport": "stdio", "command": sys.executable, "args": [STDIO]}
+    local = {"name": "local", "transport": "stdio", "command": sys.executable, "args": [STDIO]}
+
+    async def go():
+        hub = Hub([gw, local], env={})
+        await hub.start()
+        try:
+            await hub.call("gw__grow", {"name": "mail__send"})
+            await hub.call("gw__grow", {"name": "local__shadow"})
+            await hub.refresh("gw")
+            names = {t["name"] for t in hub.tools()}
+            assert {"mail__send", "gw__echo", "local__echo"} <= names and "local__shadow" not in names
+            assert {"mail", "gw", "local"} <= {s["name"] for s in hub.servers()}
+            assert text(await hub.call("mail__send")) == "stdio:mail__send"
+            assert text(await hub.call("gw__echo", {"text": "x"})) == "stdio:x"
+            with pytest.raises(HubError, match="no tool 'nope__x'"):
+                await hub.call("nope__x")
+            with pytest.raises(HubError, match="no tool 'mail__send'"):
+                await hub.call("mail__send", allow=lambda n: n.startswith("gw__"))
+        finally:
+            await hub.stop()
+    asyncio.run(go())
+    with pytest.raises(HubError, match="only one transparent"):
+        Hub([gw, {**gw, "name": "gw2"}])

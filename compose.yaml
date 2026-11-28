@@ -206,6 +206,38 @@ services:
     volumes:
       - ${CANOPY_DATA:-${HOME}/canopy/data}/tokens:/tokens:ro
 
+  # The front door (src/canopy/front.py, docs/connect/saas-and-web-clients.md): one MCP endpoint, five tools
+  # and the Skills extension (SEP-2640) for every client; the bearer token picks the profile. Tokens are
+  # made on first start in data/front-tokens/profile-<name>.token. FRONT_SERVERS points the hub at its own
+  # server list, e.g. one transparent entry for the gateway it fronts.
+  front:
+    <<: *canopy
+    profiles: [front]
+    command: ["python", "-m", "canopy.front"]
+    env_file:
+      - path: ${CANOPY_AGENT_DATA:-${HOME}/canopy/agent-data}/secrets.env
+        required: false
+    environment:
+      CANOPY_CONFIG: /config
+      CANOPY_TOKEN_DIR: /tokens
+      CATALOGUE_URL: http://catalogue:3000
+      FRONT_SERVERS: ${FRONT_SERVERS:-}
+      HUB_CALL_TIMEOUT: ${HUB_CALL_TIMEOUT:-120}
+    ports:
+      - "${CANOPY_FRONT_BIND:-127.0.0.1}:${CANOPY_FRONT_PORT:-8070}:8070"
+    volumes:
+      - ${CANOPY_AGENT_DATA:-${HOME}/canopy/agent-data}/config:/config:ro
+      - ${CANOPY_DATA:-${HOME}/canopy/data}/front-tokens:/tokens
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8070/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 20s
+    depends_on:
+      catalogue:
+        condition: service_healthy
+
   # The voice front end (docs/voice.md): a speaker's bearer token picks their tool group.
   voice:
     logging: *logging

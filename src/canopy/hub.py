@@ -18,6 +18,10 @@ the seed depends on"):
   account apart from the tool's arguments; the caller says which accounts it may use. A server that reads its
   key at start gets a session per account, started on first use; one that takes the account as an argument
   (`account_argument`) gets one session, and the hub sets that argument itself.
+- A transparent upstream (`"transparent": true`) is another gateway whose tools are already named
+  `<server>__<tool>`. They keep their names, so a front door can sit on a gateway it does not replace yet,
+  with the same tool names the catalogue indexed from it. A name with no `__` gets the upstream's prefix.
+  A server declared here wins its prefix; only names no declared server owns go to the transparent one.
 - Groups are gone. A caller passes `allow`, a test on each tool name (a profile's, from src/canopy/spaces.py),
   so one server can serve tools to everyone and keep others for its admin. Which tools a client lists
   natively is the front door's choice, not a gateway object to rebuild.
@@ -179,6 +183,7 @@ class Hub:
         self.accounts: dict[str, dict[str, str]] = {}     # server -> {account: session key or argument value}
         self.account_arg: dict[str, str] = {}             # server -> argument name, for argument-mode servers
         self.description: dict[str, str] = {}
+        self.transparent: str | None = None              # the one upstream whose tools keep their own names
         for raw in servers:
             name = raw["name"]
             if SEP in name or ":" in name:
@@ -186,8 +191,13 @@ class Hub:
             if name in self.description:
                 raise HubError(f"server {name!r} is declared twice")
             self.description[name] = raw.get("description", "")
+            if raw.get("transparent"):
+                if self.transparent or raw.get("accounts"):
+                    raise HubError(f"server {name!r}: only one transparent server, and it takes no accounts")
+                self.transparent = name
             base = {k: v for k, v in raw.items() if k not in ("accounts", "account_argument")}
             accounts = raw.get("accounts") or {}
+            base.pop("transparent", None)
             if not accounts:
                 self._add(name, name, base, env)
             elif raw.get("account_argument"):
@@ -220,6 +230,18 @@ class Hub:
             return [self.upstreams[k] for k in self.accounts[server].values()]
         return [self.upstreams[server]] if server in self.upstreams else []
 
+    def _names(self, name: str, u: Upstream) -> list[tuple[str, str, types.Tool]]:
+        """(full name, server it is listed under, tool) for each of an upstream's tools."""
+        if name != self.transparent:
+            return [(f"{name}{SEP}{t.name}", name, t) for t in u.tools]
+        out = []
+        for t in u.tools:
+            full = t.name if SEP in t.name else f"{name}{SEP}{t.name}"
+            server = full.partition(SEP)[0]
+            if server == name or server not in self.description:   # a declared server owns its prefix
+                out.append((full, server, t))
+        return out
+
     def _lister(self, server: str) -> Upstream | None:
         """The session whose tool list stands for the server: the first one up, else the first."""
         ups = self._sessions(server)
@@ -242,6 +264,15 @@ class Hub:
         out = []
         for name in self.description:
             u = self._lister(name)
+            if name == self.transparent and u.up:
+                rows: dict[str, int] = {}
+                for full, server, _ in self._names(name, u):
+                    if allow is None or allow(full):
+                        rows[server] = rows.get(server, 0) + 1
+                out += [{"name": s, "description": self.description[name] if s == name else f"via {name}",
+                         "up": True, "error": None, "tools": n, "listed_at": u.listed_at, "via": name}
+                        for s, n in sorted(rows.items())]
+                continue
             n = sum(1 for t in u.tools if allow is None or allow(f"{name}{SEP}{t.name}"))
             if not (n or allow is None or (not u.up and (may_see is None or may_see(name)))):
                 continue
@@ -265,9 +296,9 @@ class Hub:
         for name in self.description:
             u = self._lister(name)
             if u and u.up:
-                out += [{"name": f"{name}{SEP}{t.name}", "description": t.description or "",
-                         "inputSchema": t.inputSchema, "server": name}
-                        for t in u.tools if allow is None or allow(f"{name}{SEP}{t.name}")]
+                out += [{"name": full, "description": t.description or "", "inputSchema": t.inputSchema,
+                         "server": server}
+                        for full, server, t in self._names(name, u) if allow is None or allow(full)]
         return out
 
     async def refresh(self, name: str | None = None) -> dict[str, str | None]:
@@ -294,8 +325,13 @@ class Hub:
         server, sep, tool = name.partition(SEP)
         if not sep or not tool:
             raise HubError(f"{name!r} is not <server>{SEP}<tool>")
-        if server not in self.description or (allow is not None and not allow(name)):
+        if allow is not None and not allow(name):
             raise HubError(f"no tool {name!r}")   # not allowed looks the same as absent
+        if server not in self.description or server == self.transparent:
+            if not self.transparent:
+                raise HubError(f"no tool {name!r}")
+            return await self._via_transparent(name, tool if server == self.transparent else name,
+                                               arguments, account)
         arguments = dict(arguments or {})
         if server in self.accounts:
             usable = self._usable(server, accounts)
@@ -332,6 +368,26 @@ class Hub:
             await up.connect()
             if not up.up:
                 raise HubError(f"{server} is not connected: {up.error}") from None
+            return await self._call(up, tool, arguments)
+
+    async def _via_transparent(self, name: str, tool: str, arguments: dict | None,
+                               account: str | None) -> types.CallToolResult:
+        """A tool of the transparent upstream, by the name it lists (`tool`). An unknown name is absent."""
+        if account is not None:
+            raise HubError(f"{name.partition(SEP)[0]} has no accounts")
+        up = self.upstreams[self.transparent]
+        if not up.up and up.spec:
+            await up.connect()
+        if not up.up:
+            raise HubError(f"{self.transparent} is not connected: {up.error}")
+        if not any(full == name for full, _, _ in self._names(self.transparent, up)):
+            raise HubError(f"no tool {name!r}")
+        try:
+            return await self._call(up, tool, arguments)
+        except (anyio.ClosedResourceError, anyio.BrokenResourceError):
+            await up.connect()
+            if not up.up:
+                raise HubError(f"{self.transparent} is not connected: {up.error}") from None
             return await self._call(up, tool, arguments)
 
     async def _call(self, up: Upstream, tool: str, arguments: dict | None) -> types.CallToolResult:

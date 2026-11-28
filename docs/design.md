@@ -624,8 +624,8 @@ Status on 2026-11-15: **prototype, not in compose.** Built and tested:
 
 Not built yet, in order:
 
-1. The front door as a compose service (its `skills/list`, `skills/get` and `skill://` reads are built and
-   tested in `tests/test_front.py`), and the admin tools (`sync`, `embed`, `context_write`) for the operator's profile only. A core list of tools a
+1. The front door is a compose service (`front`, profile `front`, 2026-11-28); it can front an existing gateway
+   through one transparent hub upstream (`"transparent": true`, `tests/test_hub.py`). Still to do: the admin tools (`sync`, `embed`, `context_write`) for the operator's profile only. A core list of tools a
    profile sees natively, if measurement shows the five are not enough.
 2. The catalogue's `gateway_servers` and `gateway_tools` fed from the hub instead of MCPJungle's REST API.
 3. Upstream OAuth, and the API's `/v1/gateway/*` routes and `canopy` CLI on the hub and spaces.

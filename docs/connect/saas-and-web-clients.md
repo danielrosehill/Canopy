@@ -22,7 +22,30 @@ claude.ai  --> OAuth ingress           --+--> a gateway group for hosted clients
 Open WebUI --> bearer token            --+
 ```
 
-Whichever lane you use, first make a group with only what that client should see, as in
+### Recommended: the front door behind the lane
+
+Point the lane at the **front door** (compose service `front`, `src/canopy/front.py`) instead of a gateway group.
+Every client then gets the same five tools (`search`, `read`, `list`, `list_servers`, `call_tool`) and the MCP
+Skills extension ([SEP-2640](https://modelcontextprotocol.io/seps/2640-skills-extension)), so a hosted client
+finds and follows skills the way Claude Code does, and its tool list stays at five however much it can reach.
+Neither ChatGPT nor claude.ai calls `skills/list` itself (November 2026); they reach skills through `search` and
+`read`, which work on any client.
+
+1. Start it: `docker compose --profile front up -d front`. It listens on `${CANOPY_FRONT_BIND}:${CANOPY_FRONT_PORT}`
+   (default `127.0.0.1:8070`); bind it to the address your ingress reaches.
+2. Its token is `data/front-tokens/profile-<name>.token`, made on first start (`default` with no `spaces.json`,
+   which sees everything). Profiles and scope: [spaces](../spaces.md).
+3. Until the hub replaces the gateway, front the gateway you already run: set `FRONT_SERVERS` to a file with one
+   transparent entry, so tools keep the `<server>__<tool>` names the catalogue indexed:
+
+   ```json
+   {"servers": [{"name": "gateway", "transparent": true, "transport": "streamable_http",
+                 "url": "http://gateway:8080/v0/groups/<group>/mcp"}]}
+   ```
+
+4. The ingress must send `Authorization: Bearer <token>`. An ingress that cannot add a header needs a proxy that does.
+
+Without the front door, make a group with only what that client should see, as in
 [pattern 4](../deployment-patterns.md#4-cloudflare-mcp-server-portal-for-hosted-clients). Never expose
 `/mcp`, or a group holding admin or host-level tools. A hosted client runs on someone else's cloud, and
 a model acting on untrusted text can call whatever the group allows.
