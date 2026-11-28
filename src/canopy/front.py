@@ -26,7 +26,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import os
+import time
 from pathlib import Path
 
 import httpx
@@ -50,6 +52,7 @@ REFRESH_SEC = float(os.environ.get("FRONT_REFRESH_SEC", "300"))
 CALL = "call_tool"
 SKILL_METHODS = ("skills/list", "skills/get")
 PROFILE_KEY = "canopy.profile"
+log = logging.getLogger("canopy.front")
 
 INSTRUCTIONS = """Canopy: your skills, plugins, notes and tools in one place, found by search.
 Before a task, `search` it in plain words. A matching skill or standing instruction: `read` it and follow it.
@@ -154,7 +157,22 @@ class Front:
             return {"jsonrpc": "2.0", "id": msg["id"], "error": {"code": -32603, "message": str(e)}}
 
     async def _call_tool(self, name: str, arguments: dict) -> list | types.CallToolResult:
-        profile = self._profile()
+        """One line per call in the log: profile, tool, the inner tool or query, time, outcome. Arguments are not
+        logged beyond that: they can hold private text."""
+        profile, start = self._profile(), time.monotonic()
+        what = (arguments.get("name") if name == CALL else arguments.get("query") if name == "search"
+                else ",".join(arguments.get("ids") or []) if name == "read" else "") or ""
+        outcome = "ok"
+        try:
+            result = await self._dispatch(profile, name, arguments)
+            if isinstance(result, types.CallToolResult) and result.isError:
+                outcome = "error: " + (result.content[0].text if result.content else "")[:200]
+            return result
+        finally:
+            log.info("call profile=%s tool=%s target=%r %.2fs %s", profile.name, name, what[:120],
+                     time.monotonic() - start, outcome)
+
+    async def _dispatch(self, profile: Profile, name: str, arguments: dict) -> list | types.CallToolResult:
         allow = profile.allows_tool if profile.placement else None
         try:
             if name in ("search", "read", "list"):
@@ -163,6 +181,8 @@ class Front:
                 return _text(json.dumps({"servers": self.hub.servers(
                     allow, profile.may_see_server, profile.accounts_for)}, indent=1))
             if name == CALL:
+                if not isinstance(arguments.get("name"), str) or not arguments.get("name"):
+                    raise HubError("call_tool needs `name`, the `<server>__<tool>` to call, and `arguments`")
                 return await self.hub.call(arguments.get("name", ""), arguments.get("arguments"), allow=allow,
                                            account=arguments.get("account"), accounts=profile.accounts_for,
                                            default=profile.default_account)
@@ -243,6 +263,7 @@ def build() -> Front:
 
 
 def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     uvicorn.run(build().asgi(), host=os.environ.get("FRONT_HOST", "0.0.0.0"),
                 port=int(os.environ.get("FRONT_PORT", "8070")))
 
