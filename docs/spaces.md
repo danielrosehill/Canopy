@@ -1,10 +1,19 @@
 # Spaces: who sees what
 
-Decided 2026-11-15. **Status: prototype.** `src/canopy/spaces.py` reads the config below and
-`src/canopy/front.py` serves it, both tested but not yet a compose service. The shipped stack still scopes a
-catalogue by `CATALOGUE_MARKETPLACES` and `CATALOGUE_SERVERS`, one profile set by hand, and the gateway still
-uses MCPJungle groups. Spaces replace both, as part of the hub
+Decided 2026-11-15. **Status: in use through the front door** (compose service `front`, since 2026-11-28).
+`src/canopy/spaces.py` reads the config below and `src/canopy/front.py` serves it. Only the front door reads
+`spaces.json`: the gateway's own groups and the toolbox are unchanged, and spaces replace them as part of the hub
 ([design](design.md#replacing-mcpjungle-with-the-hub)).
+
+Three things to set up with it, while the hub still sits on a gateway:
+
+- **The catalogue must index every profile's tools.** It snapshots tools from `TOOLS_GROUP`, so set that, for the
+  `catalogue` service only, to a group holding the union of what the profiles reach, the same group the front
+  door's transparent upstream uses. A tool outside it can be called but not found by `search`.
+- **An env-scoped catalogue** (`CATALOGUE_MARKETPLACES`, `CATALOGUE_SERVERS`) refuses the front door's scoped
+  calls. Point the front door at the main catalogue and let profiles do the scoping.
+- **Adding `spaces.json` retires the `default` profile and its token.** Each profile gets
+  `profile-<name>.token` on the next start; move every client to its profile's token.
 
 Canopy treats tools and plugins alike, and shares them the same way. What is shared is a **tool** or a
 **plugin**, not a server or a machine: one server often holds tools for everyone and tools for its admin
