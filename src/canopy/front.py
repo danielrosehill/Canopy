@@ -10,6 +10,11 @@ the same small set for everyone, so skills and tools are found the same way:
 
 Out of scope looks the same as absent, in every one of them.
 
+It also serves the MCP Skills extension (SEP-2640, src/canopy/skills_ext.py) to hosts that support it:
+`initialize` declares `io.modelcontextprotocol/skills`, and `skills/list`, `skills/get` and `resources/read`
+of a `skill://` URI go to the catalogue with the profile's scope. MCP SDK 1.30 rejects methods it does not
+know, so these are answered before the SDK sees the request.
+
 Run: `python -m canopy.front`. Settings: CANOPY_CONFIG (servers.json, marketplaces.json, spaces.json),
 CANOPY_TOKEN_DIR (profile-<name>.token), CATALOGUE_URL, FRONT_HOST, FRONT_PORT.
 """
@@ -31,12 +36,14 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from .hub import Hub, HubError
+from .skills_ext import EXTENSION
 from .spaces import Profile, Spaces, load_tokens
 
 CONFIG = Path(os.environ.get("CANOPY_CONFIG", "/config"))
 TOKEN_DIR = Path(os.environ.get("CANOPY_TOKEN_DIR", "/tokens"))
 CATALOGUE_URL = os.environ.get("CATALOGUE_URL", "http://catalogue:3000")
 CALL = "call_tool"
+SKILL_METHODS = ("skills/list", "skills/get")
 PROFILE_KEY = "canopy.profile"
 
 INSTRUCTIONS = """Canopy: your skills, plugins, notes and tools in one place, found by search.
@@ -80,13 +87,33 @@ def _text(s: str) -> list[types.TextContent]:
     return [types.TextContent(type="text", text=s)]
 
 
+class _Server(Server):
+    """The SDK server, declaring the Skills extension. ServerCapabilities allows extra fields."""
+
+    def get_capabilities(self, *args, **kwargs) -> types.ServerCapabilities:
+        caps = super().get_capabilities(*args, **kwargs)
+        caps.extensions = {EXTENSION: {}}   # type: ignore[attr-defined]
+        return caps
+
+
+def _is_skill_call(msg) -> bool:
+    if not isinstance(msg, dict) or "id" not in msg:
+        return False
+    if msg.get("method") in SKILL_METHODS:
+        return True
+    uri = (msg.get("params") or {}).get("uri")
+    return msg.get("method") == "resources/read" and isinstance(uri, str) and uri.startswith("skill://")
+
+
 class Front:
     def __init__(self, hub: Hub, spaces: Spaces, tokens: dict[str, str], catalogue_url: str = CATALOGUE_URL,
                  catalogue_transport: httpx.AsyncBaseTransport | None = None):
         self.hub, self.spaces, self.tokens = hub, spaces, tokens
         self.catalogue = httpx.AsyncClient(base_url=catalogue_url, timeout=60, transport=catalogue_transport)
-        self.server = Server("canopy", instructions=INSTRUCTIONS)
+        self.server = _Server("canopy", instructions=INSTRUCTIONS)
         self.server.list_tools()(self._list_tools)
+        # The extension requires the resources capability. Skill files need not be in resources/list.
+        self.server.list_resources()(self._list_resources)
         self.server.call_tool(validate_input=False)(self._call_tool)
         self.sessions = StreamableHTTPSessionManager(self.server, stateless=True, json_response=True)
 
@@ -96,18 +123,30 @@ class Front:
     async def _list_tools(self) -> list[types.Tool]:
         return TOOLS
 
-    async def _catalogue(self, profile: Profile, op: str, args: dict) -> list[types.TextContent]:
+    async def _list_resources(self) -> list[types.Resource]:
+        return []
+
+    async def _scoped(self, profile: Profile, body: dict) -> dict:
         # No spaces.json: scope None, which the catalogue takes as "everything".
         req = profile.scope_request(CALL)
         if req is not None:
             req["no_account"] = [s for s, acc in self.hub.accounts.items()
                                  if not profile.accounts_for(s, sorted(acc))]
-        body = {"op": op, "args": args, "scope": req}
-        r = await self.catalogue.post("/scoped", json=body)
+        r = await self.catalogue.post("/scoped", json={**body, "scope": req})
         doc = r.json()
         if r.status_code != 200:
             raise HubError(f"catalogue: {doc.get('error', r.status_code)}")
-        return _text(doc["text"])
+        return doc
+
+    async def _catalogue(self, profile: Profile, op: str, args: dict) -> list[types.TextContent]:
+        return _text((await self._scoped(profile, {"op": op, "args": args}))["text"])
+
+    async def skill_reply(self, profile: Profile, msg: dict) -> dict:
+        """One Skills extension request, answered by the catalogue as this profile sees it."""
+        try:
+            return (await self._scoped(profile, {"op": "skills", "message": msg}))["reply"]
+        except (HubError, httpx.HTTPError, ValueError) as e:
+            return {"jsonrpc": "2.0", "id": msg["id"], "error": {"code": -32603, "message": str(e)}}
 
     async def _call_tool(self, name: str, arguments: dict) -> list | types.CallToolResult:
         profile = self._profile()
@@ -128,7 +167,7 @@ class Front:
 
     def asgi(self):
         """The MCP endpoint at /mcp behind bearer auth, plus /health. The token sets the profile."""
-        sessions, tokens, spaces = self.sessions, self.tokens, self.spaces
+        sessions, tokens, spaces, front = self.sessions, self.tokens, self.spaces, self
 
         class McpApp:   # a class, so Starlette's Route passes it the raw ASGI call
             async def __call__(self, scope, receive, send):
@@ -143,6 +182,28 @@ class Front:
                     scope, receive, send)
                 return
             scope[PROFILE_KEY] = spaces.profiles[profile]
+            if scope.get("method") == "POST":
+                body, more = b"", True
+                while more:
+                    m = await receive()
+                    body, more = body + m.get("body", b""), m.get("more_body", False)
+                try:
+                    msg = json.loads(body)
+                except ValueError:
+                    msg = None
+                if _is_skill_call(msg):
+                    await JSONResponse(await front.skill_reply(scope[PROFILE_KEY], msg))(scope, receive, send)
+                    return
+                sent = False
+
+                async def replay():   # hand the body already read to the SDK
+                    nonlocal sent
+                    if sent:
+                        return await receive()
+                    sent = True
+                    return {"type": "http.request", "body": body, "more_body": False}
+                await sessions.handle_request(scope, replay, send)
+                return
             await sessions.handle_request(scope, receive, send)
 
         async def health(_: Request) -> JSONResponse:

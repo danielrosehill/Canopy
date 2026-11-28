@@ -43,6 +43,10 @@ sent: list[dict] = []
 def fake_catalogue(request: httpx.Request) -> httpx.Response:
     body = json.loads(request.content)
     sent.append(body)
+    if body["op"] == "skills":   # the catalogue's Skills extension answer, tagged with the scope it was sent
+        msg = body["message"]
+        return httpx.Response(200, json={"reply": {"jsonrpc": "2.0", "id": msg["id"], "result": {
+            "method": msg["method"], "spaces": body["scope"]["spaces"]}}})
     return httpx.Response(200, json={"text": json.dumps({"op": body["op"], "spaces": body["scope"]["spaces"]})})
 
 
@@ -167,3 +171,38 @@ def test_one_newsletter_server_two_people_each_their_own_accounts(front_url):
         return [x["name"] for x in servers], await call(s, "family")
     names, blocked = as_profile(front_url, "tok-work", work)
     assert "letters" not in names and blocked[0]
+
+
+def rpc(url: str, token: str, method: str, **params) -> httpx.Response:
+    return httpx.post(f"{url}/mcp", json={"jsonrpc": "2.0", "id": 7, "method": method, "params": params},
+                      headers={"Accept": "application/json, text/event-stream", "Authorization": f"Bearer {token}"})
+
+
+def test_initialize_declares_the_skills_extension_and_resources(front_url):
+    async def body(s):
+        return (await s.initialize()).capabilities.model_dump()
+    caps = as_profile(front_url, "tok-sam", body)
+    assert caps["extensions"] == {"io.modelcontextprotocol/skills": {}} and caps["resources"] is not None
+
+
+def test_skills_methods_reach_the_catalogue_with_the_profiles_scope(front_url):
+    sent.clear()
+    for method, params in (("skills/list", {}), ("skills/get", {"uri": "skill://p/s/SKILL.md"}),
+                           ("resources/read", {"uri": "skill://p/s/SKILL.md"})):
+        r = rpc(front_url, "tok-work", method, **params)
+        assert r.status_code == 200 and r.json() == {"jsonrpc": "2.0", "id": 7, "result": {
+            "method": method, "spaces": ["ridgeline"]}}
+        assert sent[-1]["message"]["params"] == params
+
+
+def test_tools_still_go_through_the_sdk_after_a_skills_call(front_url):
+    assert rpc(front_url, "tok-sam", "skills/list").status_code == 200
+
+    async def body(s):
+        return len((await s.list_tools()).tools)
+    assert as_profile(front_url, "tok-sam", body) == 5
+
+
+def test_skills_calls_need_a_token(front_url):
+    assert httpx.post(f"{front_url}/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "skills/list"},
+                      headers={"Accept": "application/json"}).status_code == 401

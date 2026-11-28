@@ -157,7 +157,13 @@ picker for people.
 
 ## Other clients
 
-A host that supports the MCP Skills extension can list and read skills at `POST /v1/skills/mcp` on the
-API, with the API token. The gateway cannot carry these methods, and the extension has no search, so
-`catalogue__search` remains the way to find one. Hosted clients: [saas-and-web-clients.md](connect/saas-and-web-clients.md).
+A host that supports the MCP Skills extension (SEP-2640) can list and read skills at `POST /v1/skills/mcp` on
+the API, with the API token. The front door (prototype, `src/canopy/front.py`) also serves it on its own `/mcp`
+endpoint, scoped to the caller's profile. The gateway cannot carry these methods, and the extension has no
+search, so `catalogue__search` remains the way to find one.
+
+Only skills a host would accept are listed: `SKILL.md` frontmatter that is valid YAML, with a `name` and
+`description`, and a name that follows the Agent Skills rule (lowercase letters, digits and single hyphens,
+64 characters at most) and matches the indexed name. A skill without these is left out of `skills/list`, and
+`skills/get` gives -32602 and the reason. Canopy's own `read` still serves it. Hosted clients: [saas-and-web-clients.md](connect/saas-and-web-clients.md).
 All API routes: [api.md](api.md).

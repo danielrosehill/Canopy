@@ -401,7 +401,19 @@ git-synced library at this scale with hybrid search, tools and a gateway.
   `skills/list`, `skills/get` and `skill://` resources. The catalogue serves these, so any host that
   supports the extension can read Canopy's skills. The extension has no search, which is what Canopy adds.
   MCPJungle v0.4.7 answers `skills/list` with -32601, so they cannot go through the gateway: the API
-  forwards them at `POST /v1/skills/mcp`, behind its token.
+  forwards them at `POST /v1/skills/mcp`, behind its token. The front door serves them on its own endpoint,
+  scoped by profile. Checked against the Final SEP on 2026-11-28:
+  - URIs are `skill://<plugin>/<name>/<file>`. Canopy keys plugins by name alone (`skill:<plugin>/<name>`,
+    `ix.plugin_root`), so no marketplace segment is needed to keep them unique.
+  - Hosts compare the listed frontmatter field by field with their own YAML parse, and refuse the skill
+    on any difference. So the extension uses a strict parse (`skills_ext.strict_frontmatter`), not the
+    index's lenient one, and leaves out skills that fail it or whose name breaks the Agent Skills rule.
+    YAML dates are given as their ISO text.
+  - `resources` is always the full list with digests. `"dynamic"` is for content without stable digests,
+    which files on disk never are. The 512-file and 16 MiB limits bind hosts, not servers.
+  - Not done yet: protocol 2026-07-28 (`ttlMs`, `cacheScope` on `skills/list`), provenance in `_meta`
+    under Canopy's own prefix, `search` returning `skill://` URIs for hosts to load natively, and the hub
+    indexing the skills of upstream servers that declare the extension, keeping (server, URI) as identity.
 - Tool discovery is increasingly handled by clients: Claude Code defers tool definitions behind its own
   search. So the toolbox stays small and is not where effort goes. Skills are.
 
@@ -612,8 +624,8 @@ Status on 2026-11-15: **prototype, not in compose.** Built and tested:
 
 Not built yet, in order:
 
-1. The front door as a compose service, with `skills/list` and `skills/get` on its own endpoint, and the
-   admin tools (`sync`, `embed`, `context_write`) for the operator's profile only. A core list of tools a
+1. The front door as a compose service (its `skills/list`, `skills/get` and `skill://` reads are built and
+   tested in `tests/test_front.py`), and the admin tools (`sync`, `embed`, `context_write`) for the operator's profile only. A core list of tools a
    profile sees natively, if measurement shows the five are not enough.
 2. The catalogue's `gateway_servers` and `gateway_tools` fed from the hub instead of MCPJungle's REST API.
 3. Upstream OAuth, and the API's `/v1/gateway/*` routes and `canopy` CLI on the hub and spaces.

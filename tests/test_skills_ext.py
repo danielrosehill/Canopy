@@ -69,3 +69,36 @@ def test_read_cannot_leave_the_skill_folder(skills, rel):
 def test_a_notification_gets_no_reply_and_an_unknown_method_an_error(skills):
     assert skills.handle({"jsonrpc": "2.0", "method": "notifications/initialized"}) is None
     assert call(skills, "tools/list")["error"]["code"] == -32601
+
+
+def one_skill(tmp_path, text: str, name: str = "trim") -> Skills:
+    (tmp_path / "SKILL.md").write_text(text)
+    row = {"id": f"skill:p/{name}", "plugin": "p", "name": name, "path": "SKILL.md"}
+    return Skills(lambda o, n: [row][o:o + n], lambda p, n: row if n == name else None, lambda _: tmp_path)
+
+
+@pytest.mark.parametrize("text,name", [
+    ("---\nname: trim\ndescription: Trim: a video: fast\n---\n", "trim"),   # YAML a host cannot parse
+    ("---\ndescription: no name\n---\n", "trim"),                          # name came from the folder
+    ("---\nname: Trim_Video\ndescription: d\n---\n", "Trim_Video"),         # not an Agent Skills name
+    ("no frontmatter\n", "trim"),
+])
+def test_a_skill_a_host_would_refuse_is_left_out_and_not_served(tmp_path, text, name):
+    s = one_skill(tmp_path, text, name)
+    assert call(s, "skills/list")["result"]["skills"] == []
+    err = call(s, "skills/get", uri=f"skill://p/{name}/SKILL.md")["error"]
+    assert err["code"] == -32602 and "not served as an MCP skill" in err["message"]
+
+
+def test_frontmatter_is_the_yaml_as_written_with_dates_as_text(tmp_path):
+    s = one_skill(tmp_path, "---\nname: trim\ndescription: d\nmetadata:\n  updated: 2026-11-28\n---\n")
+    fm = call(s, "skills/list")["result"]["skills"][0]["frontmatter"]
+    assert fm == {"name": "trim", "description": "d", "metadata": {"updated": "2026-11-28"}}
+
+
+def test_every_file_is_listed_with_a_digest_never_dynamic(tmp_path):
+    s = one_skill(tmp_path, "---\nname: trim\ndescription: d\n---\n")
+    for i in range(3):
+        (tmp_path / f"f{i}.txt").write_text("x")
+    entry = call(s, "skills/list")["result"]["skills"][0]
+    assert isinstance(entry["resources"], list) and len(entry["resources"]) == 4

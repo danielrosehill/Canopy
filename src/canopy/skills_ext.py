@@ -7,19 +7,21 @@ tool: the extension has none.
 from __future__ import annotations
 
 import base64
+import datetime as dt
 import hashlib
 import mimetypes
+import re
 from collections.abc import Callable
 from pathlib import Path
 
-from . import index as ix
+import yaml
 
 EXTENSION = "io.modelcontextprotocol/skills"
 PAGE = 100
-MAX_RESOURCES = 512              # the extension's limits for one skill
-MAX_BYTES = 16 * 1024 * 1024
 PROTOCOL = "2025-06-18"
 NOT_FOUND = -32602
+NAME = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")   # the Agent Skills naming rule, 64 characters at most
+_FM = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n?", re.S)
 
 
 class RpcError(Exception):
@@ -37,15 +39,49 @@ def _files(folder: Path) -> list[Path]:
         p.startswith(".") or p == "__pycache__" for p in f.relative_to(folder).parts))
 
 
-def _entry(plugin: str, name: str, skill_md: Path) -> dict:
+def _json(v):
+    """YAML scalars JSON has no type for (dates, timestamps) become the ISO text they were written as."""
+    if isinstance(v, dict):
+        return {str(k): _json(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_json(x) for x in v]
+    if isinstance(v, (dt.date, dt.datetime)):
+        return v.isoformat()
+    return v
+
+
+def strict_frontmatter(text: str, name: str) -> tuple[dict | None, str]:
+    """The frontmatter a host will see, or None and why the skill cannot be served under the extension.
+
+    A host parses SKILL.md's YAML itself and refuses the skill if any field differs from the listing, so
+    the index's lenient parser (which repairs broken YAML) cannot be used here: only YAML that parses, with
+    a `name` and `description`, and a name that obeys the Agent Skills rule and matches the URI."""
+    m = _FM.match(text)
+    if not m:
+        return None, "no YAML frontmatter"
+    try:
+        fm = yaml.safe_load(m.group(1))
+    except yaml.YAMLError:
+        return None, "frontmatter is not valid YAML"
+    if not isinstance(fm, dict):
+        return None, "frontmatter is not a mapping"
+    if not isinstance(fm.get("name"), str) or not isinstance(fm.get("description"), str) or not fm["description"]:
+        return None, "frontmatter needs a name and a description"
+    if fm["name"] != name or len(name) > 64 or not NAME.fullmatch(name):
+        return None, f"name {fm['name']!r} is not a valid Agent Skills name equal to {name!r}"
+    return _json(fm), ""
+
+
+def _entry(plugin: str, name: str, skill_md: Path) -> dict | None:
     folder = skill_md.parent
-    fm, _ = ix.frontmatter(skill_md.read_text(errors="replace"))
-    files = _files(folder)
-    resources: list[dict] | str = "dynamic"
-    if len(files) <= MAX_RESOURCES and sum(f.stat().st_size for f in files) <= MAX_BYTES:
-        resources = [{"uri": _uri(plugin, name, f.relative_to(folder).as_posix()),
-                      "digest": "sha256:" + hashlib.sha256(f.read_bytes()).hexdigest(),
-                      "size": f.stat().st_size} for f in files]
+    fm, _ = strict_frontmatter(skill_md.read_text(errors="replace"), name)
+    if fm is None:
+        return None
+    # Files on disk always have stable digests, so `"dynamic"` is never used. A skill over the limits is
+    # still listed in full: the limits bind hosts, which may decline it and say why.
+    resources = [{"uri": _uri(plugin, name, f.relative_to(folder).as_posix()),
+                  "digest": "sha256:" + hashlib.sha256(f.read_bytes()).hexdigest(),
+                  "size": f.stat().st_size} for f in _files(folder)]
     return {"uri": _uri(plugin, name), "frontmatter": fm, "resources": resources}
 
 
@@ -74,8 +110,11 @@ class Skills:
         skills = []
         for r in rows[:PAGE]:
             path = self.root(r["plugin"]) / (r["path"] or "")
-            if path.is_file():       # a record ahead of its clone is left out: listings may be partial
-                skills.append(_entry(r["plugin"], r["name"], path))
+            # Left out, as the extension allows a partial listing: a record ahead of its clone, and a skill
+            # whose frontmatter a host would refuse (strict_frontmatter). Canopy's `read` still serves both.
+            entry = _entry(r["plugin"], r["name"], path) if path.is_file() else None
+            if entry:
+                skills.append(entry)
         out = {"resultType": "complete", "skills": skills}
         if len(rows) > PAGE:
             out["nextCursor"] = str(offset + PAGE)
@@ -85,6 +124,9 @@ class Skills:
         row, path, rel = self._locate(params.get("uri", ""))
         if rel != "SKILL.md" or not path.is_file():
             raise RpcError(NOT_FOUND, f"unknown skill uri: {params.get('uri')}")
+        fm, why = strict_frontmatter(path.read_text(errors="replace"), row["name"])
+        if fm is None:
+            raise RpcError(NOT_FOUND, f"not served as an MCP skill: {why}")
         return {"resultType": "complete", "skill": _entry(row["plugin"], row["name"], path)}
 
     def read(self, params: dict) -> dict:
