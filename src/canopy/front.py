@@ -18,10 +18,12 @@ know, so these are answered before the SDK sees the request.
 Run: `python -m canopy.front`. Settings: CANOPY_CONFIG (servers.json, marketplaces.json, spaces.json),
 FRONT_SERVERS (the hub's server list, default CANOPY_CONFIG/servers.json; a file with one `"transparent": true`
 entry fronts an existing gateway, docs/connect/saas-and-web-clients.md), CANOPY_TOKEN_DIR (profile-<name>.token),
-CATALOGUE_URL, FRONT_HOST, FRONT_PORT.
+CATALOGUE_URL, FRONT_HOST, FRONT_PORT, FRONT_REFRESH_SEC (re-list every server this often, default 300, 0 off:
+a gateway's group can change under a transparent upstream without telling it).
 """
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import os
@@ -44,6 +46,7 @@ from .spaces import Profile, Spaces, load_tokens
 CONFIG = Path(os.environ.get("CANOPY_CONFIG", "/config"))
 TOKEN_DIR = Path(os.environ.get("CANOPY_TOKEN_DIR", "/tokens"))
 CATALOGUE_URL = os.environ.get("CATALOGUE_URL", "http://catalogue:3000")
+REFRESH_SEC = float(os.environ.get("FRONT_REFRESH_SEC", "300"))
 CALL = "call_tool"
 SKILL_METHODS = ("skills/list", "skills/get")
 PROFILE_KEY = "canopy.profile"
@@ -167,6 +170,13 @@ class Front:
         except HubError as e:
             return types.CallToolResult(content=_text(f"error: {e}"), isError=True)
 
+    async def _relist(self) -> None:
+        """Re-list every server now and then, reconnecting any that are down."""
+        while True:
+            await asyncio.sleep(REFRESH_SEC)
+            with contextlib.suppress(Exception):
+                await self.hub.refresh()
+
     def asgi(self):
         """The MCP endpoint at /mcp behind bearer auth, plus /health. The token sets the profile."""
         sessions, tokens, spaces, front = self.sessions, self.tokens, self.spaces, self
@@ -214,8 +224,11 @@ class Front:
         @contextlib.asynccontextmanager
         async def lifespan(_app):
             await self.hub.start()
+            relist = asyncio.create_task(self._relist()) if REFRESH_SEC > 0 else None
             async with sessions.run():
                 yield
+            if relist:
+                relist.cancel()
             await self.hub.stop()
             await self.catalogue.aclose()
 
